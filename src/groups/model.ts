@@ -122,4 +122,28 @@ export namespace GroupModel {
 
     export const invalidKey = t.Literal('api key cannot read this group')
     export type invalidKey = typeof invalidKey.static
+
+    /**
+     * Why a key was refused, in words the person pasting it can act on.
+     *
+     * Open Cloud takes only user-owned keys, and a group-owned one is the
+     * mistake almost everybody makes, so it gets its own message rather than
+     * being folded into a general failure.
+     */
+    export const keyGroupOwned = t.Literal(
+        'that key belongs to the group — Roblox Open Cloud only accepts keys owned by a user account'
+    )
+    export type keyGroupOwned = typeof keyGroupOwned.static
+
+    export const keyRejected = t.Literal('roblox rejected that key — check it was copied whole and is not revoked')
+    export type keyRejected = typeof keyRejected.static
+
+    export const keyRateLimited = t.Literal('roblox is rate limiting that key — try again in a minute')
+    export type keyRateLimited = typeof keyRateLimited.static
+
+    export const keyUnreachable = t.Literal('could not reach roblox to check that key — try again shortly')
+    export type keyUnreachable = typeof keyUnreachable.static
+
+    export const keyProblem = t.Union([invalidKey, keyGroupOwned, keyRejected, keyRateLimited, keyUnreachable])
+    export type keyProblem = typeof keyProblem.static
 }
