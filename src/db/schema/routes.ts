@@ -1,5 +1,16 @@
 import { relations } from 'drizzle-orm'
-import { boolean, index, integer, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
+import {
+    boolean,
+    doublePrecision,
+    index,
+    integer,
+    pgTable,
+    primaryKey,
+    text,
+    timestamp,
+    unique,
+    uuid
+} from 'drizzle-orm/pg-core'
 import { moderationEnum, routePreferenceEnum, routeShapeEnum, visibilityEnum } from './enums'
 import { groups } from './groups'
 import { users } from './users'
@@ -82,8 +93,12 @@ export const routes = pgTable(
          * The share of dispatchable vehicles this route should carry, as a
          * percentage. Shares are normalised across whichever routes a vehicle's
          * depot actually serves, so they do not have to add up to 100.
+         *
+         * Fractional, because a share is a ratio rather than a count — three
+         * routes splitting a depot evenly is 33.33 each, which whole numbers
+         * could only approximate.
          */
-        targetShare: integer('target_share').notNull().default(20),
+        targetShare: doublePrecision('target_share').notNull().default(20),
 
         autoAssign: boolean('auto_assign').notNull().default(true),
         order: integer('order').notNull().default(0),

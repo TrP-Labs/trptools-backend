@@ -11,6 +11,18 @@ import { findGroup, recordAudit } from '../service'
 import { GroupModel } from '../model'
 import { RouteModel } from './model'
 
+/**
+ * Target shares are stored to two decimal places.
+ *
+ * The column is floating point, so a share typed as 33.33 would otherwise come
+ * back as 33.329999999999998 and be rendered that way on every route badge.
+ * Rounding on the way in keeps what a group typed and what it later reads
+ * identical, and two places is finer than the solver can act on anyway.
+ */
+function roundShare(share: number): number {
+    return Math.round(share * 100) / 100
+}
+
 /** Attaches depot links, the badge image and gallery images to routes. */
 async function decorateRoutes(rows: Route[], includeHidden: boolean): Promise<RouteModel.routesResponse> {
     if (rows.length === 0) return []
@@ -195,7 +207,12 @@ export abstract class Route_ {
 
         const [route] = await db
             .insert(routes)
-            .values({ ...values, groupId: group.id, slug: await freeRouteSlug(group.id, body.name) })
+            .values({
+                ...values,
+                ...(values.targetShare !== undefined ? { targetShare: roundShare(values.targetShare) } : {}),
+                groupId: group.id,
+                slug: await freeRouteSlug(group.id, body.name)
+            })
             .returning({ id: routes.id })
 
         if (!route) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
@@ -241,6 +258,9 @@ export abstract class Route_ {
                 .update(routes)
                 .set({
                     ...fields,
+                    ...(fields.targetShare !== undefined
+                        ? { targetShare: roundShare(fields.targetShare) }
+                        : {}),
                     // The page address follows the name, so a rename does not
                     // leave the URL describing something else.
                     ...(fields.name !== undefined && fields.name !== route.name
