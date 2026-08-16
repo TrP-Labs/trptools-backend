@@ -14,7 +14,19 @@
 import { eq } from 'drizzle-orm'
 import { RRule } from 'rrule'
 import db, { client } from '../db'
-import { depots, events, groups, rankRelations, routeDepots, routes, sessions, shiftSlots, users, vehicleRules } from '../db/schema'
+import {
+    depots,
+    events,
+    groups,
+    rankRelations,
+    rankSignups,
+    rankSignupSlots,
+    routeDepots,
+    routes,
+    sessions,
+    users,
+    vehicleRules
+} from '../db/schema'
 import { generateSessionToken, hashToken } from '../utils/sessionVerifier'
 import { seedGroupDefaults } from '../groups/defaults'
 import { childSlug } from '../utils/slug'
@@ -74,38 +86,86 @@ async function seed() {
 
     // Real Roblox role ids for the demo group, so the public roster actually
     // resolves members instead of coming back empty.
-    await db.insert(rankRelations).values([
-        {
-            groupId: group.id,
-            robloxId: '166926003',
-            cachedName: 'Owner',
-            cachedRank: 255,
-            permissionLevel: 3,
-            visible: true,
-            color: '#9b59b6',
-            description: 'Runs the group and holds every permission.'
-        },
-        {
-            groupId: group.id,
-            robloxId: '167114006',
-            cachedName: 'Admin',
-            cachedRank: 254,
-            permissionLevel: 2,
-            visible: true,
-            color: '#4287f5',
-            description: 'Opens shifts and assigns routes during dispatch.'
-        },
-        {
-            groupId: group.id,
-            robloxId: '12884901889',
-            cachedName: 'Member',
-            cachedRank: 1,
-            permissionLevel: 1,
-            visible: true,
-            color: '#3fb950',
-            description: 'Drives assigned routes on shift.'
+    const seededRanks = await db
+        .insert(rankRelations)
+        .values([
+            {
+                groupId: group.id,
+                robloxId: '166926003',
+                cachedName: 'Owner',
+                cachedRank: 255,
+                permissionLevel: 3,
+                visible: true,
+                color: '#9b59b6',
+                description: 'Runs the group and holds every permission.'
+            },
+            {
+                groupId: group.id,
+                robloxId: '167114006',
+                cachedName: 'Admin',
+                cachedRank: 254,
+                permissionLevel: 2,
+                visible: true,
+                color: '#4287f5',
+                description: 'Opens shifts and assigns routes during dispatch.'
+            },
+            {
+                groupId: group.id,
+                robloxId: '12884901889',
+                cachedName: 'Member',
+                cachedRank: 1,
+                permissionLevel: 1,
+                visible: true,
+                color: '#3fb950',
+                description: 'Drives assigned routes on shift.'
+            }
+        ])
+        .returning({ id: rankRelations.id, cachedRank: rankRelations.cachedRank })
+
+    // Two sheets at different ranks, so the gating is visible immediately:
+    // a member sees only the driver sheet, an admin sees both.
+    const adminRank = seededRanks.find((rank) => rank.cachedRank === 254)
+    const memberRank = seededRanks.find((rank) => rank.cachedRank === 1)
+
+    if (adminRank) {
+        const [sheet] = await db
+            .insert(rankSignups)
+            .values({
+                rankId: adminRank.id,
+                enabled: true,
+                name: 'Shift team',
+                description: 'Runs the shift from the dispatch room.',
+                color: '#4287f5'
+            })
+            .returning({ id: rankSignups.id })
+
+        if (sheet) {
+            await db.insert(rankSignupSlots).values([
+                { signupId: sheet.id, name: 'Host', description: 'Opens the room and the server', capacity: 1, order: 0 },
+                { signupId: sheet.id, name: 'Dispatcher', description: 'Assigns routes', capacity: 2, order: 1 }
+            ])
         }
-    ])
+    }
+
+    if (memberRank) {
+        const [sheet] = await db
+            .insert(rankSignups)
+            .values({
+                rankId: memberRank.id,
+                enabled: true,
+                name: 'Drivers',
+                description: 'Drives an assigned route.',
+                color: '#3fb950'
+            })
+            .returning({ id: rankSignups.id })
+
+        if (sheet) {
+            await db.insert(rankSignupSlots).values([
+                { signupId: sheet.id, name: 'Driver', description: 'Drives an assigned route', capacity: 12, order: 0 },
+                { signupId: sheet.id, name: 'Reserve', description: 'Fills in as needed', capacity: 4, order: 1 }
+            ])
+        }
+    }
 
     // Every group gets the game's own depots and routes.
     await seedGroupDefaults(group.id)
@@ -162,7 +222,7 @@ async function seed() {
         dtstart: startedAt
     }).toString()
 
-    const [liveShift] = await db
+    await db
         .insert(events)
         .values({
             groupId: group.id,
@@ -176,20 +236,11 @@ async function seed() {
             visibility: 'PUBLIC',
             hostLevel: 2
         })
-        .returning({ eventId: events.eventId })
-
-    if (liveShift) {
-        await db.insert(shiftSlots).values([
-            { eventId: liveShift.eventId, name: 'Host', description: 'Runs the shift', capacity: 1, order: 0 },
-            { eventId: liveShift.eventId, name: 'Dispatcher', description: 'Assigns routes', capacity: 2, order: 1 },
-            { eventId: liveShift.eventId, name: 'Driver', description: 'Drives a route', capacity: 12, order: 2 }
-        ])
-    }
 
     const weekendStart = new Date(now)
     weekendStart.setUTCHours(18, 0, 0, 0)
 
-    const [weekendShift] = await db
+    await db
         .insert(events)
         .values({
             groupId: group.id,
@@ -207,14 +258,6 @@ async function seed() {
             visibility: 'PUBLIC',
             hostLevel: 2
         })
-        .returning({ eventId: events.eventId })
-
-    if (weekendShift) {
-        await db.insert(shiftSlots).values([
-            { eventId: weekendShift.eventId, name: 'Host', capacity: 1, order: 0 },
-            { eventId: weekendShift.eventId, name: 'Driver', capacity: 20, order: 1 }
-        ])
-    }
 
     const token = generateSessionToken()
     await db.insert(sessions).values({

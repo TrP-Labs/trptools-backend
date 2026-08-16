@@ -8,8 +8,6 @@ import {
     rankRelations,
     routeDepots,
     routes,
-    shiftSignups,
-    shiftSlots,
     type Depot,
     type Group,
     type Route
@@ -336,26 +334,10 @@ export abstract class PublicPages {
 
         if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        const slots = await db.select().from(shiftSlots).where(eq(shiftSlots.eventId, event.eventId))
-        const capacity = slots.reduce((total, slot) => total + slot.capacity, 0)
-
         const from = new Date()
         const to = new Date(from.getTime() + 60 * 24 * 60 * 60 * 1000)
 
         const occurrences = occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, 20)
-
-        const signups =
-            slots.length > 0 && occurrences.length > 0
-                ? await db
-                      .select({ slotId: shiftSignups.slotId, occurrence: shiftSignups.occurrence })
-                      .from(shiftSignups)
-                      .where(
-                          inArray(
-                              shiftSignups.slotId,
-                              slots.map((slot) => slot.id)
-                          )
-                      )
-                : []
 
         return {
             group: header(group),
@@ -375,9 +357,7 @@ export abstract class PublicPages {
                 description: event.description,
                 color: event.color,
                 start: occurrence.start,
-                end: occurrence.end,
-                filled: signups.filter((signup) => signup.occurrence.getTime() === occurrence.start.getTime()).length,
-                capacity
+                end: occurrence.end
             }))
         }
     }
@@ -424,55 +404,23 @@ export abstract class PublicPages {
 
         if (rows.length === 0) return []
 
-        const slots = await db.select().from(shiftSlots).where(
-            inArray(
-                shiftSlots.eventId,
-                rows.map((event) => event.eventId)
-            )
-        )
-
         const from = new Date()
         const to = new Date(from.getTime() + 14 * 24 * 60 * 60 * 1000)
 
-        const expanded = rows.flatMap((event) => {
-            const eventSlots = slots.filter((slot) => slot.eventId === event.eventId)
-            const capacity = eventSlots.reduce((total, slot) => total + slot.capacity, 0)
-
-            return occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, 20).map((occurrence) => ({
+        const expanded = rows.flatMap((event) =>
+            occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, 20).map((occurrence) => ({
                 eventId: event.eventId,
                 slug: event.slug,
                 name: event.name,
                 description: event.description,
                 color: event.color,
                 start: occurrence.start,
-                end: occurrence.end,
-                filled: 0,
-                capacity,
-                slotIds: eventSlots.map((slot) => slot.id)
+                end: occurrence.end
             }))
-        })
+        )
 
         expanded.sort((a, b) => a.start.getTime() - b.start.getTime())
-        const window = expanded.slice(0, 12)
-        if (window.length === 0) return []
 
-        const slotIds = [...new Set(window.flatMap((entry) => entry.slotIds))]
-
-        if (slotIds.length > 0) {
-            const signups = await db
-                .select({ slotId: shiftSignups.slotId, occurrence: shiftSignups.occurrence })
-                .from(shiftSignups)
-                .where(inArray(shiftSignups.slotId, slotIds))
-
-            for (const entry of window) {
-                entry.filled = signups.filter(
-                    (signup) =>
-                        entry.slotIds.includes(signup.slotId) &&
-                        signup.occurrence.getTime() === entry.start.getTime()
-                ).length
-            }
-        }
-
-        return window.map(({ slotIds: _ignored, ...shift }) => shift)
+        return expanded.slice(0, 12)
     }
 }

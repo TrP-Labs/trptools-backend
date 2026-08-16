@@ -3,7 +3,8 @@ import { boolean, index, integer, pgTable, text, timestamp, unique, uuid } from 
 import { moderationEnum, visibilityEnum, vehicleCategoryEnum } from './enums'
 import { routes, depots } from './routes'
 import { events } from './events'
-import { botConfigs, staffRequests } from './bot'
+import { botConfigs } from './bot'
+import { rankSignups } from './signups'
 
 export const groups = pgTable(
     'groups',
@@ -141,7 +142,7 @@ export const groupsRelations = relations(groups, ({ many, one }) => ({
 
 export const rankRelationsRelations = relations(rankRelations, ({ one }) => ({
     group: one(groups, { fields: [rankRelations.groupId], references: [groups.id] }),
-    staffRequest: one(staffRequests)
+    signup: one(rankSignups)
 }))
 
 export const auditMessagesRelations = relations(auditMessages, ({ one }) => ({

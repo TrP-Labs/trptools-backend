@@ -16,6 +16,7 @@ import { publicPages } from './public/controller'
 import { mediaRoutes } from './media/controller'
 import { adminRoutes, reportRoutes } from './reports/controller'
 import { tools } from './tools/controller'
+import { bot } from './bot/controller'
 
 export const app = new Elysia()
     .use(
@@ -83,6 +84,7 @@ export const app = new Elysia()
     .use(adminRoutes)
     .use(adminUsers)
     .use(tools)
+    .use(bot)
 
     .use(
         openapi({
@@ -110,7 +112,8 @@ export const app = new Elysia()
                     { name: 'Media', description: 'Uploaded images for routes, depots and groups' },
                     { name: 'Moderation', description: 'Reporting user-supplied content' },
                     { name: 'Administration', description: 'Site-wide moderation and account suspension, admins only' },
-                    { name: 'Tools', description: 'Stage light programmer storage' }
+                    { name: 'Tools', description: 'Stage light programmer storage' },
+                    { name: 'Bot', description: 'The Discord bot: installation, channels, roles and settings' }
                 ]
             }
         })

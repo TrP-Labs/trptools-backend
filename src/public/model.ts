@@ -22,6 +22,13 @@ export namespace PublicModel {
     })
     export type directoryQuery = typeof directoryQuery.static
 
+    /**
+     * A dated occurrence as an anonymous visitor sees it.
+     *
+     * Deliberately carries no staffing figures. Sign-ups moved to per-rank
+     * sheets that only staff at that rank can see, so publishing how many of
+     * them are filled would leak exactly what those sheets are gated on.
+     */
     export const publicShift = t.Object({
         eventId: t.String(),
         /** Address of the shift's own page. */
@@ -30,9 +37,7 @@ export namespace PublicModel {
         description: t.String(),
         color: t.String(),
         start: t.Date(),
-        end: t.Date(),
-        filled: t.Number(),
-        capacity: t.Number()
+        end: t.Date()
     })
 
     /**

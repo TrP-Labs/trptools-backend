@@ -2,7 +2,7 @@ import { relations } from 'drizzle-orm'
 import { bigint, boolean, index, pgTable, text, timestamp, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { sessions, apiKeys } from './auth'
 import { routePreferences } from './routes'
-import { shiftSignups } from './events'
+import { shiftSignups } from './signups'
 import { stagePrograms } from './tools'
 
 export const users = pgTable(
@@ -28,6 +28,15 @@ export const users = pgTable(
         robloxRefreshToken: text('roblox_refresh_token'),
         robloxTokenExpiresAt: timestamp('roblox_token_expires_at', { withTimezone: true }),
         robloxScopes: text('roblox_scopes').notNull().default(''),
+
+        /**
+         * A linked Discord account, so a sign-up taken from a Discord sheet
+         * shows the same person as one taken on the web. Optional — the site
+         * works without it, and a Discord sign-up from an unlinked account is
+         * still recorded against its Discord id.
+         */
+        discordId: text('discord_id').unique(),
+        discordUsername: text('discord_username'),
 
         /**
          * Account suspension, applied by a site admin.

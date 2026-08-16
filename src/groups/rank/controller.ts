@@ -91,4 +91,46 @@ export const ranks = new Elysia({ prefix: '/ranks', tags: ['Ranks'] })
                 },
                 detail: { summary: 'Unbind a rank' }
             })
+
+            .get('/signup', async ({ params: { rankId }, session }) => Rank.getSignup(rankId, session), {
+                params: t.Object({ rankId: t.String({ format: 'uuid' }) }),
+                response: {
+                    200: RankModel.signupOrNull,
+                    401: globalModel.unauthorized,
+                    403: globalModel.forbidden,
+                    404: RankModel.rankInvalid
+                },
+                detail: {
+                    summary: 'Read a rank\'s sign-up sheet',
+                    description: 'Null when the rank has never been given one.'
+                }
+            })
+
+            .put('/signup', async ({ params: { rankId }, body, session }) => Rank.putSignup(rankId, body, session), {
+                params: t.Object({ rankId: t.String({ format: 'uuid' }) }),
+                body: RankModel.signupBody,
+                response: {
+                    200: RankModel.signupResponse,
+                    401: globalModel.unauthorized,
+                    403: globalModel.forbidden,
+                    404: RankModel.rankInvalid
+                },
+                detail: {
+                    summary: 'Create or update a rank\'s sign-up sheet',
+                    description:
+                        'Slots are replaced wholesale. Rows whose name is unchanged are reused, so editing a ' +
+                        'sheet never drops sign-ups already made against it.'
+                }
+            })
+
+            .delete('/signup', async ({ params: { rankId }, session }) => Rank.deleteSignup(rankId, session), {
+                params: t.Object({ rankId: t.String({ format: 'uuid' }) }),
+                response: {
+                    200: globalModel.genericSuccess,
+                    401: globalModel.unauthorized,
+                    403: globalModel.forbidden,
+                    404: RankModel.rankInvalid
+                },
+                detail: { summary: 'Remove a rank\'s sign-up sheet' }
+            })
     )
