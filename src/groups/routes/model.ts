@@ -122,6 +122,16 @@ export namespace RouteModel {
     export const routesResponse = t.Array(routeBody)
     export type routesResponse = typeof routesResponse.static
 
+    /**
+     * A route's share of its depot's vehicles.
+     *
+     * Fractional so three routes can split a depot evenly. The service rounds
+     * to two decimal places rather than the schema declaring `multipleOf`,
+     * which compares floats exactly and so rejects ordinary values like 20 and
+     * 33.33.
+     */
+    export const targetShare = t.Number({ minimum: 0, maximum: 100 })
+
     export const createRouteBody = t.Object({
         groupId: t.String(),
         name: t.String({ minLength: 1, maxLength: 24 }),
@@ -129,7 +139,7 @@ export namespace RouteModel {
         color: t.Optional(globalModel.hexColor),
         textColor: t.Optional(globalModel.hexColor),
         shape: t.Optional(routeShape),
-        targetShare: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
+        targetShare: t.Optional(targetShare),
         autoAssign: t.Optional(t.Boolean()),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 })),
         visibility: t.Optional(globalModel.visibility),
@@ -143,7 +153,7 @@ export namespace RouteModel {
         color: t.Optional(globalModel.hexColor),
         textColor: t.Optional(globalModel.hexColor),
         shape: t.Optional(routeShape),
-        targetShare: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
+        targetShare: t.Optional(targetShare),
         autoAssign: t.Optional(t.Boolean()),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 })),
         archived: t.Optional(t.Boolean()),

@@ -22,6 +22,13 @@
       "when": 1786753835808,
       "tag": "0002_dizzy_midnight",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786832641428,
+      "tag": "0003_right_morg",
+      "breakpoints": true
     }
   ]
 }

@@ -281,8 +281,34 @@ export abstract class Group_ {
             return 'Success' as globalModel.genericSuccess
         }
 
-        const works = await Roblox.verifyApiKey(group.robloxId, body.apiKey)
-        if (!works) throw status(400, 'api key cannot read this group' satisfies GroupModel.invalidKey)
+        const check = await Roblox.verifyApiKey(group.robloxId, body.apiKey)
+
+        if (!check.ok) {
+            switch (check.reason) {
+                case 'GROUP_OWNED':
+                    throw status(
+                        400,
+                        'that key belongs to the group — Roblox Open Cloud only accepts keys owned by a user account' satisfies GroupModel.keyGroupOwned
+                    )
+                case 'REJECTED':
+                    throw status(
+                        400,
+                        'roblox rejected that key — check it was copied whole and is not revoked' satisfies GroupModel.keyRejected
+                    )
+                case 'RATE_LIMITED':
+                    throw status(
+                        400,
+                        'roblox is rate limiting that key — try again in a minute' satisfies GroupModel.keyRateLimited
+                    )
+                case 'UNREACHABLE':
+                    throw status(
+                        400,
+                        'could not reach roblox to check that key — try again shortly' satisfies GroupModel.keyUnreachable
+                    )
+                default:
+                    throw status(400, 'api key cannot read this group' satisfies GroupModel.invalidKey)
+            }
+        }
 
         await db
             .update(groups)

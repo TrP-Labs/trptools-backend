@@ -19,7 +19,12 @@ export const robloxOAuth = robloxConfigured
  */
 export const OAUTH_SCOPES = ['openid', 'profile', 'group:read']
 
-/** The Open Cloud API key a group's owner supplied, decrypted. */
+/**
+ * The Open Cloud API key supplied for a group, decrypted.
+ *
+ * Stored against the group, but owned by a user account — Open Cloud refuses
+ * group-owned keys on every `/cloud/v2/groups` route.
+ */
 export async function groupCredentials(groupId: string): Promise<RobloxCredentials> {
     const [group] = await db
         .select({ openCloudKey: groups.openCloudKey })

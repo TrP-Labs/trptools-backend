@@ -2,7 +2,8 @@ import { Elysia, t } from 'elysia'
 import { GroupModel } from './model'
 import { Group_ } from './service'
 import { globalModel } from '../utils/globalModel'
-import { sessionPlugin } from '../utils/authPlugin'
+import { requireUser, sessionPlugin } from '../utils/authPlugin'
+import { rateLimit } from '../utils/ratelimit'
 
 export const group = new Elysia({ prefix: '/groups', tags: ['Groups'] })
     .use(sessionPlugin)
@@ -69,20 +70,31 @@ export const group = new Elysia({ prefix: '/groups', tags: ['Groups'] })
 
             .put(
                 '/open-cloud-key',
-                async ({ params: { groupId }, body, session }) => Group_.setOpenCloudKey(groupId, body, session),
+                async ({ params: { groupId }, body, session }) => {
+                    const user = requireUser(session)
+                    // Each attempt asks Roblox whether a key is good, and the
+                    // answer now says *why* it is not. That is a useful reply
+                    // for the manager who typed it and an equally useful one
+                    // for someone testing stolen keys through us, so the check
+                    // is metered per account.
+                    await rateLimit('groups:opencloudkey', user.userId, 10, 300)
+
+                    return Group_.setOpenCloudKey(groupId, body, session)
+                },
                 {
                     body: GroupModel.openCloudKeyBody,
                     response: {
                         200: globalModel.genericSuccess,
-                        400: GroupModel.invalidKey,
+                        400: GroupModel.keyProblem,
                         401: globalModel.unauthorized,
                         403: globalModel.forbidden,
-                        404: GroupModel.groupInvalid
+                        404: GroupModel.groupInvalid,
+                        429: globalModel.rateLimited
                     },
                     detail: {
                         summary: 'Store the group Open Cloud API key',
                         description:
-                            'Roblox Open Cloud rejects anonymous group reads. A key scoped to group:read lets TrPTools resolve ranks reliably and at a far higher rate limit than a signed-in user token allows.'
+                            'Roblox Open Cloud rejects anonymous group reads. A key scoped to group:read lets TrPTools resolve ranks reliably and at a far higher rate limit than a signed-in user token allows. The key must be owned by a user account — Open Cloud refuses group-owned keys on every group route.'
                     }
                 }
             )

@@ -41,7 +41,15 @@ export namespace globalModel {
     export const idParam = t.Object({ id: t.String({ format: 'uuid' }) })
     export type idParam = typeof idParam.static
 
-    export const hexColor = t.String({ pattern: '^#([0-9a-fA-F]{6})$', default: '#4287f5' })
+    /**
+     * No `default` here, deliberately. Elysia fills a schema default into any
+     * property the request omitted, so an optional colour carrying a default
+     * turns every PATCH into a colour change — editing a rank's permission
+     * level was silently repainting it. Creates get their colour from the
+     * column default instead, which is per-table and correct (a rank is
+     * `#9b59b6`, route text is `#111111`).
+     */
+    export const hexColor = t.String({ pattern: '^#([0-9a-fA-F]{6})$', examples: ['#4287f5'] })
 
     export const shortText = (max = 120) => t.String({ minLength: 1, maxLength: max })
     export const longText = (max = 2000) => t.String({ maxLength: max })

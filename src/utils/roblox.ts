@@ -17,8 +17,11 @@ import { env } from './env'
  *
  * So credentials are tried in this order:
  *
- *   1. The group's own Open Cloud API key, supplied by its owner. Highest
- *      limits, works while nobody is signed in.
+ *   1. The Open Cloud API key a manager supplied for the group. Highest
+ *      limits, works while nobody is signed in. It is stored against the group
+ *      but must be *owned by a user account* — Open Cloud answers a group-owned
+ *      key with 401 "Unsupported authorization method" on every group route,
+ *      whatever permissions it was given.
  *   2. An instance-wide Open Cloud API key, if the operator configured one.
  *   3. The requesting user's OAuth access token (`group:read`).
  *   4. The legacy endpoints, so a group can onboard before wiring up a key.
@@ -69,6 +72,17 @@ export interface RobloxUser {
     name: string
     displayName: string
 }
+
+/**
+ * Why Roblox refused an Open Cloud key.
+ *
+ * `GROUP_OWNED` is the one worth separating: Open Cloud accepts only keys
+ * owned by a user account, so a key created under the group is refused
+ * outright no matter what permissions it carries.
+ */
+export type ApiKeyRejection = 'GROUP_OWNED' | 'REJECTED' | 'NO_ACCESS' | 'RATE_LIMITED' | 'UNREACHABLE'
+
+export type ApiKeyCheck = { ok: true } | { ok: false; reason: ApiKeyRejection }
 
 /** Credentials a caller can offer for a given lookup, best first. */
 export interface RobloxCredentials {
@@ -470,12 +484,45 @@ export abstract class Roblox {
 
     // ------------------------------------------------------------ management
 
-    /** Confirms an Open Cloud key can actually read a group before we store it. */
-    static async verifyApiKey(groupId: number | string, apiKey: string): Promise<boolean> {
-        const result = await request<{ id: string }>(`${OPEN_CLOUD}/groups/${groupId}`, {
-            headers: { 'x-api-key': apiKey }
-        })
-        return result !== null
+    /**
+     * Confirms an Open Cloud key can actually read a group before we store it.
+     *
+     * This reports *why* a key was refused rather than just that it was. The
+     * common failure is a key owned by the group rather than by a person:
+     * Roblox rejects those on every `/cloud/v2/groups` route, and no amount of
+     * changing permissions on that key will help, so telling someone their key
+     * "cannot read this group" sends them round a loop they cannot exit.
+     */
+    static async verifyApiKey(groupId: number | string, apiKey: string): Promise<ApiKeyCheck> {
+        let response: Response
+
+        try {
+            response = await fetch(`${OPEN_CLOUD}/groups/${groupId}`, {
+                headers: { Accept: 'application/json', 'x-api-key': apiKey },
+                signal: AbortSignal.timeout(10_000)
+            })
+        } catch {
+            return { ok: false, reason: 'UNREACHABLE' }
+        }
+
+        if (response.ok) return { ok: true }
+
+        const body = await response.text().catch(() => '')
+
+        // Roblox answers a group-owned key with
+        // "Unsupported authorization method. Only OAuth tokens and User API
+        // keys are supported at this time." Matching the wording is not ideal,
+        // but the status alone does not separate this from a revoked key and
+        // the two need very different advice.
+        if (response.status === 401 && body.includes('Unsupported authorization method')) {
+            return { ok: false, reason: 'GROUP_OWNED' }
+        }
+
+        if (response.status === 401) return { ok: false, reason: 'REJECTED' }
+        if (response.status === 403 || response.status === 404) return { ok: false, reason: 'NO_ACCESS' }
+        if (response.status === 429) return { ok: false, reason: 'RATE_LIMITED' }
+
+        return { ok: false, reason: 'UNREACHABLE' }
     }
 
     static async invalidateGroup(groupId: number | string) {
