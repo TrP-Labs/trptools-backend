@@ -52,7 +52,14 @@ export namespace BotInternal {
         /** Free text a host set for this one occurrence. */
         note: t.String(),
         /** Whose private server to link to, overriding the group default. */
-        ownerRobloxId: t.Union([t.String(), t.Null()])
+        ownerRobloxId: t.Union([t.String(), t.Null()]),
+        /**
+         * When the group's sign-up window opens for this occurrence, and
+         * whether it is open now. A sheet posted before this points at a shift
+         * page that will not let anybody sign up.
+         */
+        signupsOpenAt: t.Date(),
+        signupsOpen: t.Boolean()
     })
     export type shift = typeof shift.static
 

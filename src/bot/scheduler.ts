@@ -41,7 +41,11 @@ type Trigger = {
     offsetMs: number
 }
 
-function triggersFor(config: typeof botConfigs.$inferSelect, durationMinutes: number): Trigger[] {
+function triggersFor(
+    config: typeof botConfigs.$inferSelect,
+    durationMinutes: number,
+    signupLeadMinutes: number
+): Trigger[] {
     return [
         {
             action: 'ANNOUNCE',
@@ -51,7 +55,11 @@ function triggersFor(config: typeof botConfigs.$inferSelect, durationMinutes: nu
         {
             action: 'SIGNUPS',
             enabled: config.signupsEnabled && config.autoSignups,
-            offsetMs: -config.autoSignupsLead * 60_000
+            // Clamped to the group's own sign-up window. Posting a sheet
+            // earlier than that gives people a form whose website half refuses
+            // them, and the two settings live on different pages, so the
+            // combination is easy to get wrong by accident.
+            offsetMs: -Math.min(config.autoSignupsLead, signupLeadMinutes) * 60_000
         },
         {
             action: 'HOST_REMINDER',
@@ -88,7 +96,9 @@ export async function dueActions(now = new Date()): Promise<BotInternal.dueActio
         if (shifts.length === 0) continue
 
         for (const shift of shifts) {
-            const triggers = triggersFor(config, shift.duration).filter((trigger) => trigger.enabled)
+            const triggers = triggersFor(config, shift.duration, group.signupLeadMinutes).filter(
+                (trigger) => trigger.enabled
+            )
             if (triggers.length === 0) continue
 
             // The furthest-ahead trigger decides how far to expand. Anything

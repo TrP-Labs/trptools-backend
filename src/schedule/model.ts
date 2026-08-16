@@ -110,6 +110,19 @@ export namespace ScheduleModel {
         color: t.String(),
         start: t.Date(),
         end: t.Date(),
+        /**
+         * Whether sign-ups are open for this occurrence yet. `sheets` is empty
+         * whenever this is false, so a client never renders an empty form.
+         */
+        signupsOpen: t.Boolean(),
+        signupsOpenAt: t.Date(),
+        /**
+         * Whether this viewer's rank reaches any sheet on this shift at all,
+         * regardless of the window. Lets a client say "sign-ups open in an
+         * hour" only to somebody who will actually get a form, rather than
+         * advertising one to everybody who cannot use it.
+         */
+        sheetsAvailable: t.Boolean(),
         /** Only the sheets the caller's own rank permits. */
         sheets: t.Array(signupSheet)
     })
@@ -148,4 +161,7 @@ export namespace ScheduleModel {
 
     export const wrongRank = t.Literal('your rank cannot take that slot')
     export type wrongRank = typeof wrongRank.static
+
+    export const signupsClosed = t.Literal('sign-ups are not open for that shift yet')
+    export type signupsClosed = typeof signupsClosed.static
 }

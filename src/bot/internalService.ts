@@ -6,7 +6,7 @@ import { FRONTEND_URL } from '../utils/env'
 import { dataRedis } from '../utils/redis'
 import { activeOccurrence, occurrencesBetween, upcomingOccurrences } from '../utils/recurrence'
 import { publishSignupChange } from '../schedule/events'
-import { loadSheets, loadSignups, type LoadedSheet } from '../schedule/sheets'
+import { loadSheets, loadSignups, signupsOpen, signupsOpenAt, type LoadedSheet } from '../schedule/sheets'
 import { BotInternal } from './internalModel'
 import type { BotModel } from './model'
 import { presentConfig } from './present'
@@ -89,7 +89,8 @@ async function sheetsFor(groupId: string, eventId: string, occurrence: Date): Pr
 
 async function presentShift(
     event: typeof events.$inferSelect,
-    occurrence: { start: Date; end: Date }
+    occurrence: { start: Date; end: Date },
+    signupLeadMinutes: number
 ): Promise<BotInternal.shift> {
     const note = await readNote(event.eventId, occurrence.start)
 
@@ -102,7 +103,9 @@ async function presentShift(
         start: occurrence.start,
         end: occurrence.end,
         note: note.note,
-        ownerRobloxId: note.ownerRobloxId
+        ownerRobloxId: note.ownerRobloxId,
+        signupsOpenAt: signupsOpenAt(occurrence.start, signupLeadMinutes),
+        signupsOpen: signupsOpen(occurrence.start, occurrence.end, signupLeadMinutes)
     }
 }
 
@@ -188,7 +191,7 @@ export abstract class BotService {
                 }
             }
 
-            return best ? presentShift(best.event, best.occurrence) : null
+            return best ? presentShift(best.event, best.occurrence, group.signupLeadMinutes) : null
         }
 
         const now = new Date()
@@ -201,7 +204,7 @@ export abstract class BotService {
             }
         }
 
-        return soonest ? presentShift(soonest.event, soonest.occurrence) : null
+        return soonest ? presentShift(soonest.event, soonest.occurrence, group.signupLeadMinutes) : null
     }
 
     static async occurrence(guildId: string, query: BotInternal.occurrenceQuery): Promise<BotInternal.occurrence> {
@@ -221,7 +224,7 @@ export abstract class BotService {
         const end = new Date(occurrence.getTime() + event.duration * 60_000)
 
         return {
-            shift: await presentShift(event, { start: occurrence, end }),
+            shift: await presentShift(event, { start: occurrence, end }, group.signupLeadMinutes),
             sheets: await sheetsFor(group.id, event.eventId, occurrence)
         }
     }

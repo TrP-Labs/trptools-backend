@@ -10,7 +10,7 @@ import type { session } from '../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../groups/service'
 import { GroupModel } from '../groups/model'
 import { publishSignupChange } from './events'
-import { canUseSheet, loadSheets, loadSignups, presentSheets, sheetsVisibleTo } from './sheets'
+import { canUseSheet, loadSheets, loadSignups, presentSheets, sheetsVisibleTo, signupsOpen } from './sheets'
 import { ScheduleModel } from './model'
 
 const MAX_HORIZON_DAYS = 120
@@ -125,17 +125,26 @@ export abstract class Schedule {
                   )
                 : new Map()
 
-        return window.map(({ event, occurrence }) => ({
-            eventId: event.eventId,
-            groupId: event.groupId,
-            name: event.name,
-            slug: event.slug,
-            description: event.description,
-            color: event.color,
-            start: occurrence.start,
-            end: occurrence.end,
-            sheets: presentSheets(sheets, event.eventId, occurrence.start, signups)
-        }))
+        return window.map(({ event, occurrence }) => {
+            // An occurrence outside the window carries no sheets at all, so a
+            // client never has to decide whether to render an empty form.
+            const open = signupsOpen(occurrence.start, occurrence.end, group.signupLeadMinutes)
+
+            return {
+                eventId: event.eventId,
+                groupId: event.groupId,
+                name: event.name,
+                slug: event.slug,
+                description: event.description,
+                color: event.color,
+                start: occurrence.start,
+                end: occurrence.end,
+                signupsOpen: open,
+                signupsOpenAt: new Date(occurrence.start.getTime() - group.signupLeadMinutes * 60_000),
+                sheetsAvailable: sheets.length > 0,
+                sheets: open ? presentSheets(sheets, event.eventId, occurrence.start, signups) : []
+            }
+        })
     }
 
     static async createScheduledObject(
@@ -248,6 +257,16 @@ export abstract class Schedule {
         )
 
         if (matches.length === 0) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
+
+        // Enforced here as well as in the listing: hiding a form is a display
+        // decision, and a client that kept a stale slot id must not be able to
+        // sign up for a shift months away because of it.
+        const group = await findGroup(event.groupId)
+        const lead = group?.signupLeadMinutes ?? 1440
+
+        if (!signupsOpen(matches[0]!.start, matches[0]!.end, lead)) {
+            throw status(409, 'sign-ups are not open for that shift yet' satisfies ScheduleModel.signupsClosed)
+        }
 
         return { event, sheet, slot }
     }

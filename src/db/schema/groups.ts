@@ -33,6 +33,16 @@ export const groups = pgTable(
          */
         roomOpenLeadMinutes: integer('room_open_lead_minutes').notNull().default(10),
 
+        /**
+         * How long before a shift its sign-up sheets open.
+         *
+         * Sheets sat on every occurrence in the schedule, months out, which
+         * made the shift page a wall of empty forms and let people commit to a
+         * shift nobody had planned yet. They now appear this far ahead and
+         * close when the shift ends.
+         */
+        signupLeadMinutes: integer('signup_lead_minutes').notNull().default(1440),
+
         // Which parts of the public page are exposed
         showRoutes: boolean('show_routes').notNull().default(true),
         showShifts: boolean('show_shifts').notNull().default(true),

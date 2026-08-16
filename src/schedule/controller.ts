@@ -49,7 +49,7 @@ export const schedule = new Elysia({ prefix: '/schedule', tags: ['Schedule'] })
             401: globalModel.unauthorized,
             403: t.Union([globalModel.forbidden, ScheduleModel.wrongRank]),
             404: globalModel.notFound,
-            409: t.Union([ScheduleModel.slotFull, ScheduleModel.alreadySignedUp])
+            409: t.Union([ScheduleModel.slotFull, ScheduleModel.alreadySignedUp, ScheduleModel.signupsClosed])
         },
         detail: {
             summary: 'Take a slot on one shift occurrence',

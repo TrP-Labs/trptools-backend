@@ -103,6 +103,23 @@ export function sheetsVisibleTo(sheets: LoadedSheet[], membership: Membership, s
     return sheets.filter((sheet) => canUseSheet(sheet, membership, session))
 }
 
+/**
+ * When one occurrence's sign-ups open.
+ *
+ * Sheets used to sit on every occurrence the schedule could produce, months
+ * out, which turned the shift page into a wall of empty forms and let people
+ * commit to a shift nobody had planned yet. They open `signupLeadMinutes`
+ * before the start and close at the end — a shift that has finished is not one
+ * you can still put your name down for.
+ */
+export function signupsOpenAt(start: Date, leadMinutes: number): Date {
+    return new Date(start.getTime() - leadMinutes * 60_000)
+}
+
+export function signupsOpen(start: Date, end: Date, leadMinutes: number, now = new Date()): boolean {
+    return now >= signupsOpenAt(start, leadMinutes) && now < end
+}
+
 type SignupRow = {
     slotId: string
     eventId: string

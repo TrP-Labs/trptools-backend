@@ -1,0 +1,1 @@
+ALTER TABLE "groups" ADD COLUMN "signup_lead_minutes" integer DEFAULT 1440 NOT NULL;
