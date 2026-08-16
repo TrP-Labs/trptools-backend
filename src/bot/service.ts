@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { eq, inArray } from 'drizzle-orm'
 import db from '../db'
-import { botConfigs, rankRelations, rankSignups, type BotConfig } from '../db/schema'
+import { botConfigs, rankRelations, rankSignups } from '../db/schema'
 import { env, FRONTEND_URL } from '../utils/env'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertPermission } from '../utils/groupPermission'
@@ -24,6 +24,7 @@ import {
     type PermissionName
 } from './discord'
 import { BotModel } from './model'
+import { presentConfig } from './present'
 
 /** Wording for the dashboard's permission checklist. */
 const PERMISSION_LABELS: Record<PermissionName, string> = {
@@ -46,43 +47,6 @@ const redirectUri = () => `${env.BASE_URL}/bot/callback`
 function assertAvailable() {
     if (!discordConfigured) {
         throw status(503, 'Discord is not configured on this instance' satisfies BotModel.unavailable)
-    }
-}
-
-function presentConfig(row: BotConfig): BotModel.config {
-    return {
-        groupId: row.groupId,
-        guildId: row.guildId,
-        installedAt: row.installedAt,
-
-        announcementChannel: row.announcementChannel,
-        pollChannel: row.pollChannel,
-        hostChannel: row.hostChannel,
-
-        shiftPingRole: row.shiftPingRole,
-        hostPingRole: row.hostPingRole,
-
-        placeId: row.placeId,
-        ownerRobloxId: row.ownerRobloxId,
-
-        announcementsEnabled: row.announcementsEnabled,
-        signupsEnabled: row.signupsEnabled,
-        pollsEnabled: row.pollsEnabled,
-        remindersEnabled: row.remindersEnabled,
-        manifestEnabled: row.manifestEnabled,
-
-        autoAnnounce: row.autoAnnounce,
-        autoAnnounceLead: row.autoAnnounceLead,
-        autoSignups: row.autoSignups,
-        autoSignupsLead: row.autoSignupsLead,
-        autoHostReminder: row.autoHostReminder,
-        autoHostReminderLead: row.autoHostReminderLead,
-        autoBegin: row.autoBegin,
-        autoBeginLead: row.autoBeginLead,
-        autoComplete: row.autoComplete,
-        autoCompleteDelay: row.autoCompleteDelay,
-
-        manifestRefreshSeconds: row.manifestRefreshSeconds
     }
 }
 

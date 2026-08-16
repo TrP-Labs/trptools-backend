@@ -17,6 +17,7 @@ import { mediaRoutes } from './media/controller'
 import { adminRoutes, reportRoutes } from './reports/controller'
 import { tools } from './tools/controller'
 import { bot } from './bot/controller'
+import { botInternal } from './bot/internalController'
 
 export const app = new Elysia()
     .use(
@@ -85,6 +86,7 @@ export const app = new Elysia()
     .use(adminUsers)
     .use(tools)
     .use(bot)
+    .use(botInternal)
 
     .use(
         openapi({
