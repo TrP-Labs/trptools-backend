@@ -7,7 +7,7 @@ import { Roblox, type RobloxCredentials } from '../utils/roblox'
 import { resolveCredentials, userCredentials } from '../utils/robloxCredentials'
 import { encryptSecret } from '../utils/crypto'
 import { assertPermission, GetPermissionLevel, invalidateGroupPermissions } from '../utils/groupPermission'
-import { isValidSlug, uniqueSlug } from '../utils/slug'
+import { isUuid, isValidSlug, uniqueSlug } from '../utils/slug'
 import type { session } from '../utils/sessionVerifier'
 import { seedGroupDefaults } from './defaults'
 import { GroupModel } from './model'
@@ -387,12 +387,10 @@ export abstract class Group_ {
 
 /** Groups are addressable by uuid or by public slug. */
 export async function findGroup(idOrSlug: string): Promise<Group | undefined> {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug)
-
     const [group] = await db
         .select()
         .from(groups)
-        .where(isUuid ? eq(groups.id, idOrSlug) : eq(groups.slug, idOrSlug))
+        .where(isUuid(idOrSlug) ? eq(groups.id, idOrSlug) : eq(groups.slug, idOrSlug))
         .limit(1)
 
     return group

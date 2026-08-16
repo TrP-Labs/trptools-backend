@@ -34,6 +34,16 @@ export function isValidSlug(value: string): boolean {
 }
 
 /**
+ * Whether an identifier is a primary key rather than a slug.
+ *
+ * Routes accept either, and the two cannot be told apart by a database column
+ * typed `uuid` — Postgres rejects a slug outright instead of not matching.
+ */
+export function isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
+/**
  * Slug for something that lives under a group, such as a route or a depot.
  *
  * Route names are frequently bare numbers, which make for an opaque URL and
