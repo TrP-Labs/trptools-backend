@@ -1,6 +1,9 @@
+import { resolve } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { Resvg } from '@resvg/resvg-js'
 import satori, { type SatoriOptions } from 'satori'
+import interRegular from './assets/Inter-Regular.ttf' with { type: 'file' }
+import interSemiBold from './assets/Inter-SemiBold.ttf' with { type: 'file' }
 import db from '../db'
 import { botConfigs, groups, users } from '../db/schema'
 import { dataRedis } from '../utils/redis'
@@ -26,10 +29,27 @@ import type { Vehicles } from '../rooms/dispatch/model'
  * fonts and no filesystem to speak of — which is the deployment target.
  */
 
-// Loaded once. Reading two fonts per render would dominate the render cost.
+/**
+ * The fonts, imported as assets rather than read by path.
+ *
+ * `new URL('./assets/…', import.meta.url)` was opaque to the bundler: it
+ * copied nothing and still pointed beside the *source*, so a built image
+ * looked for `dist/assets` and found nothing. An import attribute is something
+ * the bundler understands — it emits the file next to the bundle and rewrites
+ * the value.
+ *
+ * That value is absolute when running from `src` but bundle-relative when
+ * built, and `Bun.file` would resolve the relative form against the process
+ * working directory rather than against the bundle. Resolving it against
+ * `import.meta.dir` is what makes both forms land on the real file.
+ *
+ * Loaded once; reading two fonts per render would dominate the render cost.
+ */
+const asset = (value: string) => resolve(import.meta.dir, value)
+
 const fonts: Promise<SatoriOptions['fonts']> = Promise.all([
-    Bun.file(new URL('./assets/Inter-Regular.ttf', import.meta.url)).arrayBuffer(),
-    Bun.file(new URL('./assets/Inter-SemiBold.ttf', import.meta.url)).arrayBuffer()
+    Bun.file(asset(interRegular)).arrayBuffer(),
+    Bun.file(asset(interSemiBold)).arrayBuffer()
 ]).then(([regular, semibold]) => [
     { name: 'Inter', data: regular, weight: 400 as const, style: 'normal' as const },
     { name: 'Inter', data: semibold, weight: 600 as const, style: 'normal' as const }
