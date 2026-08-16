@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { channelPermissions, guildPermissions, has, PERMISSIONS, type DiscordChannel, type DiscordRole } from './discord'
+import {
+    channelPermissions,
+    guildPermissions,
+    has,
+    PERMISSIONS,
+    type DiscordChannel,
+    type DiscordRole
+} from './discord'
 
 /**
  * Discord never reports what a bot may do in a channel, so `channelPermissions`

@@ -35,7 +35,14 @@ async function readNote(eventId: string, occurrence: Date): Promise<StoredNote> 
     }
 }
 
-function presentSheet(sheet: LoadedSheet, signups: Map<string, Array<{ userId: string; displayName: string | null; discordId: string | null }>>, eventId: string, occurrence: Date): BotInternal.sheet {
+type TrimmedSignup = { userId: string; displayName: string | null; discordId: string | null }
+
+function presentSheet(
+    sheet: LoadedSheet,
+    signups: Map<string, TrimmedSignup[]>,
+    eventId: string,
+    occurrence: Date
+): BotInternal.sheet {
     return {
         signupId: sheet.signupId,
         rankId: sheet.rankId,
@@ -65,7 +72,7 @@ async function sheetsFor(groupId: string, eventId: string, occurrence: Date): Pr
         occurrence
     )
 
-    const trimmed = new Map<string, Array<{ userId: string; displayName: string | null; discordId: string | null }>>()
+    const trimmed = new Map<string, TrimmedSignup[]>()
     for (const [key, people] of raw) {
         trimmed.set(
             key,
