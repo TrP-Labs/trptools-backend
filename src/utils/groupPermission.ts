@@ -6,6 +6,7 @@ import { Roblox } from './roblox'
 import { resolveCredentials } from './robloxCredentials'
 import { dataRedis } from './redis'
 import { PERMISSION } from './globalModel'
+import { isUuid } from './slug'
 import type { session } from './sessionVerifier'
 
 /**
@@ -26,6 +27,28 @@ export type Membership = {
 const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
 
 /**
+ * A group's own id, whichever identifier the caller had to hand.
+ *
+ * Dashboard URLs carry a group's slug, so a slug is what reaches the services
+ * that hand their route parameter straight to `assertPermission`. Matching one
+ * against `groups.id` asks Postgres to read it as a uuid, which fails outright
+ * rather than simply not matching — so the identifier is normalised before it
+ * reaches a query or a cache key.
+ */
+async function resolveGroupId(idOrSlug: string): Promise<string | null> {
+    if (isUuid(idOrSlug)) return idOrSlug
+
+    const [group] = await db
+        .select({ id: groups.id })
+        .from(groups)
+        .where(eq(groups.slug, idOrSlug))
+        .limit(1)
+        .catch(() => [])
+
+    return group?.id ?? null
+}
+
+/**
  * Resolves what a user is inside a TrPTools group.
  *
  * Permission is always derived from the Roblox role the user currently holds,
@@ -33,9 +56,14 @@ const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, robloxRank: -
  * permission grant that Roblox does not still back.
  *
  * The result is cached for a minute. Without that, a single dispatch session
- * would exhaust Roblox's Open Cloud quota in seconds.
+ * would exhaust Roblox's Open Cloud quota in seconds. The cache is keyed by the
+ * group's id and never its slug, so `invalidateGroupPermissions` clears every
+ * entry for a group however the caller addressed it.
  */
-export async function GetMembership(userID: string, groupID: string): Promise<Membership> {
+export async function GetMembership(userID: string, groupIdOrSlug: string): Promise<Membership> {
+    const groupID = await resolveGroupId(groupIdOrSlug)
+    if (!groupID) return NON_MEMBER
+
     const cacheKey = `perm:${groupID}:${userID}`
 
     try {
@@ -93,19 +121,24 @@ export async function GetMembership(userID: string, groupID: string): Promise<Me
     return resolved
 }
 
-export async function GetPermissionLevel(userID: string, groupID: string): Promise<number> {
-    return (await GetMembership(userID, groupID)).permissionLevel
+export async function GetPermissionLevel(userID: string, groupIdOrSlug: string): Promise<number> {
+    return (await GetMembership(userID, groupIdOrSlug)).permissionLevel
 }
 
-export default async function UserHasRank(userID: string, groupID: string, rank: number): Promise<boolean> {
-    return (await GetPermissionLevel(userID, groupID)) >= rank
+export default async function UserHasRank(userID: string, groupIdOrSlug: string, rank: number): Promise<boolean> {
+    return (await GetPermissionLevel(userID, groupIdOrSlug)) >= rank
 }
 
-/** Throws 401/403 unless the session holds at least `level` in the group. */
-export async function assertPermission(session: session, groupID: string, level: number) {
+/**
+ * Throws 401/403 unless the session holds at least `level` in the group.
+ *
+ * The group may be named by id or by slug, because several services check
+ * permission on their raw route parameter before resolving the group itself.
+ */
+export async function assertPermission(session: session, groupIdOrSlug: string, level: number) {
     if (!session.user) throw status(401, 'Unauthorized')
     if (session.user.siteRank === 'admin') return
-    if (!(await UserHasRank(session.user.userId, groupID, level))) throw status(403, 'Forbidden')
+    if (!(await UserHasRank(session.user.userId, groupIdOrSlug, level))) throw status(403, 'Forbidden')
 }
 
 /** Clears cached permission levels, e.g. after a rank binding changes. */
