@@ -48,6 +48,22 @@ export const env = {
     /** Key material for AES-GCM encryption of stored OAuth tokens and API keys. */
     ENCRYPTION_KEY: optional('ENCRYPTION_KEY', 'trptools-development-encryption-key'),
 
+    // --- Discord ------------------------------------------------------------
+    // The application id doubles as the OAuth client id and as the bot's own
+    // user id, which is what channel permission checks resolve against.
+    DISCORD_APP_ID: optional('DISCORD_APP_ID', ''),
+    DISCORD_CLIENT_SECRET: optional('DISCORD_CLIENT_SECRET', ''),
+    DISCORD_BOT_TOKEN: optional('DISCORD_BOT_TOKEN', ''),
+
+    /**
+     * Shared secret the bot process presents on `/bot/internal/*`.
+     *
+     * The bot acts across every group at once, so a user-scoped API key is the
+     * wrong shape for it — this is a service credential, and the internal
+     * routes refuse every caller without it.
+     */
+    BOT_SERVICE_TOKEN: optional('BOT_SERVICE_TOKEN', ''),
+
     // --- S3-compatible object storage for uploaded images -------------------
     S3_ENDPOINT: stripTrailingSlash(optional('S3_ENDPOINT', 'http://localhost:9000')),
     /** Browser-facing base URL, when it differs from the internal endpoint. */

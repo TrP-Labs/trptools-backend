@@ -3,7 +3,8 @@ import { boolean, index, integer, pgTable, text, timestamp, unique, uuid } from 
 import { moderationEnum, visibilityEnum, vehicleCategoryEnum } from './enums'
 import { routes, depots } from './routes'
 import { events } from './events'
-import { botConfigs, staffRequests } from './bot'
+import { botConfigs } from './bot'
+import { rankSignups } from './signups'
 
 export const groups = pgTable(
     'groups',
@@ -31,6 +32,16 @@ export const groups = pgTable(
          * so the window is the group's to choose.
          */
         roomOpenLeadMinutes: integer('room_open_lead_minutes').notNull().default(10),
+
+        /**
+         * How long before a shift its sign-up sheets open.
+         *
+         * Sheets sat on every occurrence in the schedule, months out, which
+         * made the shift page a wall of empty forms and let people commit to a
+         * shift nobody had planned yet. They now appear this far ahead and
+         * close when the shift ends.
+         */
+        signupLeadMinutes: integer('signup_lead_minutes').notNull().default(1440),
 
         // Which parts of the public page are exposed
         showRoutes: boolean('show_routes').notNull().default(true),
@@ -141,7 +152,7 @@ export const groupsRelations = relations(groups, ({ many, one }) => ({
 
 export const rankRelationsRelations = relations(rankRelations, ({ one }) => ({
     group: one(groups, { fields: [rankRelations.groupId], references: [groups.id] }),
-    staffRequest: one(staffRequests)
+    signup: one(rankSignups)
 }))
 
 export const auditMessagesRelations = relations(auditMessages, ({ one }) => ({

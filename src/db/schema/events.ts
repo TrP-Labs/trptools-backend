@@ -2,11 +2,14 @@ import { relations } from 'drizzle-orm'
 import { index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
 import { visibilityEnum } from './enums'
 import { groups } from './groups'
-import { users } from './users'
 
 /**
  * A shift is a recurring scheduled event. `rrule` drives recurrence,
  * `startTime` anchors the series and `duration` closes each occurrence out.
+ *
+ * Shifts carry no slots of their own. Who may sign up for what is declared
+ * once per rank in `rank_signups`, so adding a shift never means restating the
+ * same set of staff roles.
  */
 export const events = pgTable(
     'events',
@@ -40,58 +43,8 @@ export const events = pgTable(
     ]
 )
 
-export const shiftSlots = pgTable(
-    'shift_slots',
-    {
-        id: uuid('id').primaryKey().defaultRandom(),
-        eventId: uuid('event_id')
-            .notNull()
-            .references(() => events.eventId, { onDelete: 'cascade' }),
-
-        name: text('name').notNull(),
-        description: text('description').notNull().default(''),
-        capacity: integer('capacity').notNull().default(1),
-        order: integer('order').notNull().default(0)
-    },
-    (table) => [index('shift_slots_event_order_idx').on(table.eventId, table.order)]
-)
-
-/** One signup against one concrete occurrence of a recurring shift. */
-export const shiftSignups = pgTable(
-    'shift_signups',
-    {
-        id: uuid('id').primaryKey().defaultRandom(),
-        slotId: uuid('slot_id')
-            .notNull()
-            .references(() => shiftSlots.id, { onDelete: 'cascade' }),
-        userId: uuid('user_id')
-            .notNull()
-            .references(() => users.id, { onDelete: 'cascade' }),
-
-        occurrence: timestamp('occurrence', { withTimezone: true }).notNull(),
-        createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
-    },
-    (table) => [
-        unique('shift_signups_unique').on(table.slotId, table.occurrence, table.userId),
-        index('shift_signups_occurrence_idx').on(table.occurrence)
-    ]
-)
-
-export const eventsRelations = relations(events, ({ one, many }) => ({
-    group: one(groups, { fields: [events.groupId], references: [groups.id] }),
-    slots: many(shiftSlots)
-}))
-
-export const shiftSlotsRelations = relations(shiftSlots, ({ one, many }) => ({
-    event: one(events, { fields: [shiftSlots.eventId], references: [events.eventId] }),
-    signups: many(shiftSignups)
-}))
-
-export const shiftSignupsRelations = relations(shiftSignups, ({ one }) => ({
-    slot: one(shiftSlots, { fields: [shiftSignups.slotId], references: [shiftSlots.id] }),
-    user: one(users, { fields: [shiftSignups.userId], references: [users.id] })
+export const eventsRelations = relations(events, ({ one }) => ({
+    group: one(groups, { fields: [events.groupId], references: [groups.id] })
 }))
 
 export type Event = typeof events.$inferSelect
-export type ShiftSlot = typeof shiftSlots.$inferSelect
-export type ShiftSignup = typeof shiftSignups.$inferSelect

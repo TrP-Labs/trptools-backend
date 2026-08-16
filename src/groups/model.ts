@@ -39,6 +39,7 @@ export namespace GroupModel {
 
         /** Minutes before a shift starts that its dispatch room may open. */
         roomOpenLeadMinutes: t.Number(),
+        signupLeadMinutes: t.Number(),
 
         /** The requesting user's permission level, 0-3. */
         permissionLevel: t.Number(),
@@ -83,7 +84,9 @@ export namespace GroupModel {
         showShifts: t.Optional(t.Boolean()),
         showRoster: t.Optional(t.Boolean()),
         showDispatch: t.Optional(t.Boolean()),
-        roomOpenLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 120 }))
+        roomOpenLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 120 })),
+        /** Minutes before a shift that its sign-up sheets open. Up to 30 days. */
+        signupLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 43200 }))
     })
     export type updateGroupBody = typeof updateGroupBody.static
 

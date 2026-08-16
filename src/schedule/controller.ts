@@ -47,11 +47,16 @@ export const schedule = new Elysia({ prefix: '/schedule', tags: ['Schedule'] })
             200: globalModel.genericSuccess,
             400: globalModel.badRequest,
             401: globalModel.unauthorized,
-            403: globalModel.forbidden,
+            403: t.Union([globalModel.forbidden, ScheduleModel.wrongRank]),
             404: globalModel.notFound,
-            409: t.Union([ScheduleModel.slotFull, ScheduleModel.alreadySignedUp])
+            409: t.Union([ScheduleModel.slotFull, ScheduleModel.alreadySignedUp, ScheduleModel.signupsClosed])
         },
-        detail: { summary: 'Take a slot on one shift occurrence' }
+        detail: {
+            summary: 'Take a slot on one shift occurrence',
+            description:
+                'The slot must belong to a sign-up sheet the caller\'s Roblox rank reaches. ' +
+                'Managers and site admins may take any slot in their group.'
+        }
     })
 
     .post('/withdraw', async ({ body, session }) => Schedule.withdraw(body, session), {

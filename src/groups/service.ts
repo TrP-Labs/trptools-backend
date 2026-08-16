@@ -61,6 +61,7 @@ function present(group: Group, permissionLevel: number): GroupModel.groupRespons
         showRoster: group.showRoster,
         showDispatch: group.showDispatch,
         roomOpenLeadMinutes: group.roomOpenLeadMinutes,
+        signupLeadMinutes: group.signupLeadMinutes,
 
         permissionLevel,
         hasOpenCloudKey: Boolean(group.openCloudKey),

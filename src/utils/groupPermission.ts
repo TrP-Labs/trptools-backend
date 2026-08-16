@@ -10,6 +10,23 @@ import { isUuid } from './slug'
 import type { session } from './sessionVerifier'
 
 /**
+ * What a user is inside a TrPTools group: the permission level their bound
+ * rank grants, and the Roblox rank number itself.
+ *
+ * `robloxRank` is Roblox's own 0-255 ordering. Permission levels are coarse
+ * and deliberately unordered against it — two ranks can both be "dispatch"
+ * — so rank-gated features such as staff sign-up sheets compare this instead.
+ * It is -1 when the user holds no role in the group at all, which keeps a
+ * non-member strictly below Roblox's lowest real rank of 0.
+ */
+export type Membership = {
+    permissionLevel: number
+    robloxRank: number
+}
+
+const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
+
+/**
  * A group's own id, whichever identifier the caller had to hand.
  *
  * Dashboard URLs carry a group's slug, so a slug is what reaches the services
@@ -32,7 +49,7 @@ async function resolveGroupId(idOrSlug: string): Promise<string | null> {
 }
 
 /**
- * Resolves the permission level a user holds inside a TrPTools group.
+ * Resolves what a user is inside a TrPTools group.
  *
  * Permission is always derived from the Roblox role the user currently holds,
  * mapped through the group's `rank_relations` table — TrPTools never stores a
@@ -43,15 +60,18 @@ async function resolveGroupId(idOrSlug: string): Promise<string | null> {
  * group's id and never its slug, so `invalidateGroupPermissions` clears every
  * entry for a group however the caller addressed it.
  */
-export async function GetPermissionLevel(userID: string, groupIdOrSlug: string): Promise<number> {
+export async function GetMembership(userID: string, groupIdOrSlug: string): Promise<Membership> {
     const groupID = await resolveGroupId(groupIdOrSlug)
-    if (!groupID) return PERMISSION.NONE
+    if (!groupID) return NON_MEMBER
 
     const cacheKey = `perm:${groupID}:${userID}`
 
     try {
         const hit = await dataRedis.get(cacheKey)
-        if (hit !== null) return Number(hit)
+        if (hit !== null) {
+            const [level, rank] = hit.split(':')
+            return { permissionLevel: Number(level), robloxRank: Number(rank) }
+        }
     } catch {
         // fall through
     }
@@ -70,28 +90,39 @@ export async function GetPermissionLevel(userID: string, groupIdOrSlug: string):
         .limit(1)
         .catch(() => [])
 
-    if (!group || !user) return PERMISSION.NONE
+    if (!group || !user) return NON_MEMBER
 
     const credentials = await resolveCredentials(group.id, userID)
     const membership = await Roblox.getMembership(user.robloxId, group.robloxId, credentials)
 
     if (!membership) {
-        await dataRedis.set(cacheKey, PERMISSION.NONE, 'EX', 30).catch(() => undefined)
-        return PERMISSION.NONE
+        await dataRedis.set(cacheKey, `${PERMISSION.NONE}:-1`, 'EX', 30).catch(() => undefined)
+        return NON_MEMBER
     }
 
     const [relation] = await db
-        .select({ permissionLevel: rankRelations.permissionLevel })
+        .select({ permissionLevel: rankRelations.permissionLevel, cachedRank: rankRelations.cachedRank })
         .from(rankRelations)
         .where(and(eq(rankRelations.groupId, group.id), eq(rankRelations.robloxId, membership.role.id)))
         .limit(1)
         .catch(() => [])
 
-    const level = relation?.permissionLevel ?? PERMISSION.NONE
+    // A role Roblox reports but the group never bound still tells us the
+    // user's standing, so the rank number comes from the membership itself.
+    const resolved: Membership = {
+        permissionLevel: relation?.permissionLevel ?? PERMISSION.NONE,
+        robloxRank: relation?.cachedRank ?? membership.role.rank ?? -1
+    }
 
-    await dataRedis.set(cacheKey, level, 'EX', 60).catch(() => undefined)
+    await dataRedis
+        .set(cacheKey, `${resolved.permissionLevel}:${resolved.robloxRank}`, 'EX', 60)
+        .catch(() => undefined)
 
-    return level
+    return resolved
+}
+
+export async function GetPermissionLevel(userID: string, groupIdOrSlug: string): Promise<number> {
+    return (await GetMembership(userID, groupIdOrSlug)).permissionLevel
 }
 
 export default async function UserHasRank(userID: string, groupIdOrSlug: string, rank: number): Promise<boolean> {

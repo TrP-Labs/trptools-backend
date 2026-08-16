@@ -1,33 +1,22 @@
 import { status } from 'elysia'
-import { and, asc, eq, gte, inArray, lte } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import db from '../db'
-import { events, shiftSignups, shiftSlots, users, type Event, type ShiftSlot } from '../db/schema'
+import { events, rankSignupSlots, shiftSignups, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertPermission, GetPermissionLevel } from '../utils/groupPermission'
+import { assertPermission, GetMembership } from '../utils/groupPermission'
 import { describeRule, isValidRule, occurrencesBetween } from '../utils/recurrence'
 import { childSlug, uniqueWithin } from '../utils/slug'
 import type { session } from '../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../groups/service'
 import { GroupModel } from '../groups/model'
+import { publishSignupChange } from './events'
+import { canUseSheet, loadSheets, loadSignups, presentSheets, sheetsVisibleTo, signupsOpen } from './sheets'
 import { ScheduleModel } from './model'
 
 const MAX_HORIZON_DAYS = 120
 
-function presentEvent(event: Event, slots: ShiftSlot[]): ScheduleModel.eventResponse {
-    return {
-        ...event,
-        recurrenceText: describeRule(event.rrule, event.startTime),
-        slots: slots
-            .filter((slot) => slot.eventId === event.eventId)
-            .sort((a, b) => a.order - b.order)
-            .map((slot) => ({
-                id: slot.id,
-                name: slot.name,
-                description: slot.description,
-                capacity: slot.capacity,
-                order: slot.order
-            }))
-    }
+function presentEvent(event: Event): ScheduleModel.eventResponse {
+    return { ...event, recurrenceText: describeRule(event.rrule, event.startTime) }
 }
 
 /** A shift page address free within its group. */
@@ -38,58 +27,22 @@ async function freeShiftSlug(groupId: string, name: string, exceptId?: string): 
     return uniqueWithin(childSlug('shift', name, rows.length + 1), taken)
 }
 
-/** Replaces an event's slots wholesale, preserving ids where names match. */
-async function replaceSlots(eventId: string, slots: ScheduleModel.slotInput[]) {
-    const existing = await db.select().from(shiftSlots).where(eq(shiftSlots.eventId, eventId))
-    const byName = new Map(existing.map((slot) => [slot.name, slot]))
-    const keep = new Set<string>()
-
-    for (const [index, slot] of slots.entries()) {
-        const match = byName.get(slot.name)
-        const values = {
-            name: slot.name,
-            description: slot.description ?? '',
-            capacity: slot.capacity ?? 1,
-            order: slot.order ?? index
-        }
-
-        if (match) {
-            // Reusing the row keeps existing signups attached.
-            keep.add(match.id)
-            await db.update(shiftSlots).set(values).where(eq(shiftSlots.id, match.id))
-        } else {
-            const [created] = await db
-                .insert(shiftSlots)
-                .values({ eventId, ...values })
-                .returning({ id: shiftSlots.id })
-            if (created) keep.add(created.id)
-        }
-    }
-
-    const removed = existing.filter((slot) => !keep.has(slot.id))
-    if (removed.length > 0) {
-        await db.delete(shiftSlots).where(
-            inArray(
-                shiftSlots.id,
-                removed.map((slot) => slot.id)
-            )
-        )
-    }
-}
-
 /** Whether the caller may see a group's schedule at all. */
 async function assertCanRead(groupIdOrSlug: string, session: session) {
     const group = await findGroup(groupIdOrSlug)
     if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-    const permissionLevel = session.user ? await GetPermissionLevel(session.user.userId, group.id) : PERMISSION.NONE
-    const isMember = permissionLevel >= PERMISSION.DISPATCH || session.user?.siteRank === 'admin'
+    const membership = session.user
+        ? await GetMembership(session.user.userId, group.id)
+        : { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
+
+    const isMember = membership.permissionLevel >= PERMISSION.DISPATCH || session.user?.siteRank === 'admin'
 
     if (!isMember && (group.visibility === 'PRIVATE' || !group.showShifts)) {
         throw status(404, 'Not Found' satisfies globalModel.notFound)
     }
 
-    return { group, permissionLevel, isMember }
+    return { group, membership, isMember }
 }
 
 export abstract class Schedule {
@@ -102,17 +55,7 @@ export abstract class Schedule {
             .where(eq(events.groupId, group.id))
             .orderBy(asc(events.startTime))
 
-        const visible = rows.filter((event) => isMember || event.visibility === 'PUBLIC')
-        if (visible.length === 0) return []
-
-        const slots = await db.select().from(shiftSlots).where(
-            inArray(
-                shiftSlots.eventId,
-                visible.map((event) => event.eventId)
-            )
-        )
-
-        return visible.map((event) => presentEvent(event, slots))
+        return rows.filter((event) => isMember || event.visibility === 'PUBLIC').map(presentEvent)
     }
 
     static async getScheduleObject(eventId: string, session: session): Promise<ScheduleModel.eventResponse> {
@@ -124,20 +67,18 @@ export abstract class Schedule {
             throw status(404, 'Not Found' satisfies globalModel.notFound)
         }
 
-        const slots = await db.select().from(shiftSlots).where(eq(shiftSlots.eventId, eventId))
-
-        return presentEvent(event, slots)
+        return presentEvent(event)
     }
 
     /**
      * Expands the group's recurring shifts into concrete occurrences over a
-     * window and attaches everyone who signed up for each one.
+     * window and attaches the sign-up sheets the caller is allowed to see.
      */
     static async getOccurrences(
         query: ScheduleModel.occurrencesRequest,
         session: session
     ): Promise<ScheduleModel.occurrencesResponse> {
-        const { group, isMember } = await assertCanRead(query.groupId, session)
+        const { group, membership, isMember } = await assertCanRead(query.groupId, session)
 
         const from = query.from ? new Date(query.from) : new Date()
         if (Number.isNaN(from.getTime())) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
@@ -152,94 +93,58 @@ export abstract class Schedule {
         const limit = Math.min(Math.max(Number(query.limit ?? 100) || 100, 1), 200)
 
         const rows = await db.select().from(events).where(eq(events.groupId, group.id))
-        const visible = rows.filter((event) => isMember || event.visibility === 'PUBLIC')
+
+        const visible = rows.filter(
+            (event) =>
+                (isMember || event.visibility === 'PUBLIC') && (!query.eventId || event.eventId === query.eventId)
+        )
         if (visible.length === 0) return []
 
-        const slots = await db.select().from(shiftSlots).where(
-            inArray(
-                shiftSlots.eventId,
-                visible.map((event) => event.eventId)
-            )
+        const expanded = visible.flatMap((event) =>
+            occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, limit).map((occurrence) => ({
+                event,
+                occurrence
+            }))
         )
 
-        const expanded: ScheduleModel.occurrencesResponse = []
-
-        for (const event of visible) {
-            const eventSlots = slots.filter((slot) => slot.eventId === event.eventId).sort((a, b) => a.order - b.order)
-
-            for (const occurrence of occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, limit)) {
-                expanded.push({
-                    eventId: event.eventId,
-                    groupId: event.groupId,
-                    name: event.name,
-                    slug: event.slug,
-                    description: event.description,
-                    color: event.color,
-                    start: occurrence.start,
-                    end: occurrence.end,
-                    slots: eventSlots.map((slot) => ({
-                        id: slot.id,
-                        name: slot.name,
-                        description: slot.description,
-                        capacity: slot.capacity,
-                        order: slot.order,
-                        signups: []
-                    }))
-                })
-            }
-        }
-
-        expanded.sort((a, b) => a.start.getTime() - b.start.getTime())
+        expanded.sort((a, b) => a.occurrence.start.getTime() - b.occurrence.start.getTime())
         const window = expanded.slice(0, limit)
         if (window.length === 0) return []
 
-        // Attach signups in one query rather than per occurrence.
-        const slotIds = [...new Set(window.flatMap((entry) => entry.slots.map((slot) => slot.id)))]
+        // Sheets are per rank, so they are loaded once for the whole window
+        // rather than per occurrence.
+        const sheets = isMember ? sheetsVisibleTo(await loadSheets(group.id), membership, session) : []
 
-        if (slotIds.length > 0) {
-            const signups = await db
-                .select({
-                    slotId: shiftSignups.slotId,
-                    occurrence: shiftSignups.occurrence,
-                    userId: users.id,
-                    robloxId: users.robloxId,
-                    username: users.cachedUsername,
-                    displayName: users.cachedDisplayName,
-                    avatar: users.cachedAvatar
-                })
-                .from(shiftSignups)
-                .innerJoin(users, eq(shiftSignups.userId, users.id))
-                .where(
-                    and(
-                        inArray(shiftSignups.slotId, slotIds),
-                        gte(shiftSignups.occurrence, window[0]!.start),
-                        lte(shiftSignups.occurrence, window[window.length - 1]!.start)
-                    )
-                )
+        const signups =
+            sheets.length > 0
+                ? await loadSignups(
+                      sheets.flatMap((sheet) => sheet.slots.map((slot) => slot.id)),
+                      [...new Set(window.map((entry) => entry.event.eventId))],
+                      window[0]!.occurrence.start,
+                      window[window.length - 1]!.occurrence.start
+                  )
+                : new Map()
 
-            const index = new Map<string, typeof signups>()
-            for (const signup of signups) {
-                const key = `${signup.slotId}:${signup.occurrence.getTime()}`
-                const bucket = index.get(key) ?? []
-                bucket.push(signup)
-                index.set(key, bucket)
+        return window.map(({ event, occurrence }) => {
+            // An occurrence outside the window carries no sheets at all, so a
+            // client never has to decide whether to render an empty form.
+            const open = signupsOpen(occurrence.start, occurrence.end, group.signupLeadMinutes)
+
+            return {
+                eventId: event.eventId,
+                groupId: event.groupId,
+                name: event.name,
+                slug: event.slug,
+                description: event.description,
+                color: event.color,
+                start: occurrence.start,
+                end: occurrence.end,
+                signupsOpen: open,
+                signupsOpenAt: new Date(occurrence.start.getTime() - group.signupLeadMinutes * 60_000),
+                sheetsAvailable: sheets.length > 0,
+                sheets: open ? presentSheets(sheets, event.eventId, occurrence.start, signups) : []
             }
-
-            for (const entry of window) {
-                for (const slot of entry.slots) {
-                    const bucket = index.get(`${slot.id}:${entry.start.getTime()}`) ?? []
-                    slot.signups = bucket.map((signup) => ({
-                        userId: signup.userId,
-                        robloxId: signup.robloxId,
-                        username: signup.username,
-                        displayName: signup.displayName,
-                        avatar: signup.avatar
-                    }))
-                }
-            }
-        }
-
-        return window
+        })
     }
 
     static async createScheduledObject(
@@ -255,7 +160,7 @@ export abstract class Schedule {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         }
 
-        const { slots, groupId, ...values } = body
+        const { groupId, ...values } = body
 
         const [event] = await db
             .insert(events)
@@ -263,8 +168,6 @@ export abstract class Schedule {
             .returning({ eventId: events.eventId })
 
         if (!event) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
-
-        if (slots?.length) await replaceSlots(event.eventId, slots)
 
         await recordAudit(group.id, session.user?.userId ?? null, 'shift.create', `Created shift ${body.name}`)
 
@@ -281,22 +184,18 @@ export abstract class Schedule {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         }
 
-        const { slots, ...patch } = body
-
-        if (Object.keys(patch).length > 0) {
+        if (Object.keys(body).length > 0) {
             await db
                 .update(events)
                 .set({
-                    ...patch,
-                    ...(patch.name !== undefined && patch.name !== event.name
-                        ? { slug: await freeShiftSlug(event.groupId, patch.name, eventId) }
+                    ...body,
+                    ...(body.name !== undefined && body.name !== event.name
+                        ? { slug: await freeShiftSlug(event.groupId, body.name, eventId) }
                         : {}),
                     updatedAt: new Date()
                 })
                 .where(eq(events.eventId, eventId))
         }
-
-        if (slots !== undefined) await replaceSlots(eventId, slots)
 
         await recordAudit(event.groupId, session.user?.userId ?? null, 'shift.update', `Updated shift ${event.name}`)
 
@@ -318,27 +217,40 @@ export abstract class Schedule {
 
     // ---------------------------------------------------------------- signups
 
-    static async signUp(body: ScheduleModel.signupBody, session: session) {
+    /**
+     * Resolves a slot to the shift it is being taken against, checking that
+     * the caller's rank actually reaches the sheet the slot belongs to and
+     * that the occurrence is one the shift really runs.
+     */
+    private static async resolveSlot(body: ScheduleModel.signupBody, session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
-        const [slot] = await db
-            .select({ slot: shiftSlots, event: events })
-            .from(shiftSlots)
-            .innerJoin(events, eq(shiftSlots.eventId, events.eventId))
-            .where(eq(shiftSlots.id, body.slotId))
-            .limit(1)
+        const [event] = await db.select().from(events).where(eq(events.eventId, body.eventId)).limit(1)
+        if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        if (!slot) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        const membership = await GetMembership(session.user.userId, event.groupId)
 
         // Signing up is a member action, so dispatch level is the floor.
-        await assertPermission(session, slot.event.groupId, PERMISSION.DISPATCH)
+        if (membership.permissionLevel < PERMISSION.DISPATCH && session.user.siteRank !== 'admin') {
+            throw status(403, 'Forbidden' satisfies globalModel.forbidden)
+        }
+
+        const sheets = await loadSheets(event.groupId)
+        const sheet = sheets.find((candidate) => candidate.slots.some((slot) => slot.id === body.slotId))
+        if (!sheet) throw status(404, 'Not Found' satisfies globalModel.notFound)
+
+        if (!canUseSheet(sheet, membership, session)) {
+            throw status(403, 'your rank cannot take that slot' satisfies ScheduleModel.wrongRank)
+        }
+
+        const slot = sheet.slots.find((candidate) => candidate.id === body.slotId)!
 
         // Signing up for a time the shift does not actually run would create
         // orphan rows the scheduler never shows again.
         const matches = occurrencesBetween(
-            slot.event.rrule,
-            slot.event.startTime,
-            slot.event.duration,
+            event.rrule,
+            event.startTime,
+            event.duration,
             new Date(body.occurrence.getTime() - 1000),
             new Date(body.occurrence.getTime() + 1000),
             1
@@ -346,24 +258,49 @@ export abstract class Schedule {
 
         if (matches.length === 0) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
 
+        // Enforced here as well as in the listing: hiding a form is a display
+        // decision, and a client that kept a stale slot id must not be able to
+        // sign up for a shift months away because of it.
+        const group = await findGroup(event.groupId)
+        const lead = group?.signupLeadMinutes ?? 1440
+
+        if (!signupsOpen(matches[0]!.start, matches[0]!.end, lead)) {
+            throw status(409, 'sign-ups are not open for that shift yet' satisfies ScheduleModel.signupsClosed)
+        }
+
+        return { event, sheet, slot }
+    }
+
+    static async signUp(body: ScheduleModel.signupBody, session: session) {
+        const { event, sheet, slot } = await Schedule.resolveSlot(body, session)
+
         const existing = await db
             .select({ id: shiftSignups.id, userId: shiftSignups.userId })
             .from(shiftSignups)
-            .where(and(eq(shiftSignups.slotId, body.slotId), eq(shiftSignups.occurrence, body.occurrence)))
+            .where(
+                and(
+                    eq(shiftSignups.slotId, body.slotId),
+                    eq(shiftSignups.eventId, body.eventId),
+                    eq(shiftSignups.occurrence, body.occurrence)
+                )
+            )
 
         if (existing.some((row) => row.userId === session.user!.userId)) {
             throw status(409, 'already signed up for this shift' satisfies ScheduleModel.alreadySignedUp)
         }
 
-        if (existing.length >= slot.slot.capacity) {
+        if (existing.length >= slot.capacity) {
             throw status(409, 'that slot is full' satisfies ScheduleModel.slotFull)
         }
 
         await db.insert(shiftSignups).values({
             slotId: body.slotId,
-            userId: session.user.userId,
+            eventId: body.eventId,
+            userId: session.user!.userId,
             occurrence: body.occurrence
         })
+
+        await publishSignupChange(event.groupId, body.eventId, body.occurrence, sheet.signupId)
 
         return 'Success' as globalModel.genericSuccess
     }
@@ -371,15 +308,35 @@ export abstract class Schedule {
     static async withdraw(body: ScheduleModel.signupBody, session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
-        await db
+        const [removed] = await db
             .delete(shiftSignups)
             .where(
                 and(
                     eq(shiftSignups.slotId, body.slotId),
+                    eq(shiftSignups.eventId, body.eventId),
                     eq(shiftSignups.occurrence, body.occurrence),
                     eq(shiftSignups.userId, session.user.userId)
                 )
             )
+            .returning({ id: shiftSignups.id })
+
+        if (removed) {
+            const [event] = await db
+                .select({ groupId: events.groupId })
+                .from(events)
+                .where(eq(events.eventId, body.eventId))
+                .limit(1)
+
+            const [slot] = await db
+                .select({ signupId: rankSignupSlots.signupId })
+                .from(rankSignupSlots)
+                .where(eq(rankSignupSlots.id, body.slotId))
+                .limit(1)
+
+            if (event && slot) {
+                await publishSignupChange(event.groupId, body.eventId, body.occurrence, slot.signupId)
+            }
+        }
 
         return 'Success' as globalModel.genericSuccess
     }
