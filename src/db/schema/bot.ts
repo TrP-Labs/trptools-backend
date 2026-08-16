@@ -75,6 +75,16 @@ export const botConfigs = pgTable('bot_configs', {
     autoHostReminder: boolean('auto_host_reminder').notNull().default(false),
     autoHostReminderLead: integer('auto_host_reminder_lead').notNull().default(30),
 
+    /**
+     * Letting the people who signed up in early.
+     *
+     * Deliberately its own trigger rather than part of the start announcement:
+     * staff are expected on shift before the public arrives, so this normally
+     * runs a good while ahead of it.
+     */
+    autoStaffStart: boolean('auto_staff_start').notNull().default(false),
+    autoStaffStartLead: integer('auto_staff_start_lead').notNull().default(15),
+
     /** The "starting now" announcement. */
     autoBegin: boolean('auto_begin').notNull().default(false),
     autoBeginLead: integer('auto_begin_lead').notNull().default(0),

@@ -33,6 +33,8 @@ export function presentConfig(row: BotConfig): BotModel.config {
         autoSignupsLead: row.autoSignupsLead,
         autoHostReminder: row.autoHostReminder,
         autoHostReminderLead: row.autoHostReminderLead,
+        autoStaffStart: row.autoStaffStart,
+        autoStaffStartLead: row.autoStaffStartLead,
         autoBegin: row.autoBegin,
         autoBeginLead: row.autoBeginLead,
         autoComplete: row.autoComplete,

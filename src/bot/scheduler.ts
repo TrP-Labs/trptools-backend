@@ -67,6 +67,14 @@ function triggersFor(
             offsetMs: -config.autoHostReminderLead * 60_000
         },
         {
+            // Staff who signed up get the join code before the announcement
+            // goes out, which is the whole point of signing up: they are
+            // expected in position before anybody else arrives.
+            action: 'STAFF_START',
+            enabled: config.signupsEnabled && config.autoStaffStart,
+            offsetMs: -config.autoStaffStartLead * 60_000
+        },
+        {
             action: 'BEGIN',
             enabled: config.announcementsEnabled && config.autoBegin,
             offsetMs: -config.autoBeginLead * 60_000

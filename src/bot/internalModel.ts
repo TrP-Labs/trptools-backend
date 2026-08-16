@@ -149,6 +149,7 @@ export namespace BotInternal {
             t.Literal('ANNOUNCE'),
             t.Literal('SIGNUPS'),
             t.Literal('HOST_REMINDER'),
+            t.Literal('STAFF_START'),
             t.Literal('BEGIN'),
             t.Literal('COMPLETE')
         ]),

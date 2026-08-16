@@ -1,0 +1,2 @@
+ALTER TABLE "bot_configs" ADD COLUMN "auto_staff_start" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "bot_configs" ADD COLUMN "auto_staff_start_lead" integer DEFAULT 15 NOT NULL;
