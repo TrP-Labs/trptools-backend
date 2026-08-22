@@ -16,10 +16,12 @@ export function presentConfig(row: BotConfig): BotModel.config {
         hostChannel: row.hostChannel,
 
         shiftPingRole: row.shiftPingRole,
+        pingUpcoming: row.pingUpcoming,
         hostPingRole: row.hostPingRole,
 
         placeId: row.placeId,
         ownerRobloxId: row.ownerRobloxId,
+        announceJoinCode: row.announceJoinCode,
 
         announcementsEnabled: row.announcementsEnabled,
         signupsEnabled: row.signupsEnabled,
@@ -40,6 +42,10 @@ export function presentConfig(row: BotConfig): BotModel.config {
         autoComplete: row.autoComplete,
         autoCompleteDelay: row.autoCompleteDelay,
 
-        manifestRefreshSeconds: row.manifestRefreshSeconds
+        manifestRefreshSeconds: row.manifestRefreshSeconds,
+
+        clearSignups: row.clearSignups,
+        clearAnnouncements: row.clearAnnouncements,
+        clearHostReminders: row.clearHostReminders
     }
 }

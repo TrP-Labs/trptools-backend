@@ -99,6 +99,28 @@ export const bot = new Elysia({ prefix: '/bot', tags: ['Bot'] })
             )
 
             .get(
+                '/cleanup',
+                async ({ params: { groupId }, query, session }) =>
+                    Bot.cleanup(groupId, session, query.refresh === '1'),
+                {
+                    query: BotModel.refreshQuery,
+                    response: {
+                        200: BotModel.cleanupStatus,
+                        401: globalModel.unauthorized,
+                        403: globalModel.forbidden,
+                        404: BotModel.notConnected
+                    },
+                    detail: {
+                        summary: 'Whether the end-of-shift cleanup can run',
+                        description:
+                            'Every channel the cleanup would delete from, and whether the bot holds Manage ' +
+                            'Messages and Read Message History there. Pass refresh=1 to drop the cached ' +
+                            'guild reads first.'
+                    }
+                }
+            )
+
+            .get(
                 '/roles',
                 async ({ params: { groupId }, query, session }) => Bot.roles(groupId, session, query.refresh === '1'),
                 {

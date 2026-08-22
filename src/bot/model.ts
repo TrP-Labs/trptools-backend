@@ -64,10 +64,12 @@ export namespace BotModel {
         hostChannel: t.Union([t.String(), t.Null()]),
 
         shiftPingRole: t.Union([t.String(), t.Null()]),
+        pingUpcoming: t.Boolean(),
         hostPingRole: t.Union([t.String(), t.Null()]),
 
         placeId: t.String(),
         ownerRobloxId: t.Union([t.String(), t.Null()]),
+        announceJoinCode: t.Boolean(),
 
         announcementsEnabled: t.Boolean(),
         signupsEnabled: t.Boolean(),
@@ -88,7 +90,11 @@ export namespace BotModel {
         autoComplete: t.Boolean(),
         autoCompleteDelay: t.Number(),
 
-        manifestRefreshSeconds: t.Number()
+        manifestRefreshSeconds: t.Number(),
+
+        clearSignups: t.Boolean(),
+        clearAnnouncements: t.Boolean(),
+        clearHostReminders: t.Boolean()
     })
     export type config = typeof config.static
 
@@ -110,10 +116,12 @@ export namespace BotModel {
         hostChannel: t.Optional(nullableSnowflake),
 
         shiftPingRole: t.Optional(nullableSnowflake),
+        pingUpcoming: t.Optional(t.Boolean()),
         hostPingRole: t.Optional(nullableSnowflake),
 
         placeId: t.Optional(t.String({ pattern: '^[0-9]{1,20}$' })),
         ownerRobloxId: t.Optional(t.Union([t.String({ pattern: '^[0-9]{1,20}$' }), t.Null()])),
+        announceJoinCode: t.Optional(t.Boolean()),
 
         announcementsEnabled: t.Optional(t.Boolean()),
         signupsEnabled: t.Optional(t.Boolean()),
@@ -134,7 +142,11 @@ export namespace BotModel {
         autoComplete: t.Optional(t.Boolean()),
         autoCompleteDelay: t.Optional(leadMinutes),
 
-        manifestRefreshSeconds: t.Optional(t.Integer({ minimum: 30, maximum: 3600 }))
+        manifestRefreshSeconds: t.Optional(t.Integer({ minimum: 30, maximum: 3600 })),
+
+        clearSignups: t.Optional(t.Boolean()),
+        clearAnnouncements: t.Optional(t.Boolean()),
+        clearHostReminders: t.Optional(t.Boolean())
     })
     export type updateBody = typeof updateBody.static
 
@@ -151,7 +163,9 @@ export namespace BotModel {
         /** Whether the bot can see the channel at all. */
         canRead: t.Boolean(),
         /** Whether the bot can post an embed with an image in it. */
-        canSend: t.Boolean()
+        canSend: t.Boolean(),
+        /** Whether the bot can delete its own old posts here at cleanup time. */
+        canManage: t.Boolean()
     })
     export type channel = typeof channel.static
 
@@ -177,6 +191,35 @@ export namespace BotModel {
 
     export const roleList = t.Array(role)
     export type roleList = typeof roleList.static
+
+    // ------------------------------------------------------------- cleanup
+
+    /**
+     * One channel the end-of-shift cleanup will try to delete from, and
+     * whether the bot can actually do it there.
+     *
+     * Deleting a message needs Manage Messages *and* Read Message History, and
+     * Discord grants those per channel — a bot that looks healthy guild-wide
+     * can still be denied in the one channel that matters. This is what makes
+     * a silent cleanup failure visible before a shift rather than after it.
+     */
+    export const cleanupTarget = t.Object({
+        channelId: t.String(),
+        name: t.String(),
+        /** What this channel is used for, e.g. "Shift announcements". */
+        purpose: t.String(),
+        /** Whether the group has asked for this channel to be cleared. */
+        enabled: t.Boolean(),
+        canDelete: t.Boolean()
+    })
+    export type cleanupTarget = typeof cleanupTarget.static
+
+    export const cleanupStatus = t.Object({
+        targets: t.Array(cleanupTarget),
+        /** True when every channel the group asked to clear can be cleared. */
+        ready: t.Boolean()
+    })
+    export type cleanupStatus = typeof cleanupStatus.static
 
     export const refreshQuery = t.Object({
         /** Drops the cached guild reads before answering. */
