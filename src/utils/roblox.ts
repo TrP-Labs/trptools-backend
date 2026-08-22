@@ -67,6 +67,20 @@ export interface RobloxMembership {
     role: RobloxRole
 }
 
+/**
+ * The outcome of asking Roblox what role a user holds.
+ *
+ * `NOT_MEMBER` is Roblox answering "none". `UNKNOWN` is Roblox not answering at
+ * all — every credential tier was refused, or the legacy fallback was rate
+ * limited. Collapsing the two into a single `null` made an unreachable Roblox
+ * read as a demotion, so a group owner lost their own dashboard for as long as
+ * that negative answer stayed cached.
+ */
+export type MembershipLookup =
+    | { status: 'MEMBER'; membership: RobloxMembership }
+    | { status: 'NOT_MEMBER' }
+    | { status: 'UNKNOWN' }
+
 export interface RobloxUser {
     id: number
     name: string
@@ -104,8 +118,12 @@ async function cached<T>(key: string, ttl: number, produce: () => Promise<T>): P
 
     try {
         // Cache misses are cached too, briefly, so a bad id cannot be used to
-        // hammer Roblox through us.
-        await dataRedis.set(key, JSON.stringify(value), 'EX', value === null ? TTL.negative : ttl)
+        // hammer Roblox through us. An empty collection counts as a miss: every
+        // real group has roles, so an empty list means the fetch failed rather
+        // than that there is nothing there, and holding it for the full TTL
+        // would keep answering from a failure long after Roblox recovered.
+        const empty = value === null || (Array.isArray(value) && value.length === 0)
+        await dataRedis.set(key, JSON.stringify(value), 'EX', empty ? TTL.negative : ttl)
     } catch {
         // ignore
     }
@@ -245,42 +263,84 @@ export abstract class Roblox {
      *
      * This is the hot path — every permission check lands here — so it is
      * cached aggressively and prefers the group's own API key.
+     *
+     * A definite answer is cached; an inconclusive one deliberately is not.
+     * Caching "we could not reach Roblox" would turn one bad moment into a
+     * minute of denied requests for everybody in the group.
      */
-    static async getMembership(
+    static async lookupMembership(
         robloxUserId: number | string,
         groupId: number | string,
         credentials: RobloxCredentials = {}
-    ): Promise<RobloxMembership | null> {
-        return cached(`roblox:membership:${groupId}:${robloxUserId}`, TTL.membership, async () => {
-            const filter = encodeURIComponent(`user == 'users/${robloxUserId}'`)
-            const cloud = await openCloud<{
-                groupMemberships?: Array<{ user: string; role: string }>
-            }>(`/groups/${groupId}/memberships?maxPageSize=1&filter=${filter}`, credentials)
+    ): Promise<MembershipLookup> {
+        const key = `roblox:membership:${groupId}:${robloxUserId}`
 
-            if (cloud?.groupMemberships?.length) {
-                const membership = cloud.groupMemberships[0]!
-                const roleId = lastPathSegment(membership.role)
-                if (roleId) {
-                    const role = await this.getRoleById(groupId, roleId, credentials)
-                    if (role) return { groupId: Number(groupId), role }
-                    return { groupId: Number(groupId), role: { id: roleId, name: 'Unknown', rank: 0 } }
+        try {
+            const hit = await dataRedis.get(key)
+            if (hit !== null) return JSON.parse(hit) as MembershipLookup
+        } catch {
+            // A cache failure must never break the request path.
+        }
+
+        const result = await this.resolveMembership(robloxUserId, groupId, credentials)
+        if (result.status === 'UNKNOWN') return result
+
+        try {
+            const ttl = result.status === 'MEMBER' ? TTL.membership : TTL.negative
+            await dataRedis.set(key, JSON.stringify(result), 'EX', ttl)
+        } catch {
+            // ignore
+        }
+
+        return result
+    }
+
+    private static async resolveMembership(
+        robloxUserId: number | string,
+        groupId: number | string,
+        credentials: RobloxCredentials
+    ): Promise<MembershipLookup> {
+        const filter = encodeURIComponent(`user == 'users/${robloxUserId}'`)
+        const cloud = await openCloud<{
+            groupMemberships?: Array<{ user: string; role: string }>
+        }>(`/groups/${groupId}/memberships?maxPageSize=1&filter=${filter}`, credentials)
+
+        if (cloud?.groupMemberships?.length) {
+            const membership = cloud.groupMemberships[0]!
+            const roleId = lastPathSegment(membership.role)
+            if (roleId) {
+                const role = await this.getRoleById(groupId, roleId, credentials)
+                return {
+                    status: 'MEMBER',
+                    membership: {
+                        groupId: Number(groupId),
+                        role: role ?? { id: roleId, name: 'Unknown', rank: 0 }
+                    }
                 }
             }
+        }
 
-            // Open Cloud returns an empty list for a non-member, which is a
-            // real answer — but it also returns null when we have no usable
-            // credential, and those must not be confused. Only fall through to
-            // the legacy path when Open Cloud gave us nothing at all.
-            if (cloud) return null
+        // Open Cloud returns an empty list for a non-member, which is a
+        // real answer — but it also returns null when we have no usable
+        // credential, and those must not be confused. Only fall through to
+        // the legacy path when Open Cloud gave us nothing at all.
+        if (cloud) return { status: 'NOT_MEMBER' }
 
-            const legacy = await request<{
-                data: Array<{ group: { id: number; name: string }; role: { id: number; name: string; rank: number } }>
-            }>(`${LEGACY_GROUPS}/v2/users/${robloxUserId}/groups/roles`)
+        const legacy = await request<{
+            data: Array<{ group: { id: number; name: string }; role: { id: number; name: string; rank: number } }>
+        }>(`${LEGACY_GROUPS}/v2/users/${robloxUserId}/groups/roles`)
 
-            const entry = legacy?.data?.find((item) => item.group.id.toString() === groupId.toString())
-            if (!entry) return null
+        // A null body is the request itself failing — rate limited, most
+        // likely, since this path is anonymous and shared by every caller on
+        // the instance. That is not the same as a list without this group in it.
+        if (!legacy?.data) return { status: 'UNKNOWN' }
 
-            return {
+        const entry = legacy.data.find((item) => item.group.id.toString() === groupId.toString())
+        if (!entry) return { status: 'NOT_MEMBER' }
+
+        return {
+            status: 'MEMBER',
+            membership: {
                 groupId: entry.group.id,
                 groupName: entry.group.name,
                 role: {
@@ -289,7 +349,7 @@ export abstract class Roblox {
                     rank: entry.role.rank
                 }
             }
-        })
+        }
     }
 
     /**

@@ -92,11 +92,29 @@ export abstract class Rank {
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        return db
+        const ranks = await db
             .select()
             .from(rankRelations)
             .where(eq(rankRelations.groupId, group.id))
             .orderBy(asc(rankRelations.cachedRank))
+
+        // The Roblox owner role holds manage whatever the row says, so a row
+        // that disagrees is repaired here rather than left to show the wrong
+        // level forever. Editing rank 255 deliberately drops any permission
+        // change, so this is the only place such a row can be corrected.
+        const drifted = ranks.filter((rank) => rank.cachedRank >= 255 && rank.permissionLevel !== PERMISSION.MANAGE)
+
+        for (const rank of drifted) {
+            await db
+                .update(rankRelations)
+                .set({ permissionLevel: PERMISSION.MANAGE })
+                .where(eq(rankRelations.id, rank.id))
+            rank.permissionLevel = PERMISSION.MANAGE
+        }
+
+        if (drifted.length > 0) await invalidateGroupPermissions(group.id)
+
+        return ranks
     }
 
     static async getRank(rankId: string, session: session): Promise<RankModel.rankItemResponse> {

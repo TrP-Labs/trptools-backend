@@ -1,0 +1,1 @@
+ALTER TABLE "bot_configs" ADD COLUMN "ping_upcoming" boolean DEFAULT false NOT NULL;

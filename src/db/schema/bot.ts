@@ -40,8 +40,16 @@ export const botConfigs = pgTable('bot_configs', {
     hostChannel: text('host_channel'),
 
     // --- Roles --------------------------------------------------------------
-    /** Pinged when a shift is announced or starts. */
+    /** Pinged when a shift starts, and when it is announced if `pingUpcoming`. */
     shiftPingRole: text('shift_ping_role'),
+    /**
+     * Whether the "a shift is coming up" post pings that role too.
+     *
+     * Off by default: the upcoming notice usually goes out a day ahead, where
+     * a ping is noise rather than news, and a group that pings on both ends up
+     * training people to mute the role that matters when the shift starts.
+     */
+    pingUpcoming: boolean('ping_upcoming').notNull().default(false),
     /** Pinged by the host reminder. */
     hostPingRole: text('host_ping_role'),
 
@@ -52,6 +60,16 @@ export const botConfigs = pgTable('bot_configs', {
      * for one occurrence; this is the fallback.
      */
     ownerRobloxId: text('owner_roblox_id'),
+
+    /**
+     * Whether the public start announcement prints the join code as text.
+     *
+     * The join button carries the code either way, so turning this off does
+     * not lock anybody out — it stops the code existing as copyable text in a
+     * channel it outlives the shift in. Staff messages always show it: the
+     * whole point of `/staff-begin` is handing it to the people on shift.
+     */
+    announceJoinCode: boolean('announce_join_code').notNull().default(true),
 
     // --- Features -----------------------------------------------------------
     // Each of these gates a whole capability, automated or not. Turning one
@@ -94,7 +112,20 @@ export const botConfigs = pgTable('bot_configs', {
     autoCompleteDelay: integer('auto_complete_delay').notNull().default(5),
 
     /** How often the live manifest image under a start announcement redraws. */
-    manifestRefreshSeconds: integer('manifest_refresh_seconds').notNull().default(120)
+    manifestRefreshSeconds: integer('manifest_refresh_seconds').notNull().default(120),
+
+    // --- End-of-shift cleanup ------------------------------------------------
+    // Closing a shift out deletes the messages the bot posted for it, and
+    // nothing else — it has never bulk-deleted a channel. These say which of
+    // its own posts a group actually wants taken down, grouped by the channel
+    // they live in, because that is how a group thinks about it. All three
+    // default on, which is what cleanup did before they existed.
+    /** The sheets themselves and the "come on in" pings, in each rank's channel. */
+    clearSignups: boolean('clear_signups').notNull().default(true),
+    /** The upcoming notice, the start announcement and the board under it. */
+    clearAnnouncements: boolean('clear_announcements').notNull().default(true),
+    /** The "a shift needs a host" reminder. */
+    clearHostReminders: boolean('clear_host_reminders').notNull().default(true)
 })
 
 export const botConfigsRelations = relations(botConfigs, ({ one }) => ({

@@ -39,6 +39,22 @@ const PERMISSION_LABELS: Record<PermissionName, string> = {
     SEND_POLLS: 'Create polls'
 }
 
+/**
+ * Whether the bot can take one of its own old messages down here.
+ *
+ * Discord needs Manage Messages *and* Read Message History to delete a message
+ * it did not just post — the cleanup runs hours later and fetches the message
+ * first, so both are load-bearing. Missing either is the usual reason a
+ * `/complete` reports "could not delete".
+ */
+function canDelete(permissions: bigint): boolean {
+    return (
+        has(permissions, 'VIEW_CHANNEL') &&
+        has(permissions, 'READ_MESSAGE_HISTORY') &&
+        has(permissions, 'MANAGE_MESSAGES')
+    )
+}
+
 const INSTALL_TTL = 600
 const installKey = (state: string) => `bot:install:${state}`
 
@@ -314,10 +330,80 @@ export abstract class Bot {
                     canSend:
                         has(permissions, 'VIEW_CHANNEL') &&
                         has(permissions, 'SEND_MESSAGES') &&
-                        has(permissions, 'EMBED_LINKS')
+                        has(permissions, 'EMBED_LINKS'),
+                    canManage: canDelete(permissions)
                 }
             })
             .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
+    }
+
+    /**
+     * Whether the end-of-shift cleanup will actually work, channel by channel.
+     *
+     * Cleanup is the one thing that fails silently and late: nothing is wrong
+     * until a shift closes out hours later and last week's sheets are still
+     * sitting there. Checking it up front, against the channels the group has
+     * actually configured, is what turns that into something fixable.
+     */
+    static async cleanup(
+        groupIdOrSlug: string,
+        session: session,
+        refresh = false
+    ): Promise<BotModel.cleanupStatus> {
+        const { group, config } = await requireConfig(groupIdOrSlug, session)
+        if (refresh) await invalidateGuild(config.guildId)
+
+        const [channels, roles, member, sheets] = await Promise.all([
+            Discord.getChannels(config.guildId),
+            Discord.getRoles(config.guildId),
+            Discord.getSelfMember(config.guildId),
+            db
+                .select({ name: rankSignups.name, channel: rankSignups.discordChannel })
+                .from(rankSignups)
+                .innerJoin(rankRelations, eq(rankSignups.rankId, rankRelations.id))
+                .where(eq(rankRelations.groupId, group.id))
+        ])
+
+        // One channel can serve several purposes, and reporting it three times
+        // would just be noise. The purposes are merged instead, and the
+        // channel counts as wanted if any of them wants it.
+        const wanted = new Map<string, { purposes: string[]; enabled: boolean }>()
+
+        const want = (channelId: string | null, purpose: string, enabled: boolean) => {
+            if (!channelId) return
+
+            const entry = wanted.get(channelId) ?? { purposes: [], enabled: false }
+            entry.purposes.push(purpose)
+            entry.enabled ||= enabled
+            wanted.set(channelId, entry)
+        }
+
+        want(config.announcementChannel, 'Shift announcements', config.clearAnnouncements)
+        want(config.hostChannel, 'Host reminders', config.clearHostReminders)
+        for (const sheet of sheets) want(sheet.channel, `${sheet.name} sign-ups`, config.clearSignups)
+
+        const byId = new Map(channels.map((channel) => [channel.id, channel]))
+
+        const targets = [...wanted.entries()].map(([channelId, entry]) => {
+            const channel = byId.get(channelId)
+            const permissions =
+                channel && member
+                    ? channelPermissions(channel, roles, member.roles, config.guildId, env.DISCORD_APP_ID)
+                    : 0n
+
+            return {
+                channelId,
+                name: channel?.name ?? 'unknown channel',
+                purpose: entry.purposes.join(', '),
+                enabled: entry.enabled,
+                canDelete: canDelete(permissions)
+            }
+        })
+
+        return {
+            targets,
+            ready: targets.every((target) => !target.enabled || target.canDelete)
+        }
     }
 
     static async roles(groupIdOrSlug: string, session: session, refresh = false): Promise<BotModel.roleList> {

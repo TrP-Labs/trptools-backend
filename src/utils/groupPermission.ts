@@ -48,6 +48,33 @@ async function resolveGroupId(idOrSlug: string): Promise<string | null> {
     return group?.id ?? null
 }
 
+const encode = (membership: Membership) => `${membership.permissionLevel}:${membership.robloxRank}`
+
+function decode(value: string): Membership {
+    const [level, rank] = value.split(':')
+    return { permissionLevel: Number(level), robloxRank: Number(rank) }
+}
+
+/**
+ * How long a last-known-good *Roblox role* stands in when Roblox cannot be
+ * reached at all.
+ *
+ * This is the one place TrPTools acts on something Roblox has not just
+ * confirmed, and it is deliberate: the alternative is that a rate-limited
+ * legacy endpoint or a refused API key silently demotes everyone in the group
+ * to nothing, which is exactly how group owners were losing their own
+ * dashboard. Roblox answering "not a member" clears it immediately, so a real
+ * demotion still takes effect within the minute.
+ *
+ * What is remembered is the **role id**, never the permission level it mapped
+ * to. The level is re-derived from `rank_relations` on every fallback, so a
+ * manager who changes what a rank grants still has that apply at once — even
+ * mid-outage, and even to the person making the change. Storing the level
+ * instead meant `invalidateGroupPermissions` had to throw the entry away to
+ * stay correct, which locked an owner out again the moment they used it.
+ */
+const GRACE_TTL = 60 * 15
+
 /**
  * Resolves what a user is inside a TrPTools group.
  *
@@ -65,13 +92,11 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
     if (!groupID) return NON_MEMBER
 
     const cacheKey = `perm:${groupID}:${userID}`
+    const graceKey = `perm:last:${groupID}:${userID}`
 
     try {
         const hit = await dataRedis.get(cacheKey)
-        if (hit !== null) {
-            const [level, rank] = hit.split(':')
-            return { permissionLevel: Number(level), robloxRank: Number(rank) }
-        }
+        if (hit !== null) return decode(hit)
     } catch {
         // fall through
     }
@@ -93,32 +118,68 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
     if (!group || !user) return NON_MEMBER
 
     const credentials = await resolveCredentials(group.id, userID)
-    const membership = await Roblox.getMembership(user.robloxId, group.robloxId, credentials)
+    const lookup = await Roblox.lookupMembership(user.robloxId, group.robloxId, credentials)
 
-    if (!membership) {
-        await dataRedis.set(cacheKey, `${PERMISSION.NONE}:-1`, 'EX', 30).catch(() => undefined)
+    if (lookup.status === 'UNKNOWN') {
+        const remembered = await dataRedis.get(graceKey).catch(() => null)
+        console.warn(
+            `[roblox] membership lookup for user ${user.robloxId} in group ${group.robloxId} was inconclusive` +
+                (remembered ? ' — standing in their last known role' : ' — no previous role to stand in')
+        )
+
+        if (!remembered) return NON_MEMBER
+
+        // Nothing is written to `cacheKey`: the next request should ask Roblox
+        // again rather than inherit a minute of guesswork.
+        const [roleId, rank] = remembered.split(':')
+        return resolveRole(group.id, roleId ?? '', Number(rank))
+    }
+
+    if (lookup.status === 'NOT_MEMBER') {
+        await Promise.all([
+            dataRedis.set(cacheKey, encode(NON_MEMBER), 'EX', 30).catch(() => undefined),
+            dataRedis.unlink(graceKey).catch(() => undefined)
+        ])
         return NON_MEMBER
     }
 
+    const { role } = lookup.membership
+    const resolved = await resolveRole(group.id, role.id, role.rank)
+
+    await Promise.all([
+        dataRedis.set(cacheKey, encode(resolved), 'EX', 60).catch(() => undefined),
+        dataRedis.set(graceKey, `${role.id}:${role.rank}`, 'EX', GRACE_TTL).catch(() => undefined)
+    ])
+
+    return resolved
+}
+
+/**
+ * What a Roblox role grants in a group, according to `rank_relations` as it
+ * stands right now.
+ */
+async function resolveRole(groupID: string, roleId: string, reportedRank: number): Promise<Membership> {
     const [relation] = await db
         .select({ permissionLevel: rankRelations.permissionLevel, cachedRank: rankRelations.cachedRank })
         .from(rankRelations)
-        .where(and(eq(rankRelations.groupId, group.id), eq(rankRelations.robloxId, membership.role.id)))
+        .where(and(eq(rankRelations.groupId, groupID), eq(rankRelations.robloxId, roleId)))
         .limit(1)
         .catch(() => [])
 
     // A role Roblox reports but the group never bound still tells us the
-    // user's standing, so the rank number comes from the membership itself.
-    const resolved: Membership = {
-        permissionLevel: relation?.permissionLevel ?? PERMISSION.NONE,
-        robloxRank: relation?.cachedRank ?? membership.role.rank ?? -1
-    }
+    // user's standing, so the rank number falls back to the reported one.
+    const robloxRank = relation?.cachedRank ?? reportedRank ?? -1
 
-    await dataRedis
-        .set(cacheKey, `${resolved.permissionLevel}:${resolved.robloxRank}`, 'EX', 60)
-        .catch(() => undefined)
+    // The Roblox owner role always holds full control, and that is settled
+    // here rather than only where ranks are edited. A group whose owner row
+    // drifted below manage — bound before the rule existed, or written by an
+    // older seed — could not be repaired through the API, because editing rank
+    // 255 deliberately drops any permission change. Pinning at the point
+    // permission is *resolved* means such a group can never lock itself out.
+    const permissionLevel =
+        robloxRank >= 255 ? PERMISSION.MANAGE : (relation?.permissionLevel ?? PERMISSION.NONE)
 
-    return resolved
+    return { permissionLevel, robloxRank }
 }
 
 export async function GetPermissionLevel(userID: string, groupIdOrSlug: string): Promise<number> {
@@ -141,7 +202,15 @@ export async function assertPermission(session: session, groupIdOrSlug: string, 
     if (!(await UserHasRank(session.user.userId, groupIdOrSlug, level))) throw status(403, 'Forbidden')
 }
 
-/** Clears cached permission levels, e.g. after a rank binding changes. */
+/**
+ * Clears cached permission levels, e.g. after a rank binding changes.
+ *
+ * The `perm:last:*` grace entries are deliberately left alone. They hold a
+ * Roblox role id rather than a permission level, so the new binding applies to
+ * them on the next fallback anyway — and clearing them would mean an owner who
+ * edits a rank during a Roblox outage throws away the only thing keeping them
+ * signed in to their own dashboard.
+ */
 export async function invalidateGroupPermissions(groupID: string) {
     const stream = dataRedis.scanStream({ match: `perm:${groupID}:*`, count: 500 })
     for await (const keys of stream) {
