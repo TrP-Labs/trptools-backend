@@ -67,7 +67,9 @@ export namespace BotModel {
         pingUpcoming: t.Boolean(),
         hostPingRole: t.Union([t.String(), t.Null()]),
 
+        /** Fixed; the bot builds the join link from it. Not settable. */
         placeId: t.String(),
+        /** The Roblox group's owner, resolved rather than set. */
         ownerRobloxId: t.Union([t.String(), t.Null()]),
         announceJoinCode: t.Boolean(),
 
@@ -119,8 +121,10 @@ export namespace BotModel {
         pingUpcoming: t.Optional(t.Boolean()),
         hostPingRole: t.Optional(nullableSnowflake),
 
-        placeId: t.Optional(t.String({ pattern: '^[0-9]{1,20}$' })),
-        ownerRobloxId: t.Optional(t.Union([t.String({ pattern: '^[0-9]{1,20}$' }), t.Null()])),
+        // `placeId` and `ownerRobloxId` are deliberately absent: the place
+        // never changes, and the server owner is the Roblox group's owner. A
+        // host who needs a different server for one shift sets it on that
+        // occurrence with `/edit-shift`.
         announceJoinCode: t.Optional(t.Boolean()),
 
         announcementsEnabled: t.Optional(t.Boolean()),
