@@ -54,10 +54,19 @@ export const botConfigs = pgTable('bot_configs', {
     hostPingRole: text('host_ping_role'),
 
     // --- Roblox join link ---------------------------------------------------
+    /**
+     * The place shifts are run in. Fixed — there is one, it does not change,
+     * and it was a text box on the bot page for no reason other than that the
+     * legacy TOML had one. Nothing writes this any more.
+     */
     placeId: text('place_id').notNull().default('2337102976'),
     /**
-     * Whose private server the join link points at. A shift can override this
-     * for one occurrence; this is the fallback.
+     * Whose private server the join link points at.
+     *
+     * A cache of the Roblox group's owner, not a setting: `src/bot/owner.ts`
+     * resolves it and writes it back, and it is read only when Roblox cannot
+     * be reached. A host who needs a different server for one shift overrides
+     * it on that occurrence with `/edit-shift`.
      */
     ownerRobloxId: text('owner_roblox_id'),
 

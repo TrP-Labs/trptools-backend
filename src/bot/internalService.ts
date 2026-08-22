@@ -9,6 +9,7 @@ import { publishSignupChange } from '../schedule/events'
 import { loadSheets, loadSignups, signupsOpen, signupsOpenAt, type LoadedSheet } from '../schedule/sheets'
 import { BotInternal } from './internalModel'
 import type { BotModel } from './model'
+import { ownerRobloxId } from './owner'
 import { presentConfig } from './present'
 
 /**
@@ -141,7 +142,10 @@ export abstract class BotService {
         config: typeof botConfigs.$inferSelect,
         group: typeof groups.$inferSelect
     ): Promise<BotInternal.guild> {
-        const sheets = await loadSheets(group.id)
+        // The owner is resolved here rather than stored as a setting: this is
+        // the only read that feeds a join link, and it is the one place that
+        // can keep the cached value honest without a group editing anything.
+        const [sheets, owner] = await Promise.all([loadSheets(group.id), ownerRobloxId(config, group)])
 
         return {
             guildId: config.guildId,
@@ -149,7 +153,7 @@ export abstract class BotService {
             groupSlug: group.slug,
             groupName: group.cachedName ?? group.slug,
             siteUrl: FRONTEND_URL,
-            config: presentConfig(config) satisfies BotModel.config,
+            config: presentConfig({ ...config, ownerRobloxId: owner }) satisfies BotModel.config,
             sheets: sheets.map((sheet) => ({
                 signupId: sheet.signupId,
                 rankId: sheet.rankId,
