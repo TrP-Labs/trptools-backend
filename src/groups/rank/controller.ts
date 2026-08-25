@@ -28,7 +28,7 @@ export const ranks = new Elysia({ prefix: '/ranks', tags: ['Ranks'] })
             404: GroupModel.groupInvalid
         },
         detail: {
-            summary: 'The public roster',
+            summary: 'The public staff list',
             description:
                 'Ranks the group has marked visible, each with its description, colour and the members holding it.'
         }

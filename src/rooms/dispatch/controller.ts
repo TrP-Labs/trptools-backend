@@ -119,16 +119,21 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                             200: globalModel.genericSuccess,
                             401: globalModel.unauthorized,
                             403: globalModel.forbidden,
-                            404: globalModel.notFound
+                            404: globalModel.notFound,
+                            409: Vehicles.towProblem
                         },
-                        detail: { summary: 'Update one vehicle' }
+                        detail: {
+                            summary: 'Update one vehicle',
+                            description:
+                                'Setting `towing` to another vehicle id records a tow. It is refused if that vehicle has left the room or is already under tow, so two tow trucks cannot claim the same casualty.'
+                        }
                     })
 
-                    .delete('/', async ({ roomId, params, session }) => {
+                    .delete('/', async ({ roomId, room, params, session }) => {
                         if (!hasScope(session, 'dispatch:write')) {
                             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
                         }
-                        return DispatchControls.deleteVehicle(roomId, params.vehicleId)
+                        return DispatchControls.deleteVehicle(roomId, params.vehicleId, room)
                     }, {
                         params: t.Object({ roomId: t.String(), vehicleId: t.String({ maxLength: 32 }) }),
                         response: {

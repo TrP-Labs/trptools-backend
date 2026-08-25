@@ -9,6 +9,20 @@ export namespace Vehicles {
     ])
     export type category = typeof category.static
 
+    /**
+     * Where a service vehicle is in its job.
+     *
+     * Service vehicles do not run a route, so the thing a dispatcher needs to
+     * see at a glance is progress towards whatever they were sent to do.
+     */
+    export const serviceStatus = t.Union([
+        t.Literal('AWAITING'),
+        t.Literal('ENROUTE'),
+        t.Literal('ON_SCENE'),
+        t.Literal('RETURNING')
+    ])
+    export type serviceStatus = typeof serviceStatus.static
+
     /** The raw shape pasted in from the game. */
     export const seedVehicle = t.Object({
         Id: t.Union([t.Integer(), t.String()]),
@@ -42,8 +56,21 @@ export namespace Vehicles {
 
         category: category,
         assigned: t.Boolean(),
-        towing: t.Boolean(),
-        note: t.String()
+
+        /**
+         * The id of the vehicle this one is towing, or null.
+         *
+         * Held on the *tow truck* rather than on both ends: one field cannot
+         * disagree with itself, and the towed vehicle's side of the
+         * relationship is a lookup away. Only a service vehicle ever sets it.
+         */
+        towing: t.Union([t.String(), t.Null()]),
+
+        /** Free text shown instead of a route when a route was declined. */
+        note: t.String(),
+        /** Where a service vehicle is, in the dispatcher's own words. */
+        location: t.String(),
+        status: serviceStatus
     })
     export type vehicle = typeof vehicle.static
 
@@ -53,8 +80,10 @@ export namespace Vehicles {
     export const modifyBody = t.Object({
         route: t.Optional(t.Union([t.String({ maxLength: 64 }), t.Null()])),
         assigned: t.Optional(t.Boolean()),
-        towing: t.Optional(t.Boolean()),
+        towing: t.Optional(t.Union([t.String({ maxLength: 32 }), t.Null()])),
         note: t.Optional(t.String({ maxLength: 200 })),
+        location: t.Optional(t.String({ maxLength: 120 })),
+        status: t.Optional(serviceStatus),
         category: t.Optional(category)
     })
     export type modifyBody = typeof modifyBody.static
@@ -86,6 +115,14 @@ export namespace Vehicles {
     })
     export const presenceList = t.Array(presentUser)
     export type presenceList = typeof presenceList.static
+
+    /** Why a tow could not be set up. All of these are 409s. */
+    export const towProblem = t.Union([
+        t.Literal('that vehicle is not in this room'),
+        t.Literal('that vehicle is already being towed'),
+        t.Literal('a vehicle cannot tow itself')
+    ])
+    export type towProblem = typeof towProblem.static
 
     export const importResponse = t.Object({
         added: t.Number(),

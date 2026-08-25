@@ -54,6 +54,15 @@ export const depots = pgTable(
         visibility: visibilityEnum('visibility').notNull().default('PUBLIC'),
         moderation: moderationEnum('moderation').notNull().default('VISIBLE'),
 
+        /**
+         * Whether this depot is listed on the group's public page.
+         *
+         * Separate from visibility on purpose: a depot can stay readable at its
+         * own address, and to members, while a group keeps the page itself to a
+         * short list rather than every depot it has ever opened.
+         */
+        showOnGroupPage: boolean('show_on_group_page').notNull().default(true),
+
         order: integer('order').notNull().default(0),
         archived: boolean('archived').notNull().default(false),
 
@@ -113,6 +122,16 @@ export const routes = pgTable(
 
         visibility: visibilityEnum('visibility').notNull().default('PUBLIC'),
         moderation: moderationEnum('moderation').notNull().default('VISIBLE'),
+
+        /**
+         * Whether this route is listed on the group's public page.
+         *
+         * Separate from visibility: the route keeps its own page and stays
+         * readable, it simply does not crowd the group's front page. The
+         * built-in routes are seeded with this off, since a group's page is
+         * meant to show what makes that group different.
+         */
+        showOnGroupPage: boolean('show_on_group_page').notNull().default(true),
 
         createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
         updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()

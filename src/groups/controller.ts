@@ -99,6 +99,40 @@ export const group = new Elysia({ prefix: '/groups', tags: ['Groups'] })
                 }
             )
 
+            .get(
+                '/vehicle-types',
+                async ({ params: { groupId }, session }) => Group_.getVehicleTypes(groupId, session),
+                {
+                    response: {
+                        200: GroupModel.vehicleTypeList,
+                        401: globalModel.unauthorized,
+                        403: globalModel.forbidden,
+                        404: GroupModel.groupInvalid
+                    },
+                    detail: {
+                        summary: 'Which dispatch list each vehicle belongs in',
+                        description:
+                            'Vehicle names are matched exactly and case-insensitively. A vehicle that is not listed falls back to a keyword guess, so a model nobody has classified still lands somewhere sensible.'
+                    }
+                }
+            )
+
+            .put(
+                '/vehicle-types',
+                async ({ params: { groupId }, body, session }) => Group_.setVehicleTypes(groupId, body, session),
+                {
+                    body: GroupModel.updateVehicleTypesBody,
+                    response: {
+                        200: globalModel.genericSuccess,
+                        401: globalModel.unauthorized,
+                        403: globalModel.forbidden,
+                        404: GroupModel.groupInvalid,
+                        409: GroupModel.duplicateVehicleType
+                    },
+                    detail: { summary: 'Replace the group vehicle type table' }
+                }
+            )
+
             .get('/audit', async ({ params: { groupId }, session }) => Group_.getAudit(groupId, session), {
                 response: {
                     200: GroupModel.auditList,

@@ -6,7 +6,7 @@ import {
     PERMISSIONS,
     type DiscordChannel,
     type DiscordRole
-} from './discord'
+} from './permissions'
 
 /**
  * Discord never reports what a bot may do in a channel, so `channelPermissions`

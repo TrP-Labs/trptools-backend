@@ -28,7 +28,7 @@ import {
     vehicleRules
 } from '../db/schema'
 import { generateSessionToken, hashToken } from '../utils/sessionVerifier'
-import { seedGroupDefaults } from '../groups/defaults'
+import { seedGroupDefaults, seedVehicleTypes } from '../groups/defaults'
 import { childSlug } from '../utils/slug'
 import { env } from '../utils/env'
 
@@ -206,12 +206,9 @@ async function seed() {
         }
     }
 
-    // The legacy dispatcher hardcoded these two overrides; here they are data.
-    await db.insert(vehicleRules).values([
-        { groupId: group.id, pattern: 'ZiU-682 \\(ZiU-9\\) Service vehicle', category: 'SERVICE', fixedRoute: 'SV', order: 0 },
-        { groupId: group.id, pattern: 'VAZ-2109 Sputnik', category: 'STAFF', fixedRoute: 'Staff', order: 1 },
-        { groupId: group.id, pattern: 'service|tow|rescue', category: 'SERVICE', fixedRoute: null, order: 2 }
-    ])
+    // The legacy dispatcher hardcoded which vehicles were service and staff;
+    // here they are rows a group edits from its settings screen.
+    await seedVehicleTypes(group.id)
 
     // A shift that is running right now, so a dispatch room can be opened.
     const now = new Date()

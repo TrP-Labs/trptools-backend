@@ -35,6 +35,10 @@ export namespace RouteModel {
 
         visibility: globalModel.visibility,
         moderation: moderation,
+
+        /** Whether the group's public page lists this depot. */
+        showOnGroupPage: t.Boolean(),
+
         order: t.Number(),
         archived: t.Boolean(),
 
@@ -56,6 +60,7 @@ export namespace RouteModel {
         color: t.Optional(globalModel.hexColor),
         aliases: t.Optional(t.Array(t.String({ maxLength: 60 }), { maxItems: 12 })),
         visibility: t.Optional(globalModel.visibility),
+        showOnGroupPage: t.Optional(t.Boolean()),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 }))
     })
     export type createDepotBody = typeof createDepotBody.static
@@ -68,6 +73,7 @@ export namespace RouteModel {
         aliases: t.Optional(t.Array(t.String({ maxLength: 60 }), { maxItems: 12 })),
         iconMediaId: t.Optional(t.Union([t.String({ format: 'uuid' }), t.Null()])),
         visibility: t.Optional(globalModel.visibility),
+        showOnGroupPage: t.Optional(t.Boolean()),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 })),
         archived: t.Optional(t.Boolean())
     })
@@ -110,6 +116,9 @@ export namespace RouteModel {
         visibility: globalModel.visibility,
         moderation: moderation,
 
+        /** Whether the group's public page lists this route. */
+        showOnGroupPage: t.Boolean(),
+
         /** Depot ids this route can be dispatched from. Empty means all. */
         depots: t.Array(t.String()),
         images: MediaModel.list,
@@ -143,6 +152,7 @@ export namespace RouteModel {
         autoAssign: t.Optional(t.Boolean()),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 })),
         visibility: t.Optional(globalModel.visibility),
+        showOnGroupPage: t.Optional(t.Boolean()),
         depots: t.Optional(t.Array(t.String({ format: 'uuid' }), { maxItems: 64 }))
     })
     export type createRouteBody = typeof createRouteBody.static
@@ -159,6 +169,7 @@ export namespace RouteModel {
         archived: t.Optional(t.Boolean()),
         iconMediaId: t.Optional(t.Union([t.String({ format: 'uuid' }), t.Null()])),
         visibility: t.Optional(globalModel.visibility),
+        showOnGroupPage: t.Optional(t.Boolean()),
         depots: t.Optional(t.Array(t.String({ format: 'uuid' }), { maxItems: 64 }))
     })
     export type patchRouteBody = typeof patchRouteBody.static
