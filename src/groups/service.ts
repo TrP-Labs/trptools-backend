@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm'
 import db from '../db'
-import { auditMessages, groups, rankRelations, users, type Group } from '../db/schema'
+import { auditMessages, groups, rankRelations, users, vehicleRules, type Group } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { Roblox, type RobloxCredentials } from '../utils/roblox'
 import { resolveCredentials, userCredentials } from '../utils/robloxCredentials'
@@ -9,7 +9,7 @@ import { encryptSecret } from '../utils/crypto'
 import { assertPermission, GetPermissionLevel, invalidateGroupPermissions } from '../utils/groupPermission'
 import { isUuid, isValidSlug, uniqueSlug } from '../utils/slug'
 import type { session } from '../utils/sessionVerifier'
-import { seedGroupDefaults } from './defaults'
+import { seedGroupDefaults, seedVehicleTypes } from './defaults'
 import { GroupModel } from './model'
 
 /** Refreshes the cached Roblox facts on a group if they have gone stale. */
@@ -261,6 +261,71 @@ export abstract class Group_ {
         await db.update(groups).set(body).where(eq(groups.id, group.id))
 
         await recordAudit(group.id, session.user?.userId ?? null, 'group.update', 'Group settings updated')
+
+        return 'Success' as globalModel.genericSuccess
+    }
+
+    /**
+     * The vehicles this group has classified.
+     *
+     * Seeding on read is what makes the settings table useful to a group
+     * registered before vehicle types existed: it opens populated with the
+     * game's own vehicles rather than empty.
+     */
+    static async getVehicleTypes(groupId: string, session: session): Promise<GroupModel.vehicleTypeList> {
+        await assertPermission(session, groupId, PERMISSION.MANAGE)
+
+        const group = await findGroup(groupId)
+        if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
+
+        await seedVehicleTypes(group.id)
+
+        const rows = await db
+            .select()
+            .from(vehicleRules)
+            .where(eq(vehicleRules.groupId, group.id))
+            .orderBy(asc(vehicleRules.order))
+
+        return rows.map((row) => ({ id: row.id, name: row.pattern, category: row.category }))
+    }
+
+    /**
+     * Replaces the whole table in one write.
+     *
+     * The settings screen edits every row at once, and a per-row API would
+     * make removing a vehicle and renaming another two round trips that can
+     * half-apply. Order is the order given, which is the order the table shows.
+     */
+    static async setVehicleTypes(groupId: string, body: GroupModel.updateVehicleTypesBody, session: session) {
+        await assertPermission(session, groupId, PERMISSION.MANAGE)
+
+        const group = await findGroup(groupId)
+        if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
+
+        const seen = new Set<string>()
+        const values = body.types.map((type, index) => {
+            const name = type.name.trim()
+            const key = name.toLowerCase()
+
+            // Two rows for one vehicle would make its category depend on which
+            // one is read first, which is not something to leave to ordering.
+            if (seen.has(key)) throw status(409, 'two vehicles share a name' satisfies GroupModel.duplicateVehicleType)
+            seen.add(key)
+
+            return { groupId: group.id, pattern: name, category: type.category, fixedRoute: null, order: index }
+        })
+
+        await db.transaction(async (tx) => {
+            await tx.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
+            if (values.length > 0) await tx.insert(vehicleRules).values(values)
+        })
+
+        await recordAudit(
+            group.id,
+            session.user?.userId ?? null,
+            'group.vehicleTypes.update',
+            `Vehicle types updated (${values.length})`
+        )
 
         return 'Success' as globalModel.genericSuccess
     }

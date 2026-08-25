@@ -30,9 +30,14 @@ type StoredVehicle = {
     route: string
     category: string
     assigned: string
+    /** The id of the vehicle this one tows, or empty. */
     towing: string
     note: string
+    location: string
+    status: string
 }
+
+const SERVICE_STATUSES: Vehicles.serviceStatus[] = ['AWAITING', 'ENROUTE', 'ON_SCENE', 'RETURNING']
 
 function decode(raw: Record<string, string>): Omit<Vehicles.vehicle, 'routeName' | 'routeColor'> | null {
     if (!raw || !raw.id) return null
@@ -46,8 +51,15 @@ function decode(raw: Record<string, string>): Omit<Vehicles.vehicle, 'routeName'
         route: raw.route === '' || raw.route === undefined ? null : raw.route,
         category: (raw.category as Vehicles.category) ?? 'OTHER',
         assigned: raw.assigned === 'true',
-        towing: raw.towing === 'true',
-        note: raw.note ?? ''
+        // Rooms written by an older build stored a bare boolean here, which
+        // says a vehicle is towing but not what. Nothing can be drawn from
+        // that, so it reads as not towing rather than as a dangling id.
+        towing: raw.towing && raw.towing !== 'true' && raw.towing !== 'false' ? raw.towing : null,
+        note: raw.note ?? '',
+        location: raw.location ?? '',
+        status: SERVICE_STATUSES.includes(raw.status as Vehicles.serviceStatus)
+            ? (raw.status as Vehicles.serviceStatus)
+            : 'AWAITING'
     }
 }
 
@@ -133,6 +145,11 @@ export abstract class DispatchControls {
             await broker.publish(roomChannel(roomId), { event: 'DELETE', data: id })
         }
 
+        // A vehicle deleted in game takes its tow with it. Without this the
+        // tow truck keeps pointing at an id nothing resolves, and the board
+        // shows it towing a blank.
+        await DispatchControls.releaseTows(roomId, info, removed)
+
         const context = await loadSolverContext(
             info.groupId,
             payload.map((vehicle) => vehicle.OwnerId.toString())
@@ -141,7 +158,25 @@ export abstract class DispatchControls {
         let added = 0
 
         for (const [id, vehicle] of incoming) {
-            if (currentSet.has(id)) continue
+            if (currentSet.has(id)) {
+                // A vehicle already here still gets its list re-checked, so a
+                // manager who fixes a misfiled vehicle in settings can put the
+                // board right by pressing Import rather than by closing the
+                // room. Nothing else about the vehicle is touched.
+                const rule = matchRule(vehicle.Name, context)
+                const category: VehicleCategory = rule?.category ?? inferCategory(vehicle.Name)
+                const held = await dataRedis.hget(vehicleKey(roomId, id), 'category')
+
+                if (held !== category) {
+                    await dataRedis.hset(vehicleKey(roomId, id), { category })
+                    await broker.publish(roomChannel(roomId), {
+                        event: 'UPDATE',
+                        data: { id, category }
+                    })
+                }
+
+                continue
+            }
 
             const rule = matchRule(vehicle.Name, context)
             const category: VehicleCategory = rule?.category ?? inferCategory(vehicle.Name)
@@ -157,8 +192,10 @@ export abstract class DispatchControls {
                 route: rule?.fixedRoute ?? '',
                 category,
                 assigned: 'false',
-                towing: 'false',
-                note: ''
+                towing: '',
+                note: '',
+                location: '',
+                status: 'AWAITING'
             }
 
             await dataRedis.hset(vehicleKey(roomId, id), stored)
@@ -182,11 +219,36 @@ export abstract class DispatchControls {
         const exists = await dataRedis.exists(vehicleKey(roomId, vehicleId))
         if (!exists) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
+        // A tow is the one field on a vehicle that talks about another one, so
+        // it is the one field that can contradict the rest of the room. Two
+        // trucks claiming the same casualty would leave whichever the board
+        // drew last looking correct, so the second claim is refused outright
+        // rather than silently taking the tow off the first.
+        if (body.towing) {
+            if (body.towing === vehicleId) {
+                throw status(409, 'a vehicle cannot tow itself' satisfies Vehicles.towProblem)
+            }
+
+            const target = await dataRedis.exists(vehicleKey(roomId, body.towing))
+            if (!target) {
+                throw status(409, 'that vehicle is not in this room' satisfies Vehicles.towProblem)
+            }
+
+            const held = (await DispatchControls.getAllVehicles(roomId, info)).some(
+                (vehicle) => vehicle.id !== vehicleId && vehicle.towing === body.towing
+            )
+            if (held) {
+                throw status(409, 'that vehicle is already being towed' satisfies Vehicles.towProblem)
+            }
+        }
+
         const patch: Record<string, string> = {}
         if (body.route !== undefined) patch.route = body.route ?? ''
         if (body.assigned !== undefined) patch.assigned = body.assigned ? 'true' : 'false'
-        if (body.towing !== undefined) patch.towing = body.towing ? 'true' : 'false'
+        if (body.towing !== undefined) patch.towing = body.towing ?? ''
         if (body.note !== undefined) patch.note = body.note
+        if (body.location !== undefined) patch.location = body.location
+        if (body.status !== undefined) patch.status = body.status
         if (body.category !== undefined) patch.category = body.category
 
         if (Object.keys(patch).length === 0) return 'Success' as globalModel.genericSuccess
@@ -201,30 +263,49 @@ export abstract class DispatchControls {
         return 'Success' as globalModel.genericSuccess
     }
 
-    static async deleteVehicle(roomId: string, vehicleId: string) {
+    static async deleteVehicle(roomId: string, vehicleId: string, info: RoomInfo) {
         const removed = await dataRedis.lrem(roomVehiclesKey(roomId), 1, vehicleId)
         if (removed === 0) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         await dataRedis.del(vehicleKey(roomId, vehicleId))
         await broker.publish(roomChannel(roomId), { event: 'DELETE', data: vehicleId })
 
+        await DispatchControls.releaseTows(roomId, info, [vehicleId])
+
         return 'Success' as globalModel.genericSuccess
+    }
+
+    /** Drops any tow pointing at a vehicle that has left the room. */
+    private static async releaseTows(roomId: string, info: RoomInfo, goneIds: string[]) {
+        if (goneIds.length === 0) return
+
+        const gone = new Set(goneIds)
+        const vehicles = await DispatchControls.getAllVehicles(roomId, info)
+
+        for (const vehicle of vehicles) {
+            if (!vehicle.towing || !gone.has(vehicle.towing)) continue
+
+            await dataRedis.hset(vehicleKey(roomId, vehicle.id), { towing: '' })
+            await broker.publish(roomChannel(roomId), {
+                event: 'UPDATE',
+                data: { id: vehicle.id, towing: null }
+            })
+        }
     }
 
     /** Runs automatic assignment across the room and broadcasts the result. */
     static async solveRoom(roomId: string, info: RoomInfo, body: Vehicles.solveBody): Promise<Vehicles.solveResponse> {
         const vehicles = await this.getAllVehicles(roomId, info)
 
-        const scope = body.vehicleIds?.length
-            ? vehicles.filter((vehicle) => body.vehicleIds!.includes(vehicle.id))
-            : vehicles
-
         const context = await loadSolverContext(
             info.groupId,
             vehicles.map((vehicle) => vehicle.ownerId)
         )
 
-        const solverVehicles: SolverVehicle[] = scope.map((vehicle) => ({
+        // The whole room goes to the solver even when only one vehicle is
+        // being placed: `only` decides what may be *moved*, while everything
+        // else still counts towards the spread it is being placed into.
+        const solverVehicles: SolverVehicle[] = vehicles.map((vehicle) => ({
             id: vehicle.id,
             ownerId: vehicle.ownerId,
             name: vehicle.name,
@@ -236,7 +317,10 @@ export abstract class DispatchControls {
             category: vehicle.category as VehicleCategory
         }))
 
-        const result = solve(solverVehicles, context, { includeAssigned: body.includeAssigned })
+        const result = solve(solverVehicles, context, {
+            includeAssigned: body.includeAssigned,
+            only: body.vehicleIds?.length ? body.vehicleIds : undefined
+        })
 
         for (const assignment of result.assignments) {
             await dataRedis.hset(vehicleKey(roomId, assignment.vehicleId), { route: assignment.route ?? '' })

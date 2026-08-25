@@ -157,14 +157,21 @@ export abstract class PublicPages {
     static async groupPage(slug: string): Promise<PublicModel.groupPage> {
         const group = await publishedGroup(slug)
 
+        // Listed on the page is narrower than published: a route or depot can
+        // be public — readable at its own address, linked from anywhere — and
+        // still be left out of the group's own listing.
         const publicRoutes = group.showRoutes
-            ? await db.select().from(routes).where(publishedRoute(group.id)).orderBy(asc(routes.order), asc(routes.name))
+            ? await db
+                  .select()
+                  .from(routes)
+                  .where(and(publishedRoute(group.id), eq(routes.showOnGroupPage, true)))
+                  .orderBy(asc(routes.order), asc(routes.name))
             : []
 
         const publicDepots = await db
             .select()
             .from(depots)
-            .where(publishedDepot(group.id))
+            .where(and(publishedDepot(group.id), eq(depots.showOnGroupPage, true)))
             .orderBy(asc(depots.order), asc(depots.number))
 
         const [depotLinks, routeImages, depotImages, roster, upcomingShifts] = await Promise.all([

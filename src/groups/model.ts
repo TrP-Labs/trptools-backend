@@ -90,6 +90,40 @@ export namespace GroupModel {
     })
     export type updateGroupBody = typeof updateGroupBody.static
 
+    /**
+     * One vehicle model the game reports, and which dispatch list it belongs
+     * in. Names are matched exactly, so this is a table of vehicles rather
+     * than a pattern language nobody would want to author.
+     */
+    export const vehicleType = t.Object({
+        id: t.String(),
+        name: t.String(),
+        category: t.Union([
+            t.Literal('TROLLEYBUS'),
+            t.Literal('SERVICE'),
+            t.Literal('STAFF'),
+            t.Literal('OTHER')
+        ])
+    })
+    export type vehicleType = typeof vehicleType.static
+
+    export const vehicleTypeList = t.Array(vehicleType)
+    export type vehicleTypeList = typeof vehicleTypeList.static
+
+    export const updateVehicleTypesBody = t.Object({
+        types: t.Array(
+            t.Object({
+                name: t.String({ minLength: 1, maxLength: 120 }),
+                category: vehicleType.properties.category
+            }),
+            { maxItems: 200 }
+        )
+    })
+    export type updateVehicleTypesBody = typeof updateVehicleTypesBody.static
+
+    export const duplicateVehicleType = t.Literal('two vehicles share a name')
+    export type duplicateVehicleType = typeof duplicateVehicleType.static
+
     export const openCloudKeyBody = t.Object({
         apiKey: t.Union([t.String({ minLength: 20, maxLength: 4000 }), t.Null()])
     })
