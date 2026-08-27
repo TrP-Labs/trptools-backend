@@ -10,6 +10,7 @@ import { roomChannel, roomUsersKey, roomVehiclesKey, requireRoom, type RoomInfo 
 import { Vehicles } from './model'
 import {
     inferCategory,
+    loadRoutePreferences,
     loadSolverContext,
     matchRule,
     resolveDepotId,
@@ -338,6 +339,34 @@ export abstract class DispatchControls {
                 route: assignment.route
             }))
         }
+    }
+
+    /**
+     * The route preferences of everybody with a vehicle in the room.
+     *
+     * The board paints these onto the route dropdown, so a dispatcher choosing
+     * by hand can see what the solver would have taken into account — a
+     * driver's favourites in green, the routes they would rather avoid in
+     * amber. Restricted to the owners actually present, so the response is
+     * about this room and not about the group's whole membership.
+     */
+    static async ownerPreferences(roomId: string, info: RoomInfo): Promise<Vehicles.ownerPreferenceList> {
+        const vehicles = await this.getAllVehicles(roomId, info)
+        const owners = [...new Set(vehicles.map((vehicle) => vehicle.ownerId))]
+        if (owners.length === 0) return []
+
+        const groupRoutes = await db
+            .select({ id: routes.id, name: routes.name, builtIn: routes.builtIn })
+            .from(routes)
+            .where(and(eq(routes.groupId, info.groupId), eq(routes.archived, false)))
+
+        const preferences = await loadRoutePreferences(groupRoutes, owners)
+
+        return [...preferences].map(([robloxId, entry]) => ({
+            robloxId,
+            favorite: [...entry.favourite],
+            disliked: [...entry.disliked]
+        }))
     }
 
     // ------------------------------------------------------------- presence

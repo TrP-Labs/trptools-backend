@@ -23,6 +23,19 @@ jobs:
     needs: check
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+
+    # A release pushes `main` and the tag together, so two runs of this job
+    # start on the same commit seconds apart. Both write the same
+    # `type=gha,mode=max` cache scope, and racing on it is what left the second
+    # run hanging for tens of minutes with the image already published.
+    # Serialising them costs nothing: the one that waits builds against the
+    # cache the first has just filled. Not `cancel-in-progress` — the two runs
+    # publish different tags (`latest` from main, the version from the tag), so
+    # cancelling one would drop tags nobody would notice were missing.
+    concurrency:
+      group: publish-${{ github.repository }}
+      cancel-in-progress: false
+
     permissions:
       contents: read
       packages: write

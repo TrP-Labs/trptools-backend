@@ -57,6 +57,23 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                 }
             })
 
+            .get('/preferences', async ({ roomId, room, session }) => {
+                if (!hasScope(session, 'dispatch:read')) throw status(403, 'Forbidden' satisfies globalModel.forbidden)
+                return DispatchControls.ownerPreferences(roomId, room)
+            }, {
+                response: {
+                    200: Vehicles.ownerPreferenceList,
+                    401: globalModel.unauthorized,
+                    403: globalModel.forbidden,
+                    404: globalModel.notFound
+                },
+                detail: {
+                    summary: 'Route preferences of the drivers in the room',
+                    description:
+                        'The same favourites and dislikes the solver honours, so the board can show a dispatcher assigning by hand what automatic assignment would have taken into account.'
+                }
+            })
+
             .get('/connect', async function* ({ roomId, user }) {
                 for await (const event of DispatchControls.stream(roomId, user.userId)) {
                     yield sse({ data: event })

@@ -103,6 +103,21 @@ export namespace Vehicles {
     })
     export type solveResponse = typeof solveResponse.static
 
+    /**
+     * What one driver in the room has asked for, as route ids.
+     *
+     * Keyed by Roblox id rather than by TrPTools user, because that is what a
+     * vehicle carries — the board never learns who owns an account, only which
+     * routes the person behind a vehicle wants.
+     */
+    export const ownerPreference = t.Object({
+        robloxId: t.String(),
+        favorite: t.Array(t.String()),
+        disliked: t.Array(t.String())
+    })
+    export const ownerPreferenceList = t.Array(ownerPreference)
+    export type ownerPreferenceList = typeof ownerPreferenceList.static
+
     /** Who currently holds an open stream on the room. */
     export const presentUser = t.Object({
         userId: t.String(),
