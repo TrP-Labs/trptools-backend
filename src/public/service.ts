@@ -403,6 +403,26 @@ export abstract class PublicPages {
         )
     }
 
+    /**
+     * How many future shifts a public group page lists.
+     *
+     * A count rather than a date range. A fortnight's window showed a group
+     * that runs one event a month an empty schedule for most of the year,
+     * while a daily service filled the same list with the same fortnight
+     * repeated. Counting instead means the page always answers "what is on
+     * next", whether that is tomorrow or in April.
+     */
+    private static readonly PUBLIC_SHIFT_COUNT = 6
+
+    /**
+     * The horizon the count is drawn from.
+     *
+     * Expansion still needs an end date, because a weekly rule with no UNTIL
+     * is infinite. A year is far past the point anyone plans a game shift, so
+     * in practice the count is what limits the list, not this.
+     */
+    private static readonly PUBLIC_SHIFT_HORIZON_DAYS = 365
+
     private static async upcomingShifts(groupId: string) {
         const rows = await db
             .select()
@@ -412,10 +432,20 @@ export abstract class PublicPages {
         if (rows.length === 0) return []
 
         const from = new Date()
-        const to = new Date(from.getTime() + 14 * 24 * 60 * 60 * 1000)
+        const to = new Date(from.getTime() + this.PUBLIC_SHIFT_HORIZON_DAYS * 24 * 60 * 60 * 1000)
 
+        // Every schedule is expanded to its own next few, then merged and cut
+        // back to the soonest overall — so the list is genuinely "what is on
+        // next", not the first schedule's diary.
         const expanded = rows.flatMap((event) =>
-            occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, 20).map((occurrence) => ({
+            occurrencesBetween(
+                event.rrule,
+                event.startTime,
+                event.duration,
+                from,
+                to,
+                this.PUBLIC_SHIFT_COUNT
+            ).map((occurrence) => ({
                 eventId: event.eventId,
                 slug: event.slug,
                 name: event.name,
@@ -428,6 +458,6 @@ export abstract class PublicPages {
 
         expanded.sort((a, b) => a.start.getTime() - b.start.getTime())
 
-        return expanded.slice(0, 12)
+        return expanded.slice(0, this.PUBLIC_SHIFT_COUNT)
     }
 }
