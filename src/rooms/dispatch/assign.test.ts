@@ -202,4 +202,68 @@ describe('spreading a whole board', () => {
 
         expect(result.assignments).toEqual([{ vehicleId: '1', route: 'b' }])
     })
+
+    test('a route somebody dislikes is left alone while anything else is free', () => {
+        const ctx = context({
+            routes: [route('a', 90), route('b', 10)],
+            preferences: new Map([['7', { favourite: new Set<string>(), disliked: new Set(['a']) }]])
+        })
+
+        const result = solve([vehicle('1', { ownerId: '7' })], ctx)
+
+        expect(result.assignments).toEqual([{ vehicleId: '1', route: 'b' }])
+    })
+
+    test('a disliked route is still better than no route at all', () => {
+        // The driver's depot serves one route and they do not want it. The
+        // alternative is a vehicle sitting in the depot all shift.
+        const ctx = context({
+            routes: [route('only', 100)],
+            preferences: new Map([['7', { favourite: new Set<string>(), disliked: new Set(['only']) }]])
+        })
+
+        const result = solve([vehicle('1', { ownerId: '7' })], ctx)
+
+        expect(result.assignments).toEqual([{ vehicleId: '1', route: 'only' }])
+        expect(result.skipped).toBe(0)
+    })
+
+    test('drivers who asked for a route get first dibs on its share', () => {
+        // Two routes, one vehicle each. Solved in list order, the driver with
+        // no opinion could take the route the second driver asked for — the
+        // favourite is honoured regardless, so *both* would end up on it and
+        // the other route would run empty. Placing the request first leaves
+        // the indifferent driver the route nobody asked for.
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+            const ctx = context({
+                routes: [route('a', 50), route('b', 50)],
+                preferences: new Map([['7', { favourite: new Set(['b']), disliked: new Set<string>() }]])
+            })
+
+            const result = solve([vehicle('1', { ownerId: '1' }), vehicle('2', { ownerId: '7' })], ctx)
+            const byVehicle = new Map(result.assignments.map((a) => [a.vehicleId, a.route]))
+
+            expect(byVehicle.get('2')).toBe('b')
+            expect(byVehicle.get('1')).toBe('a')
+        }
+    })
+
+    test('a favourite is honoured even when that route is already over its share', () => {
+        // A driver asking for a route outranks a percentage a manager typed.
+        // Ordering keeps this rare; it must not be resolved by refusing them.
+        const ctx = context({
+            routes: [route('a', 90), route('b', 10)],
+            preferences: new Map([['7', { favourite: new Set(['b']), disliked: new Set<string>() }]])
+        })
+
+        const vehicles = [
+            vehicle('1', { ownerId: '7' }),
+            vehicle('2', { ownerId: '7' }),
+            vehicle('3', { ownerId: '7' })
+        ]
+
+        const result = solve(vehicles, ctx)
+
+        expect(result.assignments.every((assignment) => assignment.route === 'b')).toBe(true)
+    })
 })

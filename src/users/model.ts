@@ -1,13 +1,51 @@
 import { t } from 'elysia'
 
 export namespace UserModel {
+    /**
+     * A route as it appears on somebody's profile.
+     *
+     * Enough to draw the badge and link to the route's own page, and nothing
+     * else — a profile is not a route catalogue. Routes a group has not
+     * published never reach here, so the lists say no more than the group
+     * already does.
+     */
+    export const profileRoute = t.Object({
+        /** Null for a global route: the mark is against the name, not a row. */
+        routeId: t.Union([t.String(), t.Null()]),
+        name: t.String(),
+        color: t.String(),
+        textColor: t.String(),
+        shape: t.String(),
+        icon: t.Union([t.String(), t.Null()]),
+        /**
+         * True for one of the routes the game ships with, which is the same
+         * route in every group. It carries no group and links nowhere,
+         * because there is no one page that is *the* page for it.
+         */
+        global: t.Boolean(),
+        groupSlug: t.Union([t.String(), t.Null()]),
+        groupName: t.Union([t.String(), t.Null()]),
+        routeSlug: t.Union([t.String(), t.Null()])
+    })
+    export type profileRoute = typeof profileRoute.static
+
     export const publicProfile = t.Object({
         userId: t.String(),
         robloxId: t.Number(),
         username: t.Union([t.String(), t.Null()]),
         displayName: t.Union([t.String(), t.Null()]),
         avatar: t.Union([t.String(), t.Null()]),
-        siteRank: t.String()
+        siteRank: t.String(),
+
+        /**
+         * The published half of this person's route preferences.
+         *
+         * Null rather than an empty array when the section is switched off, so
+         * a profile with nothing marked and a profile keeping it to itself do
+         * not look the same to the page drawing them.
+         */
+        favoriteRoutes: t.Union([t.Array(profileRoute), t.Null()]),
+        dislikedRoutes: t.Union([t.Array(profileRoute), t.Null()])
     })
     export type publicProfile = typeof publicProfile.static
 
@@ -32,11 +70,19 @@ export namespace UserModel {
     export const robloxProfileList = t.Array(robloxProfile)
     export type robloxProfileList = typeof robloxProfileList.static
 
+    /**
+     * Nothing here carries a `default`. Elysia injects one into the parsed
+     * body, so a default on an optional field turns every PATCH into an edit
+     * of that field — a request saying only "change my timezone" would also
+     * silently republish a profile its owner had hidden.
+     */
     export const preferencesBody = t.Object({
         theme: t.Optional(t.Union([t.Literal('dim'), t.Literal('midnight'), t.Literal('light')])),
         locale: t.Optional(t.String({ maxLength: 8 })),
         timezone: t.Optional(t.String({ maxLength: 64 })),
-        profilePublic: t.Optional(t.Boolean())
+        profilePublic: t.Optional(t.Boolean()),
+        favoriteRoutesPublic: t.Optional(t.Boolean()),
+        dislikedRoutesPublic: t.Optional(t.Boolean())
     })
     export type preferencesBody = typeof preferencesBody.static
 
@@ -44,20 +90,32 @@ export namespace UserModel {
         theme: t.String(),
         locale: t.String(),
         timezone: t.String(),
-        profilePublic: t.Boolean()
+        profilePublic: t.Boolean(),
+        favoriteRoutesPublic: t.Boolean(),
+        dislikedRoutesPublic: t.Boolean()
     })
     export type preferencesResponse = typeof preferencesResponse.static
 
     export const routePreference = t.Union([t.Literal('FAVORITE'), t.Literal('DISLIKE'), t.Literal('NONE')])
     export type routePreference = typeof routePreference.static
 
+    /**
+     * One mark, either against a single custom route or against a built-in
+     * route's name everywhere.
+     *
+     * A global item carries the name and no ids, because there is no single
+     * row it belongs to — the reader matches it against any built-in route
+     * with that name.
+     */
     export const routePreferenceItem = t.Object({
-        routeId: t.String(),
-        groupId: t.String(),
+        global: t.Boolean(),
+        routeId: t.Union([t.String(), t.Null()]),
+        groupId: t.Union([t.String(), t.Null()]),
         name: t.String(),
         color: t.String(),
         preference: t.Union([t.Literal('FAVORITE'), t.Literal('DISLIKE')])
     })
+    export type routePreferenceItem = typeof routePreferenceItem.static
     export const routePreferenceList = t.Array(routePreferenceItem)
     export type routePreferenceList = typeof routePreferenceList.static
 

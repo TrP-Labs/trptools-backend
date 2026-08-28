@@ -1,7 +1,7 @@
 import { relations } from 'drizzle-orm'
 import { bigint, boolean, index, pgTable, text, timestamp, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { sessions, apiKeys } from './auth'
-import { routePreferences } from './routes'
+import { globalRoutePreferences, routePreferences } from './routes'
 import { shiftSignups } from './signups'
 import { stagePrograms } from './tools'
 
@@ -57,7 +57,20 @@ export const users = pgTable(
         theme: text('theme').notNull().default('dim'),
         locale: text('locale').notNull().default('en'),
         timezone: text('timezone').notNull().default('UTC'),
-        profilePublic: boolean('profile_public').notNull().default(true)
+
+        /**
+         * What a profile publishes.
+         *
+         * `profilePublic` gates the page itself; the two route flags gate one
+         * section each *within* it. They are separate because the lists say
+         * something the rest of the profile does not — which routes somebody
+         * would rather not be given — and a driver may reasonably want a
+         * readable profile without that on it. All three default to on, so
+         * nothing a group could already see disappears when this ships.
+         */
+        profilePublic: boolean('profile_public').notNull().default(true),
+        favoriteRoutesPublic: boolean('favorite_routes_public').notNull().default(true),
+        dislikedRoutesPublic: boolean('disliked_routes_public').notNull().default(true)
     },
     (table) => [
         index('users_cached_username_idx').on(table.cachedUsername),
@@ -69,6 +82,7 @@ export const usersRelations = relations(users, ({ many }) => ({
     sessions: many(sessions),
     apiKeys: many(apiKeys),
     routePreferences: many(routePreferences),
+    globalRoutePreferences: many(globalRoutePreferences),
     signups: many(shiftSignups),
     stagePrograms: many(stagePrograms)
 }))

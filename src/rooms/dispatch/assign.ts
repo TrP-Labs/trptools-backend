@@ -27,6 +27,14 @@ import type { VehicleCategory } from '../../db/schema'
  *
  * Within a tier it picks whichever route is furthest below its target share,
  * breaking ties randomly so repeated solves do not always favour the same one.
+ *
+ * Drivers who marked a favourite are placed **first**, in a pass of their own.
+ * Order matters because shares are a finite thing to spend: with one pass in
+ * vehicle order, a driver with no opinion could fill the route somebody else
+ * had asked for, and the share left over pushed *other* people off the routes
+ * they had asked for in turn. Placing the requests first and letting everybody
+ * else fill in around them satisfies the same preferences while keeping the
+ * spread closer to what the group configured.
  */
 
 export interface SolverVehicle {
@@ -197,6 +205,17 @@ export function solve(
     const assignments: SolveResult['assignments'] = []
     let skipped = 0
 
+    /**
+     * The vehicles that are actually going to be given a passenger route,
+     * with the routes each one can reach worked out once.
+     *
+     * Working this out up front is what makes two passes possible: whether a
+     * driver asked for one of the routes their depot serves cannot be known
+     * without the pool, and the whole point of the first pass is to place
+     * those drivers before anybody else spends the share they need.
+     */
+    const placeable: Array<{ vehicle: SolverVehicle; pool: SolverRoute[]; favourite: SolverRoute[] }> = []
+
     for (const vehicle of targets) {
         const rule = matchRule(vehicle.name, context)
 
@@ -230,12 +249,32 @@ export function solve(
         }
 
         const preference = context.preferences.get(vehicle.ownerId)
-        const favourite = pool.filter((route) => preference?.favourite.has(route.id))
+
+        placeable.push({
+            vehicle,
+            pool,
+            favourite: preference ? pool.filter((route) => preference.favourite.has(route.id)) : []
+        })
+    }
+
+    /**
+     * Places one vehicle on the best route left to it.
+     *
+     * A driver's own ranking comes first and the share only decides *within*
+     * whichever tier they land in: a favourite is honoured even when that
+     * route is already carrying more than its share, because a driver asking
+     * for a route is a stronger signal than a number a manager typed. The
+     * ordering above is what stops that from wrecking the spread.
+     */
+    function place({ vehicle, pool, favourite }: (typeof placeable)[number]) {
+        const preference = context.preferences.get(vehicle.ownerId)
         const neutral = pool.filter(
             (route) => !preference?.favourite.has(route.id) && !preference?.disliked.has(route.id)
         )
         const disliked = pool.filter((route) => preference?.disliked.has(route.id))
 
+        // A disliked route is the last resort, and only reached when the
+        // driver's depot serves nothing else.
         const tier = favourite.length > 0 ? favourite : neutral.length > 0 ? neutral : disliked
 
         // Shares are relative to whichever routes this depot can reach, so a
@@ -244,19 +283,24 @@ export function solve(
         const shareTotal = pool.reduce((sum, route) => sum + Math.max(route.targetShare, 0), 0)
         const placed = pool.reduce((sum, route) => sum + (load.get(route.id) ?? 0), 0) + 1
 
-        const chosen = shuffle(tier).reduce((best, route) => {
-            return deficit(route) > deficit(best) ? route : best
-        }, tier[0]!)
-
         function deficit(route: SolverRoute): number {
             // With no shares configured anywhere, fall back to an even spread.
             const share = shareTotal > 0 ? Math.max(route.targetShare, 0) / shareTotal : 1 / pool.length
             return share * placed - (load.get(route.id) ?? 0)
         }
 
+        const chosen = shuffle(tier).reduce((best, route) => {
+            return deficit(route) > deficit(best) ? route : best
+        }, tier[0]!)
+
         load.set(chosen.id, (load.get(chosen.id) ?? 0) + 1)
         assignments.push({ vehicleId: vehicle.id, route: chosen.id })
     }
+
+    // First dibs: everybody who asked for one of the routes their depot serves.
+    for (const candidate of placeable) if (candidate.favourite.length > 0) place(candidate)
+    // Then everybody else, filling in around what the requests took.
+    for (const candidate of placeable) if (candidate.favourite.length === 0) place(candidate)
 
     return { assignments, skipped }
 }

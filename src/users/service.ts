@@ -1,8 +1,10 @@
 import { status } from 'elysia'
-import { and, desc, eq, gt, ilike, isNotNull, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, gt, ilike, isNotNull, isNull, ne, or } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import db from '../db'
-import { routePreferences, routes, users } from '../db/schema'
+import { globalRoutePreferences, groups, routePreferences, routes, users } from '../db/schema'
+import { BUILT_IN_ROUTES } from '../groups/defaults'
+import { mediaUrls } from '../media/service'
 import { globalModel } from '../utils/globalModel'
 import { requireSiteAdmin } from '../utils/authPlugin'
 import { isBanned } from '../utils/moderation'
@@ -24,14 +26,125 @@ export abstract class UserService {
         const stale = !user.cachedAt || Date.now() - user.cachedAt.getTime() > 1000 * 60 * 60 * 12
         if (stale) void Session.RefreshIdentity(user.id, user.robloxId)
 
+        // Whether the *owner* is reading decides nothing here: a profile shows
+        // its owner exactly what everybody else sees, so the visibility
+        // switches in settings can be checked by looking at the page.
+        const [favorites, disliked] = await Promise.all([
+            user.favoriteRoutesPublic ? UserService.publishedRoutes(user.id, 'FAVORITE') : null,
+            user.dislikedRoutesPublic ? UserService.publishedRoutes(user.id, 'DISLIKE') : null
+        ])
+
         return {
             userId: user.id,
             robloxId: user.robloxId,
             username: user.cachedUsername,
             displayName: user.cachedDisplayName,
             avatar: user.cachedAvatar,
-            siteRank: user.siteRank
+            siteRank: user.siteRank,
+            favoriteRoutes: favorites,
+            dislikedRoutes: disliked
         }
+    }
+
+    /**
+     * The routes somebody has marked, filtered to what their groups publish.
+     *
+     * A preference can be held against any route the person can reach, which
+     * includes routes inside a private group and routes a group has withdrawn
+     * from its public pages. Listing those on a profile would publish them on
+     * that group's behalf, so the same conditions the public pages apply are
+     * applied again here.
+     */
+    private static async publishedRoutes(
+        userId: string,
+        preference: 'FAVORITE' | 'DISLIKE'
+    ): Promise<UserModel.profileRoute[]> {
+        const rows = await db
+            .select({
+                routeId: routes.id,
+                name: routes.name,
+                color: routes.color,
+                textColor: routes.textColor,
+                shape: routes.shape,
+                iconMediaId: routes.iconMediaId,
+                routeSlug: routes.slug,
+                groupSlug: groups.slug,
+                groupName: groups.cachedName,
+                groupRobloxId: groups.robloxId
+            })
+            .from(routePreferences)
+            .innerJoin(routes, eq(routePreferences.routeId, routes.id))
+            .innerJoin(groups, eq(routes.groupId, groups.id))
+            .where(
+                and(
+                    eq(routePreferences.userId, userId),
+                    eq(routePreferences.preference, preference),
+                    // Built-ins are held globally; a stale row from before
+                    // that must not list the same route once per group.
+                    eq(routes.builtIn, false),
+                    eq(routes.archived, false),
+                    eq(routes.visibility, 'PUBLIC'),
+                    ne(routes.moderation, 'HIDDEN'),
+                    // UNLISTED groups stay reachable by direct link, and a
+                    // profile is exactly such a link.
+                    ne(groups.visibility, 'PRIVATE'),
+                    ne(groups.moderation, 'HIDDEN')
+                )
+            )
+
+        const [icons, global] = await Promise.all([
+            mediaUrls(rows.map((row) => row.iconMediaId)),
+            db
+                .select({ routeName: globalRoutePreferences.routeName })
+                .from(globalRoutePreferences)
+                .where(
+                    and(
+                        eq(globalRoutePreferences.userId, userId),
+                        eq(globalRoutePreferences.preference, preference)
+                    )
+                )
+        ])
+
+        /**
+         * A global route is drawn in the game's own colours.
+         *
+         * Each group's copy carries its own, and there is no reason to prefer
+         * one group's paint job over another's on a page that is about the
+         * route rather than about any group running it.
+         */
+        const globalRoutes: UserModel.profileRoute[] = global
+            .map((row) => {
+                const preset = BUILT_IN_ROUTES.find((route) => route.name === row.routeName)
+                return {
+                    routeId: null,
+                    name: row.routeName,
+                    color: preset?.color ?? '#4287f5',
+                    textColor: '#111111',
+                    shape: 'AUTO',
+                    icon: null,
+                    global: true,
+                    groupSlug: null,
+                    groupName: null,
+                    routeSlug: null
+                }
+            })
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+
+        return [
+            ...globalRoutes,
+            ...rows.map((row) => ({
+                routeId: row.routeId,
+                name: row.name,
+                color: row.color,
+                textColor: row.textColor,
+                shape: row.shape,
+                icon: row.iconMediaId ? (icons.get(row.iconMediaId) ?? null) : null,
+                global: false,
+                groupSlug: row.groupSlug,
+                groupName: row.groupName ?? `Group ${row.groupRobloxId}`,
+                routeSlug: row.routeSlug
+            }))
+        ]
     }
 
     /** Resolves Roblox identities in bulk, cached, for the dispatch table. */
@@ -57,7 +170,9 @@ export abstract class UserService {
                 theme: users.theme,
                 locale: users.locale,
                 timezone: users.timezone,
-                profilePublic: users.profilePublic
+                profilePublic: users.profilePublic,
+                favoriteRoutesPublic: users.favoriteRoutesPublic,
+                dislikedRoutesPublic: users.dislikedRoutesPublic
             })
             .from(users)
             .where(eq(users.id, session.user.userId))
@@ -81,17 +196,43 @@ export abstract class UserService {
     static async getRoutePreferences(session: session): Promise<UserModel.routePreferenceList> {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
-        return db
-            .select({
-                routeId: routes.id,
-                groupId: routes.groupId,
-                name: routes.name,
-                color: routes.color,
-                preference: routePreferences.preference
-            })
-            .from(routePreferences)
-            .innerJoin(routes, eq(routePreferences.routeId, routes.id))
-            .where(eq(routePreferences.userId, session.user.userId))
+        const userId = session.user.userId
+
+        const [custom, global] = await Promise.all([
+            db
+                .select({
+                    routeId: routes.id,
+                    groupId: routes.groupId,
+                    name: routes.name,
+                    color: routes.color,
+                    preference: routePreferences.preference
+                })
+                .from(routePreferences)
+                .innerJoin(routes, eq(routePreferences.routeId, routes.id))
+                .where(eq(routePreferences.userId, userId)),
+            db
+                .select({
+                    name: globalRoutePreferences.routeName,
+                    preference: globalRoutePreferences.preference
+                })
+                .from(globalRoutePreferences)
+                .where(eq(globalRoutePreferences.userId, userId))
+        ])
+
+        return [
+            // A global mark is sent once, by name. Expanding it into a row per
+            // group would grow with the site and still miss the group that
+            // registers next.
+            ...global.map((row) => ({
+                global: true,
+                routeId: null,
+                groupId: null,
+                name: row.name,
+                color: BUILT_IN_ROUTES.find((route) => route.name === row.name)?.color ?? '#4287f5',
+                preference: row.preference
+            })),
+            ...custom.map((row) => ({ global: false, ...row }))
+        ]
     }
 
     /**
@@ -101,8 +242,47 @@ export abstract class UserService {
     static async setRoutePreference(routeId: string, body: UserModel.setRoutePreferenceBody, session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
-        const [route] = await db.select({ id: routes.id }).from(routes).where(eq(routes.id, routeId)).limit(1)
+        const [route] = await db
+            .select({ id: routes.id, name: routes.name, builtIn: routes.builtIn })
+            .from(routes)
+            .where(eq(routes.id, routeId))
+            .limit(1)
         if (!route) throw status(404, 'Not Found' satisfies globalModel.notFound)
+
+        /**
+         * Marking one group's route 6 marks route 6.
+         *
+         * The route is addressed by the id of the copy the person was looking
+         * at — that is what the page in front of them has — but a built-in is
+         * the same route in every group, so the answer is stored against its
+         * name and applies wherever it is run. A custom route is that group's
+         * own invention, and two groups running a "15" do not mean the same
+         * thing by it.
+         */
+        if (route.builtIn) {
+            if (body.preference === 'NONE') {
+                await db
+                    .delete(globalRoutePreferences)
+                    .where(
+                        and(
+                            eq(globalRoutePreferences.userId, session.user.userId),
+                            eq(globalRoutePreferences.routeName, route.name)
+                        )
+                    )
+
+                return 'Success' as globalModel.genericSuccess
+            }
+
+            await db
+                .insert(globalRoutePreferences)
+                .values({ userId: session.user.userId, routeName: route.name, preference: body.preference })
+                .onConflictDoUpdate({
+                    target: [globalRoutePreferences.userId, globalRoutePreferences.routeName],
+                    set: { preference: body.preference }
+                })
+
+            return 'Success' as globalModel.genericSuccess
+        }
 
         if (body.preference === 'NONE') {
             await db

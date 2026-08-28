@@ -157,7 +157,15 @@ export const routeDepots = pgTable(
     (table) => [primaryKey({ columns: [table.routeId, table.depotId] })]
 )
 
-/** Drivers can mark routes they want, and routes they would rather avoid. */
+/**
+ * Drivers can mark routes they want, and routes they would rather avoid.
+ *
+ * **Custom routes only.** The routes the game ships with are the same route
+ * everywhere — a driver who likes route 6 likes it in every group that runs it
+ * — so those are held by name in `global_route_preferences` instead. A custom
+ * route belongs to the group that invented it, and two groups that both
+ * happen to run a "15" do not mean the same thing by it.
+ */
 export const routePreferences = pgTable(
     'route_preferences',
     {
@@ -173,6 +181,28 @@ export const routePreferences = pgTable(
         primaryKey({ columns: [table.userId, table.routeId] }),
         index('route_preferences_route_idx').on(table.routeId)
     ]
+)
+
+/**
+ * A preference against a built-in route, held for every group at once.
+ *
+ * Keyed by the route's **name**, which is the only thing the copies in each
+ * group share: the rows are per-group and carry their own ids, colours and
+ * depots. A built-in cannot be renamed and every group has exactly one of
+ * each, so the name identifies it without ambiguity, and a group registered
+ * tomorrow inherits the driver's answer without anything being backfilled.
+ */
+export const globalRoutePreferences = pgTable(
+    'global_route_preferences',
+    {
+        userId: uuid('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        /** The built-in route's name — "6", "9", "10", "14", "16". */
+        routeName: text('route_name').notNull(),
+        preference: routePreferenceEnum('preference').notNull()
+    },
+    (table) => [primaryKey({ columns: [table.userId, table.routeName] })]
 )
 
 export const depotsRelations = relations(depots, ({ one, many }) => ({
@@ -196,6 +226,11 @@ export const routePreferencesRelations = relations(routePreferences, ({ one }) =
     route: one(routes, { fields: [routePreferences.routeId], references: [routes.id] })
 }))
 
+export const globalRoutePreferencesRelations = relations(globalRoutePreferences, ({ one }) => ({
+    user: one(users, { fields: [globalRoutePreferences.userId], references: [users.id] })
+}))
+
 export type Route = typeof routes.$inferSelect
 export type Depot = typeof depots.$inferSelect
 export type RoutePreference = typeof routePreferences.$inferSelect
+export type GlobalRoutePreference = typeof globalRoutePreferences.$inferSelect
