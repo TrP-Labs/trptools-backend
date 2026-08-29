@@ -1,6 +1,7 @@
 import { t } from 'elysia'
 import { RouteModel } from '../groups/routes/model'
 import { RankModel } from '../groups/rank/model'
+import { ApplicationModel } from '../applications/model'
 
 export namespace PublicModel {
     export const directoryEntry = t.Object({
@@ -117,7 +118,16 @@ export namespace PublicModel {
         routes: t.Array(RouteModel.routeBody),
         depots: t.Array(RouteModel.depotBody),
         roster: RankModel.rosterResponse,
-        upcomingShifts: t.Array(publicShift)
+        upcomingShifts: t.Array(publicShift),
+
+        /**
+         * Forms the group is currently taking applicants through.
+         *
+         * Not gated on a section toggle: a form is only here because somebody
+         * opened it, which is already the decision to publish it. A closed one
+         * is simply absent.
+         */
+        openApplications: t.Array(ApplicationModel.publicApplicationSummary)
     })
     export type groupPage = typeof groupPage.static
 }

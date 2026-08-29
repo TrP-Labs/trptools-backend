@@ -10,6 +10,7 @@ import { group } from './groups/controller'
 import { ranks } from './groups/rank/controller'
 import { route, depot } from './groups/routes/controller'
 import { schedule } from './schedule/controller'
+import { applicationRoutes } from './applications/controller'
 import { rooms } from './rooms/controller'
 import { dispatch } from './rooms/dispatch/controller'
 import { publicPages } from './public/controller'
@@ -77,6 +78,7 @@ export const app = new Elysia()
     .use(route)
     .use(depot)
     .use(schedule)
+    .use(applicationRoutes)
     .use(rooms)
     .use(dispatch)
     .use(publicPages)
@@ -107,6 +109,7 @@ export const app = new Elysia()
                     { name: 'Ranks', description: 'Mapping Roblox roles to TrPTools permissions' },
                     { name: 'Routes', description: 'Custom routes and depots' },
                     { name: 'Schedule', description: 'Recurring shifts, occurrences and signups' },
+                    { name: 'Applications', description: 'Staff application forms, and reviewing what people send' },
                     { name: 'Rooms', description: 'Opening and closing dispatch rooms' },
                     { name: 'Dispatch', description: 'Live vehicle assignment inside a room' },
                     { name: 'Public', description: 'Anonymous reads of published group pages' },

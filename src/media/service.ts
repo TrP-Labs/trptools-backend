@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import db from '../db'
-import { depots, groups, media, routes, type Media } from '../db/schema'
+import { applications, depots, groups, media, routes, type Media } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertPermission } from '../utils/groupPermission'
 import {
@@ -91,6 +91,10 @@ export async function mediaUrls(ids: Array<string | null>): Promise<Map<string, 
  * the set and the clear path.
  */
 async function resolveIconOwner(groupId: string, ownerType: MediaModel.ownerType, ownerId?: string) {
+    // Application forms have no single image of their own — their pictures are
+    // components in the form, uploaded to the gallery and referenced by id.
+    if (ownerType === 'APPLICATION') throw status(400, 'Bad Request' satisfies globalModel.badRequest)
+
     if (ownerType === 'GROUP') {
         const [group] = await db
             .select({ mediaId: groups.bannerMediaId })
@@ -220,18 +224,14 @@ export abstract class MediaService {
         if (body.ownerType !== 'GROUP') {
             if (!body.ownerId) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
 
-            const owned =
-                body.ownerType === 'ROUTE'
-                    ? await db
-                          .select({ id: routes.id })
-                          .from(routes)
-                          .where(and(eq(routes.id, body.ownerId), eq(routes.groupId, group.id)))
-                          .limit(1)
-                    : await db
-                          .select({ id: depots.id })
-                          .from(depots)
-                          .where(and(eq(depots.id, body.ownerId), eq(depots.groupId, group.id)))
-                          .limit(1)
+            const owner =
+                body.ownerType === 'ROUTE' ? routes : body.ownerType === 'DEPOT' ? depots : applications
+
+            const owned = await db
+                .select({ id: owner.id })
+                .from(owner)
+                .where(and(eq(owner.id, body.ownerId), eq(owner.groupId, group.id)))
+                .limit(1)
 
             if (owned.length === 0) throw status(404, 'Not Found' satisfies globalModel.notFound)
         }

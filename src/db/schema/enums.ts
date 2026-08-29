@@ -23,7 +23,31 @@ export const reportTargetEnum = pgEnum('report_target', ['GROUP', 'ROUTE', 'DEPO
 
 export const reportStatusEnum = pgEnum('report_status', ['OPEN', 'UPHELD', 'DISMISSED'])
 
-export const mediaOwnerEnum = pgEnum('media_owner', ['GROUP', 'ROUTE', 'DEPOT'])
+export const mediaOwnerEnum = pgEnum('media_owner', ['GROUP', 'ROUTE', 'DEPOT', 'APPLICATION'])
+
+/**
+ * The components a staff application form is built out of.
+ *
+ * `SECTION` and `IMAGE` collect no answer — they are a heading with body text
+ * and a picture respectively, so a form can explain itself rather than being a
+ * bare list of questions.
+ */
+export const applicationQuestionEnum = pgEnum('application_question', [
+    'SHORT_TEXT',
+    'LONG_TEXT',
+    'MULTIPLE_CHOICE',
+    'CHECKBOXES',
+    'SECTION',
+    'IMAGE'
+])
+
+/**
+ * Where a submitted application sits.
+ *
+ * A decision never deletes: `APPROVED` and `DENIED` are the archive, read from
+ * the same rows the pending list reads.
+ */
+export const applicationStatusEnum = pgEnum('application_status', ['PENDING', 'APPROVED', 'DENIED'])
 
 export type Visibility = (typeof visibilityEnum.enumValues)[number]
 export type RouteShape = (typeof routeShapeEnum.enumValues)[number]
@@ -31,3 +55,5 @@ export type VehicleCategory = (typeof vehicleCategoryEnum.enumValues)[number]
 export type ModerationStatus = (typeof moderationEnum.enumValues)[number]
 export type ReportTarget = (typeof reportTargetEnum.enumValues)[number]
 export type MediaOwner = (typeof mediaOwnerEnum.enumValues)[number]
+export type ApplicationQuestionType = (typeof applicationQuestionEnum.enumValues)[number]
+export type ApplicationStatus = (typeof applicationStatusEnum.enumValues)[number]
