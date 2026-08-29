@@ -1,7 +1,12 @@
 import { t } from 'elysia'
 
 export namespace MediaModel {
-    export const ownerType = t.Union([t.Literal('GROUP'), t.Literal('ROUTE'), t.Literal('DEPOT')])
+    export const ownerType = t.Union([
+        t.Literal('GROUP'),
+        t.Literal('ROUTE'),
+        t.Literal('DEPOT'),
+        t.Literal('APPLICATION')
+    ])
     export type ownerType = typeof ownerType.static
 
     export const item = t.Object({

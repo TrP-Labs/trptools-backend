@@ -1,6 +1,8 @@
 import { Elysia, t } from 'elysia'
 import { PublicModel } from './model'
 import { PublicPages } from './service'
+import { ApplicationModel } from '../applications/model'
+import { Applications } from '../applications/service'
 import { globalModel } from '../utils/globalModel'
 
 export const publicPages = new Elysia({ prefix: '/public', tags: ['Public'] })
@@ -57,6 +59,27 @@ export const publicPages = new Elysia({ prefix: '/public', tags: ['Public'] })
                 404: globalModel.notFound
             },
             detail: { summary: 'Read a depot\'s own page' }
+        }
+    )
+
+    .get(
+        '/groups/:slug/applications/:applicationSlug',
+        async ({ params: { slug, applicationSlug } }) => Applications.publicForm(slug, applicationSlug),
+        {
+            params: t.Object({
+                slug: t.String({ maxLength: 48 }),
+                applicationSlug: t.String({ maxLength: 48 })
+            }),
+            response: {
+                200: ApplicationModel.publicApplication,
+                404: globalModel.notFound
+            },
+            detail: {
+                summary: 'Read an application form',
+                description:
+                    'The form itself, identical for every caller. A closed form still reads, and says so — what ' +
+                    'the caller has already sent is a separate, session-aware request.'
+            }
         }
     )
 
