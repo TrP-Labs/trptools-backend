@@ -16,9 +16,15 @@ export function moderationAfterReport(current: ModerationStatus): ModerationStat
     return current === 'APPROVED' ? 'APPROVED' : 'HIDDEN'
 }
 
-/** People who can see hidden content: the group's own staff, and site admins. */
-export function canSeeHidden(siteRank: string | undefined, permissionLevel: number): boolean {
-    return siteRank === 'admin' || permissionLevel >= 1
+/**
+ * People who can see hidden content: the group's own staff, and site admins.
+ *
+ * It is handed the answer to "is this caller an elevated site admin"
+ * (`isSiteAdmin`) rather than a rank string: an admin only counts while admin
+ * mode is on, which is not a fact a bare `siteRank` carries.
+ */
+export function canSeeHidden(siteAdmin: boolean, permissionLevel: number): boolean {
+    return siteAdmin || permissionLevel >= 1
 }
 
 /** The suspension fields carried on a user row. */

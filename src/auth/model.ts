@@ -18,7 +18,19 @@ export namespace AuthModel {
     export const SessionUser = t.Object({
         userId: t.String(),
         robloxId: t.Number(),
+        /** What the account is. `adminMode` says what it is currently doing. */
         siteRank: t.String(),
+        /**
+         * Whether this session is exercising site-admin powers.
+         *
+         * Reported separately from `siteRank` so a client can tell the two
+         * apart: the settings switch has to be offered to an admin whose mode
+         * is off, and every admin-only link has to be hidden from that same
+         * person until they turn it on.
+         */
+        adminMode: t.Boolean(),
+        /** The group this person pinned as theirs, for the dashboard's shortcut. */
+        primaryGroupId: t.Union([t.String(), t.Null()]),
         username: t.Union([t.String(), t.Null()]),
         displayName: t.Union([t.String(), t.Null()]),
         avatar: t.Union([t.String(), t.Null()]),
@@ -33,6 +45,12 @@ export namespace AuthModel {
         user: t.Optional(SessionUser)
     })
     export type SessionResponse = typeof SessionResponse.static
+
+    export const AdminModeBody = t.Object({ enabled: t.Boolean() })
+    export type AdminModeBody = typeof AdminModeBody.static
+
+    export const AdminModeResponse = t.Object({ adminMode: t.Boolean() })
+    export type AdminModeResponse = typeof AdminModeResponse.static
 
     export const LoginUrlResponse = t.Object({
         url: t.String()

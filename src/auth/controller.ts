@@ -103,6 +103,41 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
         }
     )
 
+    /**
+     * The site-admin switch.
+     *
+     * A site admin bypasses every group permission, so while it is on they
+     * cannot see the site as its users do and no permission bug is
+     * reproducible. It is off on a fresh session and turned on here, for this
+     * session only.
+     */
+    .post(
+        '/admin-mode',
+        async ({ session, body, cookie: { access_token } }) => {
+            const adminMode = await Session.SetAdminMode(
+                access_token.value as string | undefined,
+                session,
+                body.enabled
+            )
+
+            return { adminMode } satisfies AuthModel.AdminModeResponse
+        },
+        {
+            body: AuthModel.AdminModeBody,
+            response: {
+                200: AuthModel.AdminModeResponse,
+                401: globalModel.unauthorized,
+                403: globalModel.forbidden
+            },
+            detail: {
+                summary: 'Turn site-admin powers on or off for this session',
+                description:
+                    'Only an account seeded as a site admin may call this, and only over a cookie session. ' +
+                    'With it off the account is treated as an ordinary one everywhere, including the admin portal.'
+            }
+        }
+    )
+
     .post(
         '/logout',
         async ({ cookie: { access_token } }) => {

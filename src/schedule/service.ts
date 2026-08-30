@@ -6,7 +6,7 @@ import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertPermission, GetMembership } from '../utils/groupPermission'
 import { describeRule, isValidRule, occurrencesBetween } from '../utils/recurrence'
 import { childSlug, uniqueWithin } from '../utils/slug'
-import type { session } from '../utils/sessionVerifier'
+import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../groups/service'
 import { GroupModel } from '../groups/model'
 import { publishSignupChange } from './events'
@@ -36,7 +36,7 @@ async function assertCanRead(groupIdOrSlug: string, session: session) {
         ? await GetMembership(session.user.userId, group.id)
         : { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
 
-    const isMember = membership.permissionLevel >= PERMISSION.DISPATCH || session.user?.siteRank === 'admin'
+    const isMember = membership.permissionLevel >= PERMISSION.DISPATCH || isSiteAdmin(session)
 
     if (!isMember && (group.visibility === 'PRIVATE' || !group.showShifts)) {
         throw status(404, 'Not Found' satisfies globalModel.notFound)
@@ -231,7 +231,7 @@ export abstract class Schedule {
         const membership = await GetMembership(session.user.userId, event.groupId)
 
         // Signing up is a member action, so dispatch level is the floor.
-        if (membership.permissionLevel < PERMISSION.DISPATCH && session.user.siteRank !== 'admin') {
+        if (membership.permissionLevel < PERMISSION.DISPATCH && !isSiteAdmin(session)) {
             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
         }
 

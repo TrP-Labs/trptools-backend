@@ -1,5 +1,5 @@
 import { Elysia, status } from 'elysia'
-import { ResolveSession, type session } from './sessionVerifier'
+import { isElevated, ResolveSession, type session } from './sessionVerifier'
 import { env } from './env'
 
 /**
@@ -35,9 +35,16 @@ export function requireUser(session: session) {
     return session.user
 }
 
-/** The same narrowing for site admins, who bypass group permissions entirely. */
+/**
+ * The same narrowing for site admins, who bypass group permissions entirely.
+ *
+ * An admin who has not turned admin mode on is refused exactly like anybody
+ * else. That is the point of the switch: while it is off the account is an
+ * ordinary account, including here, so the site can be read the way the people
+ * using it read it.
+ */
 export function requireSiteAdmin(session: session) {
     const user = requireUser(session)
-    if (user.siteRank !== 'admin') throw status(403, 'Forbidden')
+    if (!isElevated(user)) throw status(403, 'Forbidden')
     return user
 }

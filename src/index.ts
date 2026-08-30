@@ -7,6 +7,7 @@ import { clientKey, rateLimit } from './utils/ratelimit'
 import { auth } from './auth/controller'
 import { adminUsers, users } from './users/controller'
 import { group } from './groups/controller'
+import { dashboard } from './dashboard/controller'
 import { ranks } from './groups/rank/controller'
 import { route, depot } from './groups/routes/controller'
 import { schedule } from './schedule/controller'
@@ -74,6 +75,7 @@ export const app = new Elysia()
     .use(auth)
     .use(users)
     .use(group)
+    .use(dashboard)
     .use(ranks)
     .use(route)
     .use(depot)
@@ -106,6 +108,7 @@ export const app = new Elysia()
                     { name: 'Authentication', description: 'Roblox OAuth sessions and API keys' },
                     { name: 'Users', description: 'Profiles and personal preferences' },
                     { name: 'Groups', description: 'Group registration, settings and visibility' },
+                    { name: 'Dashboard', description: 'The signed-in overview across every group you are in' },
                     { name: 'Ranks', description: 'Mapping Roblox roles to TrPTools permissions' },
                     { name: 'Routes', description: 'Custom routes and depots' },
                     { name: 'Schedule', description: 'Recurring shifts, occurrences and signups' },

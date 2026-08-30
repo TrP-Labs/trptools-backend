@@ -1,6 +1,7 @@
 import { relations } from 'drizzle-orm'
 import { bigint, boolean, index, pgTable, text, timestamp, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { sessions, apiKeys } from './auth'
+import { groups } from './groups'
 import { globalRoutePreferences, routePreferences } from './routes'
 import { shiftSignups } from './signups'
 import { stagePrograms } from './tools'
@@ -57,6 +58,18 @@ export const users = pgTable(
         theme: text('theme').notNull().default('dim'),
         locale: text('locale').notNull().default('en'),
         timezone: text('timezone').notNull().default('UTC'),
+
+        /**
+         * The group this person actually works for, out of however many they
+         * hold a rank in.
+         *
+         * Nothing is gated on it — it only decides which group the dashboard
+         * leads with and links to first. `set null` rather than cascade so
+         * losing a group demotes the shortcut instead of deleting the account.
+         */
+        primaryGroupId: uuid('primary_group_id').references((): AnyPgColumn => groups.id, {
+            onDelete: 'set null'
+        }),
 
         /**
          * What a profile publishes.

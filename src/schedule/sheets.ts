@@ -3,7 +3,7 @@ import db from '../db'
 import { rankRelations, rankSignups, rankSignupSlots, shiftSignups, users } from '../db/schema'
 import { PERMISSION } from '../utils/globalModel'
 import type { Membership } from '../utils/groupPermission'
-import type { session } from '../utils/sessionVerifier'
+import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import type { ScheduleModel } from './model'
 
 /** A rank's sign-up sheet with its slots, before any occurrence is applied. */
@@ -94,7 +94,7 @@ export async function loadSheets(groupId: string): Promise<LoadedSheet[]> {
  * still has to be able to staff a shift.
  */
 export function canUseSheet(sheet: LoadedSheet, membership: Membership, session: session): boolean {
-    if (session.user?.siteRank === 'admin') return true
+    if (isSiteAdmin(session)) return true
     if (membership.permissionLevel >= PERMISSION.MANAGE) return true
     return membership.robloxRank >= sheet.robloxRank
 }

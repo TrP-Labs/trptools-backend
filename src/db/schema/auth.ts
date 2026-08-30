@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm'
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { users } from './users'
 
 export const sessions = pgTable(
@@ -13,6 +13,23 @@ export const sessions = pgTable(
 
         expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
         createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+
+        /**
+         * Whether this one session is acting with site-admin powers.
+         *
+         * A site admin bypasses every group permission, which meant an admin
+         * could never see the site as the people using it do — every group on
+         * the instance sat in their dashboard, and no permission bug was
+         * reproducible while signed in as themselves. The standing is on the
+         * account; *using* it is per session and off until asked for, so
+         * signing in lands you in your own groups and the bypass is a
+         * deliberate act with a visible marker on it.
+         *
+         * It lives on the session row rather than in a cookie so the elevation
+         * is decided by the server, ends with the session, and applies
+         * identically to every route without each one re-reading a header.
+         */
+        adminMode: boolean('admin_mode').notNull().default(false),
 
         userAgent: text('user_agent'),
         ip: text('ip')

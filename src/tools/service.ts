@@ -3,7 +3,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import db from '../db'
 import { stagePrograms } from '../db/schema'
 import { globalModel } from '../utils/globalModel'
-import type { session } from '../utils/sessionVerifier'
+import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { ToolsModel } from './model'
 
 function parseProgram(raw: string): ToolsModel.program {
@@ -40,7 +40,7 @@ export abstract class StagePrograms {
         if (!row) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         const isAuthor = session.user?.userId === row.authorId
-        if (row.visibility === 'PRIVATE' && !isAuthor && session.user?.siteRank !== 'admin') {
+        if (row.visibility === 'PRIVATE' && !isAuthor && !isSiteAdmin(session)) {
             throw status(404, 'Not Found' satisfies globalModel.notFound)
         }
 
@@ -87,7 +87,7 @@ export abstract class StagePrograms {
 
         const [row] = await db.select().from(stagePrograms).where(eq(stagePrograms.id, id)).limit(1)
         if (!row) throw status(404, 'Not Found' satisfies globalModel.notFound)
-        if (row.authorId !== session.user.userId && session.user.siteRank !== 'admin') {
+        if (row.authorId !== session.user.userId && !isSiteAdmin(session)) {
             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
         }
 

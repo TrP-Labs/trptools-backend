@@ -7,7 +7,7 @@ import { resolveCredentials } from './robloxCredentials'
 import { dataRedis } from './redis'
 import { PERMISSION } from './globalModel'
 import { isUuid } from './slug'
-import type { session } from './sessionVerifier'
+import { isSiteAdmin, type session } from './sessionVerifier'
 
 /**
  * What a user is inside a TrPTools group: the permission level their bound
@@ -198,7 +198,7 @@ export default async function UserHasRank(userID: string, groupIdOrSlug: string,
  */
 export async function assertPermission(session: session, groupIdOrSlug: string, level: number) {
     if (!session.user) throw status(401, 'Unauthorized')
-    if (session.user.siteRank === 'admin') return
+    if (isSiteAdmin(session)) return
     if (!(await UserHasRank(session.user.userId, groupIdOrSlug, level))) throw status(403, 'Forbidden')
 }
 
