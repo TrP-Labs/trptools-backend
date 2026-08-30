@@ -6,7 +6,8 @@ import { apiKeys, sessions, users } from '../db/schema'
 import { env } from '../utils/env'
 import { Roblox } from '../utils/roblox'
 import { OAUTH_SCOPES, robloxOAuth, storeUserTokens } from '../utils/robloxCredentials'
-import { generateSessionToken, hashToken, type session } from '../utils/sessionVerifier'
+import { generateSessionToken, hashToken, isAdminAccount, type session } from '../utils/sessionVerifier'
+import { invalidateUserPermissions } from '../utils/groupPermission'
 import { isBanned } from '../utils/moderation'
 import { globalModel } from '../utils/globalModel'
 import { API_SCOPES, AuthModel } from './model'
@@ -144,6 +145,10 @@ export abstract class Session {
                 userId: user.id,
                 robloxId: user.robloxId,
                 siteRank: user.siteRank,
+                // Read back off the session rather than the account: the
+                // standing is the account's, using it is this session's.
+                adminMode: session.user.adminMode,
+                primaryGroupId: user.primaryGroupId,
                 username: user.cachedUsername,
                 displayName: user.cachedDisplayName,
                 avatar: user.cachedAvatar,
@@ -152,6 +157,36 @@ export abstract class Session {
                 timezone: user.timezone
             }
         }
+    }
+
+    /**
+     * Turns this one session's site-admin powers on or off.
+     *
+     * Scoped to the session on purpose: an admin can hold an elevated window
+     * and an ordinary one at the same time, and closing the browser is enough
+     * to drop back to an ordinary account. Only a cookie session can be
+     * elevated — an API key has nowhere to make the choice, so it never is.
+     */
+    static async SetAdminMode(token: string | undefined, session: session, enabled: boolean): Promise<boolean> {
+        if (!isAdminAccount(session)) throw status(403, 'Forbidden' satisfies globalModel.forbidden)
+        if (!token || session.viaApiKey) throw status(403, 'Forbidden' satisfies globalModel.forbidden)
+
+        const updated = await db
+            .update(sessions)
+            .set({ adminMode: enabled })
+            .where(eq(sessions.sessionId, hashToken(token)))
+            .returning({ adminMode: sessions.adminMode })
+
+        if (updated.length === 0) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
+
+        // Group permission is cached per user for a minute, and the cached
+        // entry was computed with the bypass in force. Throwing it away makes
+        // the switch take effect on the very next request rather than up to a
+        // minute later, which matters most in the direction that *removes*
+        // access.
+        await invalidateUserPermissions(session.user!.userId)
+
+        return enabled
     }
 
     static async RefreshIdentity(userId: string, robloxId: number) {

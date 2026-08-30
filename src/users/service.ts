@@ -5,11 +5,12 @@ import db from '../db'
 import { globalRoutePreferences, groups, routePreferences, routes, users } from '../db/schema'
 import { BUILT_IN_ROUTES } from '../groups/defaults'
 import { mediaUrls } from '../media/service'
-import { globalModel } from '../utils/globalModel'
+import { globalModel, PERMISSION } from '../utils/globalModel'
+import { assertPermission } from '../utils/groupPermission'
 import { requireSiteAdmin } from '../utils/authPlugin'
 import { isBanned } from '../utils/moderation'
 import { Roblox } from '../utils/roblox'
-import type { session } from '../utils/sessionVerifier'
+import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { Session } from '../auth/service'
 import { UserModel } from './model'
 
@@ -19,7 +20,7 @@ export abstract class UserService {
         if (!user) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         const isSelf = session.user?.userId === user.id
-        if (!user.profilePublic && !isSelf && session.user?.siteRank !== 'admin') {
+        if (!user.profilePublic && !isSelf && !isSiteAdmin(session)) {
             throw status(404, 'Not Found' satisfies globalModel.notFound)
         }
 
@@ -172,7 +173,8 @@ export abstract class UserService {
                 timezone: users.timezone,
                 profilePublic: users.profilePublic,
                 favoriteRoutesPublic: users.favoriteRoutesPublic,
-                dislikedRoutesPublic: users.dislikedRoutesPublic
+                dislikedRoutesPublic: users.dislikedRoutesPublic,
+                primaryGroupId: users.primaryGroupId
             })
             .from(users)
             .where(eq(users.id, session.user.userId))
@@ -185,6 +187,13 @@ export abstract class UserService {
 
     static async setPreferences(body: UserModel.preferencesBody, session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
+
+        // Pinning a group is a shortcut, not a grant — but a shortcut to a
+        // group you cannot open is a broken link on your own dashboard, so the
+        // pin is checked against the same permission the link leads to.
+        if (body.primaryGroupId) {
+            await assertPermission(session, body.primaryGroupId, PERMISSION.DISPATCH)
+        }
 
         if (Object.keys(body).length > 0) {
             await db.update(users).set(body).where(eq(users.id, session.user.userId))

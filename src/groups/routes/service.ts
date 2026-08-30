@@ -6,7 +6,7 @@ import { globalModel, PERMISSION } from '../../utils/globalModel'
 import { assertPermission, GetPermissionLevel } from '../../utils/groupPermission'
 import { childSlug, uniqueWithin } from '../../utils/slug'
 import { mediaForOwners, mediaUrls } from '../../media/service'
-import type { session } from '../../utils/sessionVerifier'
+import { isSiteAdmin, type session } from '../../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../service'
 import { GroupModel } from '../model'
 import { RouteModel } from './model'
@@ -132,7 +132,7 @@ async function readContext(groupIdOrSlug: string, session: session) {
     if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
     const permissionLevel = session.user ? await GetPermissionLevel(session.user.userId, group.id) : PERMISSION.NONE
-    const isStaff = permissionLevel >= PERMISSION.DISPATCH || session.user?.siteRank === 'admin'
+    const isStaff = permissionLevel >= PERMISSION.DISPATCH || isSiteAdmin(session)
 
     return { group, permissionLevel, isStaff }
 }

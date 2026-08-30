@@ -8,7 +8,7 @@ import { resolveCredentials, userCredentials } from '../utils/robloxCredentials'
 import { encryptSecret } from '../utils/crypto'
 import { assertPermission, GetPermissionLevel, invalidateGroupPermissions } from '../utils/groupPermission'
 import { isUuid, isValidSlug, uniqueSlug } from '../utils/slug'
-import type { session } from '../utils/sessionVerifier'
+import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { seedGroupDefaults, seedVehicleTypes } from './defaults'
 import { GroupModel } from './model'
 
@@ -121,8 +121,11 @@ export abstract class Group_ {
     static async getGroups(session: session): Promise<GroupModel.groupList> {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
-        // Site admins operate the instance, so they see every group.
-        if (session.user.siteRank === 'admin') {
+        // A site admin running with admin mode on operates the instance, so
+        // they see every group. With it off they see their own — which is the
+        // whole point of the switch, and why this list is the one place the
+        // difference is most obvious.
+        if (isSiteAdmin(session)) {
             const all = await db.select().from(groups).orderBy(asc(groups.cachedName))
             return all.map((entry) => summarise(entry, PERMISSION.MANAGE))
         }
@@ -218,10 +221,10 @@ export abstract class Group_ {
         const group = await findGroup(idOrSlug)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        // Site admins operate the instance, so they always report full access
-        // here — matching the bypass `assertPermission` already applies.
+        // An elevated site admin operates the instance, so they always report
+        // full access here — matching the bypass `assertPermission` applies.
         const permissionLevel =
-            session.user?.siteRank === 'admin'
+            isSiteAdmin(session)
                 ? PERMISSION.MANAGE
                 : session.user
                   ? await GetPermissionLevel(session.user.userId, group.id)
@@ -229,7 +232,7 @@ export abstract class Group_ {
 
         // A private group is only visible to people who hold a rank in it.
         if (group.visibility === 'PRIVATE' && permissionLevel < PERMISSION.DISPATCH) {
-            if (session.user?.siteRank !== 'admin') {
+            if (!isSiteAdmin(session)) {
                 throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
             }
         }
@@ -440,7 +443,7 @@ export abstract class Group_ {
         const credentials = await resolveCredentials(group.id, session.user?.userId)
         const robloxGroup = await Roblox.getGroup(group.robloxId, credentials)
 
-        if (session.user?.siteRank !== 'admin' && robloxGroup?.ownerId !== session.user?.robloxId) {
+        if (!isSiteAdmin(session) && robloxGroup?.ownerId !== session.user?.robloxId) {
             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
         }
 

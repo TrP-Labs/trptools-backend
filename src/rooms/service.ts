@@ -7,7 +7,7 @@ import { dataRedis, deleteByPrefix } from '../utils/redis'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertPermission, GetPermissionLevel } from '../utils/groupPermission'
 import { activeOccurrence } from '../utils/recurrence'
-import type { session } from '../utils/sessionVerifier'
+import { isElevated, type session, type SessionUser } from '../utils/sessionVerifier'
 import { findGroup } from '../groups/service'
 import { RoomModel } from './model'
 
@@ -157,14 +157,11 @@ export abstract class RoomControls {
 }
 
 /** Shared by the dispatch controller: can this user act in this room? */
-export async function canDispatch(
-    user: { userId: string; siteRank: string },
-    roomId: string
-): Promise<RoomInfo | null> {
+export async function canDispatch(user: SessionUser, roomId: string): Promise<RoomInfo | null> {
     const groupId = await dataRedis.hget(roomKey(roomId), 'groupId')
     if (!groupId) return null
 
-    if (user.siteRank !== 'admin') {
+    if (!isElevated(user)) {
         const level = await GetPermissionLevel(user.userId, groupId)
         if (level < PERMISSION.DISPATCH) return null
     }

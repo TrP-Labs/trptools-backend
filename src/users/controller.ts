@@ -21,7 +21,8 @@ export const users = new Elysia({ prefix: '/users', tags: ['Users'] })
         body: UserModel.preferencesBody,
         response: {
             200: globalModel.genericSuccess,
-            401: globalModel.unauthorized
+            401: globalModel.unauthorized,
+            403: globalModel.forbidden
         },
         detail: { summary: 'Update your preferences' }
     })

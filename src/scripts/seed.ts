@@ -260,7 +260,13 @@ async function seed() {
     await db.insert(sessions).values({
         sessionId: hashToken(token),
         userId: user.id,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        // Elevated from the start, because the whole point of the seeded
+        // session is to hand a developer a working site without Roblox OAuth,
+        // and the demo user holds no real rank in the demo group. Turn it off
+        // in Settings to see the site as an ordinary member does — which is
+        // the other thing the switch is for.
+        adminMode: true
     })
 
     console.log('\nSeeded.')
@@ -270,6 +276,7 @@ async function seed() {
     console.log('\nSign in locally by setting this cookie on the API origin:')
     console.log(`  access_token=${token}\n`)
     console.log('  document.cookie = "access_token=' + token + '; path=/"\n')
+    console.log('  Admin mode is on for that session. Settings > Account turns it off.\n')
 }
 
 seed()

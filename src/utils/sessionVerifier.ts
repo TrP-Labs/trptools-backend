@@ -9,7 +9,16 @@ import { env } from './env'
 export type SessionUser = {
     userId: string
     robloxId: number
+    /** What the *account* is. Says nothing about what this session may do. */
     siteRank: string
+    /**
+     * Whether this session is exercising its site-admin standing.
+     *
+     * Always false for an account that is not an admin, and false for a fresh
+     * admin session until they turn it on. Nothing reads `siteRank` to decide
+     * access — `isSiteAdmin` below is the only question worth asking.
+     */
+    adminMode: boolean
 }
 
 export type session = {
@@ -45,6 +54,7 @@ export default async function GetSession(token: string | undefined): Promise<ses
         .select({
             sessionId: sessions.sessionId,
             expiresAt: sessions.expiresAt,
+            adminMode: sessions.adminMode,
             userId: users.id,
             robloxId: users.robloxId,
             siteRank: users.siteRank,
@@ -84,7 +94,10 @@ export default async function GetSession(token: string | undefined): Promise<ses
         user: {
             userId: row.userId,
             robloxId: row.robloxId,
-            siteRank: row.siteRank
+            siteRank: row.siteRank,
+            // An admin who is not an admin any more takes the elevation with
+            // them, whatever the row still says.
+            adminMode: row.siteRank === 'admin' && row.adminMode
         }
     }
 }
@@ -131,7 +144,12 @@ export async function GetApiKeySession(header: string | undefined): Promise<sess
         user: {
             userId: row.userId,
             robloxId: row.robloxId,
-            siteRank: row.siteRank
+            siteRank: row.siteRank,
+            // A key is never elevated. Admin mode is turned on deliberately,
+            // for one browser session, and there is nowhere to turn it on for
+            // a key — one that silently carried the group-permission bypass
+            // would be the most dangerous credential the site issues.
+            adminMode: false
         }
     }
 }
@@ -144,6 +162,28 @@ export async function ResolveSession(
     const fromCookie = await GetSession(cookieToken)
     if (fromCookie.authenticated) return fromCookie
     return GetApiKeySession(authorization)
+}
+
+/**
+ * Whether this session is *acting* as a site admin.
+ *
+ * Every group-permission bypass asks this, never `siteRank` directly. The
+ * standing and its use are separate facts: `siteRank` says the account could
+ * elevate, this says the session has (see `sessions.admin_mode`). Splitting
+ * them is what lets an admin browse the site as an ordinary member.
+ */
+export function isSiteAdmin(session: session): boolean {
+    return isElevated(session.user)
+}
+
+/** The same question where only the session's user is to hand. */
+export function isElevated(user: SessionUser | undefined): boolean {
+    return user?.siteRank === 'admin' && user.adminMode
+}
+
+/** Whether the account behind this session is allowed to turn admin mode on. */
+export function isAdminAccount(session: session): boolean {
+    return session.user?.siteRank === 'admin'
 }
 
 /** API key callers are limited to the scopes they were issued. */

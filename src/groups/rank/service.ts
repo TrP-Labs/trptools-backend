@@ -6,7 +6,7 @@ import { globalModel, PERMISSION } from '../../utils/globalModel'
 import UserHasRank, { assertPermission, invalidateGroupPermissions } from '../../utils/groupPermission'
 import { Roblox } from '../../utils/roblox'
 import { resolveCredentials } from '../../utils/robloxCredentials'
-import type { session } from '../../utils/sessionVerifier'
+import { isSiteAdmin, type session } from '../../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../service'
 import { GroupModel } from '../model'
 import { RankModel } from './model'
@@ -235,7 +235,7 @@ export abstract class Rank {
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
         const isStaff =
-            session.user?.siteRank === 'admin' ||
+            isSiteAdmin(session) ||
             (session.user ? await UserHasRank(session.user.userId, group.id, PERMISSION.DISPATCH) : false)
 
         if (!isStaff && (group.visibility === 'PRIVATE' || !group.showRoster || group.moderation === 'HIDDEN')) {

@@ -82,7 +82,9 @@ export namespace UserModel {
         timezone: t.Optional(t.String({ maxLength: 64 })),
         profilePublic: t.Optional(t.Boolean()),
         favoriteRoutesPublic: t.Optional(t.Boolean()),
-        dislikedRoutesPublic: t.Optional(t.Boolean())
+        dislikedRoutesPublic: t.Optional(t.Boolean()),
+        /** Null clears the pin. A group the caller cannot act in is refused. */
+        primaryGroupId: t.Optional(t.Union([t.String({ format: 'uuid' }), t.Null()]))
     })
     export type preferencesBody = typeof preferencesBody.static
 
@@ -92,7 +94,8 @@ export namespace UserModel {
         timezone: t.String(),
         profilePublic: t.Boolean(),
         favoriteRoutesPublic: t.Boolean(),
-        dislikedRoutesPublic: t.Boolean()
+        dislikedRoutesPublic: t.Boolean(),
+        primaryGroupId: t.Union([t.String(), t.Null()])
     })
     export type preferencesResponse = typeof preferencesResponse.static
 
