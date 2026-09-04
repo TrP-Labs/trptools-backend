@@ -87,7 +87,8 @@ export namespace UserModel {
         theme: t.Optional(t.Union([t.Literal('dim'), t.Literal('midnight'), t.Literal('light')])),
         /** Null clears the preference back to following the browser. */
         locale: t.Optional(t.Union([t.String({ maxLength: 8 }), t.Null()])),
-        timezone: t.Optional(t.String({ maxLength: 64 })),
+        /** Null clears the preference back to following the browser. */
+        timezone: t.Optional(t.Union([t.String({ maxLength: 64 }), t.Null()])),
         profilePublic: t.Optional(t.Boolean()),
         favoriteRoutesPublic: t.Optional(t.Boolean()),
         dislikedRoutesPublic: t.Optional(t.Boolean()),
@@ -99,7 +100,8 @@ export namespace UserModel {
     export const preferencesResponse = t.Object({
         theme: t.String(),
         locale: t.Union([t.String(), t.Null()]),
-        timezone: t.String(),
+        /** Null means nobody has chosen one; the browser's answer stands. */
+        timezone: t.Union([t.String(), t.Null()]),
         profilePublic: t.Boolean(),
         favoriteRoutesPublic: t.Boolean(),
         dislikedRoutesPublic: t.Boolean(),

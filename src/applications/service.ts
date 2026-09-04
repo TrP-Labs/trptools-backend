@@ -789,7 +789,11 @@ export abstract class Applications {
             // Only worth showing while it is actually what is in the way.
             retryAt: blocker === 'DENIED' && row ? cooldownEndsAt(row, state) : null,
             blockedBy: blocker,
-            timezone: preferences?.timezone ?? 'UTC',
+            // Null rather than UTC: the page can only offer what the browser
+            // resolves if it can tell "nobody has chosen" apart from "chose
+            // UTC", and defaulting here is what made every application go out
+            // stamped UTC unless the applicant noticed.
+            timezone: preferences?.timezone ?? null,
             // `||`, not `??`: the account's locale is null when it follows the
             // browser, and the apply form needs a real tag to snapshot against
             // the submission. The page overrides this with `navigator.language`
@@ -901,6 +905,9 @@ export abstract class Applications {
                 // Sent with the form so a reviewer can see when somebody is
                 // actually around, defaulted from the account when the form
                 // did not say.
+                // The form is expected to send one — it knows the browser's
+                // zone and the account's. UTC is the floor for a caller that
+                // sends neither, not a default anybody is shown.
                 timezone: body.timezone?.trim() || preferences?.timezone || 'UTC',
                 locale: body.locale?.trim() || preferences?.locale || 'en'
             })

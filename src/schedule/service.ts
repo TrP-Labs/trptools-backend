@@ -4,6 +4,7 @@ import db from '../db'
 import { events, rankSignupSlots, shiftSignups, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertPermission, GetMembership } from '../utils/groupPermission'
+import { isGroupMember } from '../utils/membershipRule'
 import { describeRule, isValidRule, occurrencesBetween } from '../utils/recurrence'
 import { childSlug, uniqueWithin } from '../utils/slug'
 import { presentTranslations, translationUpdate } from '../utils/translations'
@@ -32,7 +33,18 @@ async function freeShiftSlug(groupId: string, name: string, exceptId?: string): 
     return uniqueWithin(childSlug('shift', name, rows.length + 1), taken)
 }
 
-/** Whether the caller may see a group's schedule at all. */
+/**
+ * Whether the caller may see a group's schedule at all.
+ *
+ * "Member" here means a member of the **Roblox group** — `robloxRank >= 0`,
+ * since `GetMembership` reports -1 for somebody who holds no role at all. It
+ * used to mean "dispatch permission or better", which is a different question
+ * and the wrong one: a shift marked members-only is marked that way against
+ * the group's membership, and sign-up sheets are gated on Roblox rank a few
+ * lines further down anyway. Reading it as a permission level meant an
+ * ordinary driver — who holds no permission anywhere — was shown an empty
+ * schedule for every group they actually drive for.
+ */
 async function assertCanRead(groupIdOrSlug: string, session: session) {
     const group = await findGroup(groupIdOrSlug)
     if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
@@ -41,7 +53,7 @@ async function assertCanRead(groupIdOrSlug: string, session: session) {
         ? await GetMembership(session.user.userId, group.id)
         : { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
 
-    const isMember = membership.permissionLevel >= PERMISSION.DISPATCH || isSiteAdmin(session)
+    const isMember = isGroupMember(membership) || isSiteAdmin(session)
 
     if (!isMember && (group.visibility === 'PRIVATE' || !group.showShifts)) {
         throw status(404, 'Not Found' satisfies globalModel.notFound)
@@ -244,8 +256,13 @@ export abstract class Schedule {
 
         const membership = await GetMembership(session.user.userId, event.groupId)
 
-        // Signing up is a member action, so dispatch level is the floor.
-        if (membership.permissionLevel < PERMISSION.DISPATCH && !isSiteAdmin(session)) {
+        // Signing up is a member action, so membership is the floor — being a
+        // member of the Roblox group, not holding a permission level in it.
+        // `canUseSheet` below is the check that actually decides, on Roblox
+        // rank; a level gate here was both coarser and stricter than the sheet
+        // it was guarding, so an ordinary driver could be shown a sheet their
+        // rank reaches and then refused when they took a slot on it.
+        if (!isGroupMember(membership) && !isSiteAdmin(session)) {
             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
         }
 

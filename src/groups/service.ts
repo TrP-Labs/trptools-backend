@@ -7,6 +7,7 @@ import { Roblox, type RobloxCredentials } from '../utils/roblox'
 import { resolveCredentials, userCredentials } from '../utils/robloxCredentials'
 import { encryptSecret } from '../utils/crypto'
 import { assertPermission, GetPermissionLevel, invalidateGroupPermissions } from '../utils/groupPermission'
+import { resolveMembership } from '../utils/membershipRule'
 import { isUuid, isValidSlug, uniqueSlug } from '../utils/slug'
 import { preferredLocale } from '../utils/locales'
 import { presentTranslations, translationUpdate } from '../utils/translations'
@@ -165,6 +166,75 @@ export abstract class Group_ {
         const visible = rows.filter((row) => row.permissionLevel >= PERMISSION.DISPATCH)
 
         return visible.map((row) => summarise(row.group, row.permissionLevel))
+    }
+
+    /**
+     * Every TrPTools group the user is a member of on Roblox.
+     *
+     * Wider than `getGroups`, deliberately. That answers "which groups can
+     * this person act in", which is the right question for the dashboard and
+     * the wrong one for the shifts page: a driver holds no dispatch
+     * permission anywhere and was shown an empty schedule for every group
+     * they actually drive for. Membership is what decides whether somebody
+     * sees a group's shifts; permission decides what they can do with them.
+     *
+     * The permission level still travels with each group, and is 0 for most
+     * of the people this returns.
+     */
+    static async getMemberGroups(session: session): Promise<GroupModel.groupList> {
+        if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
+
+        // The same bypass as everywhere else, and for the same reason (§5.1):
+        // an elevated admin operates the instance.
+        if (isSiteAdmin(session)) {
+            const all = await db.select().from(groups).orderBy(asc(groups.cachedName))
+            return all.map((entry) => summarise(entry, PERMISSION.MANAGE))
+        }
+
+        const memberships = await Roblox.getUserGroups(session.user.robloxId)
+        if (memberships.length === 0) return []
+
+        const byRobloxId = new Map(memberships.map((entry) => [entry.groupId.toString(), entry]))
+
+        const rows = await db
+            .select()
+            .from(groups)
+            .where(inArray(groups.robloxId, [...byRobloxId.keys()]))
+            .orderBy(asc(groups.cachedName))
+
+        if (rows.length === 0) return []
+
+        const relations = await db
+            .select({
+                groupId: rankRelations.groupId,
+                permissionLevel: rankRelations.permissionLevel,
+                cachedRank: rankRelations.cachedRank
+            })
+            .from(rankRelations)
+            .where(
+                and(
+                    inArray(
+                        rankRelations.robloxId,
+                        memberships.map((entry) => entry.role.id)
+                    ),
+                    inArray(
+                        rankRelations.groupId,
+                        rows.map((row) => row.id)
+                    )
+                )
+            )
+
+        const bound = new Map(relations.map((relation) => [relation.groupId, relation]))
+
+        // Through the same rule `GetMembership` uses, so this list and every
+        // per-group check agree about the owner pin and about an unbound role.
+        return rows.map((group) =>
+            summarise(
+                group,
+                resolveMembership(bound.get(group.id), byRobloxId.get(group.robloxId)?.role.rank)
+                    .permissionLevel
+            )
+        )
     }
 
     static async createGroup(

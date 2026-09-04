@@ -27,6 +27,20 @@ export const group = new Elysia({ prefix: '/groups', tags: ['Groups'] })
         }
     )
 
+    .get('/memberships', async ({ session }) => Group_.getMemberGroups(session), {
+        response: {
+            200: GroupModel.groupList,
+            401: globalModel.unauthorized
+        },
+        detail: {
+            summary: 'Every TrPTools group you belong to on Roblox',
+            description:
+                'Wider than `GET /groups`, which lists only the groups you can act in. ' +
+                'Most entries come back with permission level 0 — membership is what decides ' +
+                'whether you see a group\'s shifts, not what you may do with them.'
+        }
+    })
+
     .get('/creatable', async ({ session }) => Group_.getCreatableGroups(session), {
         response: {
             200: GroupModel.creatableGroupList,

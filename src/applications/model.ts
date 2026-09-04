@@ -240,8 +240,14 @@ export namespace ApplicationModel {
             t.Literal('RANK_TOO_HIGH'),
             t.Null()
         ]),
-        /** What the form will send unless they change it. */
-        timezone: t.String(),
+        /**
+         * What the form will send unless they change it.
+         *
+         * Null where the account has never been given one, which is the
+         * signal for the page to offer what the browser resolves instead of
+         * quietly stamping the application UTC.
+         */
+        timezone: t.Union([t.String(), t.Null()]),
         locale: t.String()
     })
     export type myStanding = typeof myStanding.static
