@@ -8,17 +8,24 @@ import { rateLimit } from '../utils/ratelimit'
 export const group = new Elysia({ prefix: '/groups', tags: ['Groups'] })
     .use(sessionPlugin)
 
-    .post('/', async ({ body, session }) => Group_.createGroup(body, session), {
-        body: GroupModel.createGroupBody,
-        response: {
-            200: GroupModel.createGroupResponse,
-            400: GroupModel.groupInvalid,
-            401: globalModel.unauthorized,
-            403: globalModel.forbidden,
-            409: GroupModel.groupExists
-        },
-        detail: { summary: 'Add a Roblox group you own to TrPTools' }
-    })
+    .post(
+        '/',
+        // The browser's own preference, which is what decides the group's
+        // source language when the person registering it has never set one.
+        async ({ body, session, headers }) =>
+            Group_.createGroup(body, session, headers['accept-language']),
+        {
+            body: GroupModel.createGroupBody,
+            response: {
+                200: GroupModel.createGroupResponse,
+                400: GroupModel.groupInvalid,
+                401: globalModel.unauthorized,
+                403: globalModel.forbidden,
+                409: GroupModel.groupExists
+            },
+            detail: { summary: 'Add a Roblox group you own to TrPTools' }
+        }
+    )
 
     .get('/creatable', async ({ session }) => Group_.getCreatableGroups(session), {
         response: {

@@ -17,6 +17,7 @@ import {
 import type { session } from '../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../groups/service'
 import { MediaModel } from './model'
+import { presentTranslations, translationUpdate } from '../utils/translations'
 
 const MAX_PER_OWNER = 12
 
@@ -25,6 +26,7 @@ export function present(row: Media): MediaModel.item {
         id: row.id,
         url: publicUrl(row.key),
         caption: row.caption,
+        translations: presentTranslations('MEDIA', row.translations),
         order: row.order,
         contentType: row.contentType,
         ownerType: row.ownerType,
@@ -364,8 +366,13 @@ export abstract class MediaService {
 
         await assertPermission(session, row.groupId, PERMISSION.MANAGE)
 
+        const { translations, ...fields } = body
+
         if (Object.keys(body).length > 0) {
-            await db.update(media).set(body).where(eq(media.id, id))
+            await db
+                .update(media)
+                .set({ ...fields, ...translationUpdate('MEDIA', row.translations, translations) })
+                .where(eq(media.id, id))
         }
 
         return 'Success' as globalModel.genericSuccess

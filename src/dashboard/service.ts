@@ -11,6 +11,7 @@ import { groupIndexKey } from '../rooms/service'
 import type { ScheduleModel } from '../schedule/model'
 import type { GroupModel } from '../groups/model'
 import { DashboardModel } from './model'
+import { presentTranslations } from '../utils/translations'
 
 /**
  * How far ahead the dashboard looks, and how much of it it keeps.
@@ -55,6 +56,7 @@ function withGroup(
     return {
         eventId: occurrence.eventId,
         name: occurrence.name,
+        translations: occurrence.translations,
         slug: occurrence.slug,
         color: occurrence.color,
         start: occurrence.start,
@@ -62,6 +64,7 @@ function withGroup(
         groupId: group.id,
         groupSlug: group.slug,
         groupName: group.name,
+        groupTranslations: group.translations,
         groupIcon: group.icon,
         signedUp,
         signupsOpen: occurrence.signupsOpen,
@@ -188,6 +191,7 @@ export abstract class Dashboard {
             .select({
                 applicationId: applications.id,
                 name: applications.name,
+                translations: applications.translations,
                 color: applications.color,
                 groupId: applications.groupId,
                 pendingCount: count(applicationSubmissions.id)
@@ -206,7 +210,13 @@ export abstract class Dashboard {
                     manageable.map((group) => group.id)
                 )
             )
-            .groupBy(applications.id, applications.name, applications.color, applications.groupId)
+            .groupBy(
+                applications.id,
+                applications.name,
+                applications.translations,
+                applications.color,
+                applications.groupId
+            )
 
         const byId = new Map(manageable.map((group) => [group.id, group]))
 
@@ -217,11 +227,13 @@ export abstract class Dashboard {
                 return {
                     applicationId: row.applicationId,
                     name: row.name,
+                    translations: presentTranslations('APPLICATION', row.translations),
                     color: row.color,
                     pendingCount: Number(row.pendingCount),
                     groupId: group.id,
                     groupSlug: group.slug,
                     groupName: group.name,
+                    groupTranslations: group.translations,
                     groupIcon: group.icon
                 }
             })

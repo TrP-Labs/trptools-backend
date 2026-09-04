@@ -134,6 +134,13 @@
       "when": 1788562010349,
       "tag": "0018_bot_languages",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788562967804,
+      "tag": "0019_content_translations",
+      "breakpoints": true
     }
   ]
 }

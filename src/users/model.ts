@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { translationsResponse } from '../utils/translations'
 
 export namespace UserModel {
     /**
@@ -13,6 +14,12 @@ export namespace UserModel {
         /** Null for a global route: the mark is against the name, not a row. */
         routeId: t.Union([t.String(), t.Null()]),
         name: t.String(),
+        /**
+         * Per-language versions of the name, for a group's own route. A
+         * global item is a built-in, whose name is the game's and the same
+         * everywhere, so it carries none.
+         */
+        translations: translationsResponse,
         color: t.String(),
         textColor: t.String(),
         shape: t.String(),
@@ -116,6 +123,12 @@ export namespace UserModel {
         routeId: t.Union([t.String(), t.Null()]),
         groupId: t.Union([t.String(), t.Null()]),
         name: t.String(),
+        /**
+         * Per-language versions of the route's name, for a custom route. A
+         * global item is a built-in, whose name is the game's and the same
+         * everywhere, so it carries none.
+         */
+        translations: translationsResponse,
         color: t.String(),
         preference: t.Union([t.Literal('FAVORITE'), t.Literal('DISLIKE')])
     })

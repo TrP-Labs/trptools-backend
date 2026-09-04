@@ -1,5 +1,6 @@
 import { t } from 'elysia'
 import { globalModel } from '../utils/globalModel'
+import { translationsPatch, translationsResponse } from '../utils/translations'
 
 export namespace ApplicationModel {
     export const questionType = t.Union([
@@ -21,6 +22,14 @@ export namespace ApplicationModel {
         type: questionType,
         prompt: t.String(),
         description: t.String(),
+        /**
+         * Per-language versions of this component's text.
+         *
+         * `prompt` is the question, the section heading, or an image's alt
+         * text depending on the type; `description` is the hint under it.
+         * Choices are keyed by position, `option:0` upwards.
+         */
+        translations: translationsResponse,
         required: t.Boolean(),
         order: t.Number(),
         options: t.Array(t.String()),
@@ -42,6 +51,8 @@ export namespace ApplicationModel {
         type: questionType,
         prompt: t.String({ maxLength: 300 }),
         description: t.Optional(t.String({ maxLength: 1000 })),
+        /** Per-language versions of the prompt, the hint and the choices. */
+        translations: t.Optional(translationsPatch),
         required: t.Optional(t.Boolean()),
         options: t.Optional(t.Array(t.String({ minLength: 1, maxLength: 120 }), { maxItems: 20 })),
         maxLength: t.Optional(t.Union([t.Integer({ minimum: 1, maximum: 5000 }), t.Null()])),
@@ -68,6 +79,8 @@ export namespace ApplicationModel {
         slug: t.String(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this form's name and description. */
+        translations: translationsResponse,
         color: t.String(),
         open: t.Boolean(),
         permaDeny: t.Boolean(),
@@ -108,6 +121,8 @@ export namespace ApplicationModel {
     export const patchBody = t.Object({
         name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
         description: t.Optional(t.String({ maxLength: 2000 })),
+        /** Per-language versions of this form's name and description. */
+        translations: t.Optional(translationsPatch),
         color: t.Optional(globalModel.hexColor),
         open: t.Optional(t.Boolean()),
         permaDeny: t.Optional(t.Boolean()),
@@ -237,6 +252,8 @@ export namespace ApplicationModel {
         slug: t.String(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this form's name and description. */
+        translations: translationsResponse,
         color: t.String(),
         open: t.Boolean(),
         rankName: t.Union([t.String(), t.Null()]),
@@ -251,6 +268,8 @@ export namespace ApplicationModel {
         slug: t.String(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this form's name and description. */
+        translations: translationsResponse,
         color: t.String(),
         rankName: t.Union([t.String(), t.Null()])
     })

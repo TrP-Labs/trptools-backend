@@ -5,6 +5,7 @@ import { routes, depots } from './routes'
 import { events } from './events'
 import { botConfigs } from './bot'
 import { rankSignups } from './signups'
+import { translations } from './translations'
 
 export const groups = pgTable(
     'groups',
@@ -16,8 +17,33 @@ export const groups = pgTable(
         // Public presence
         slug: text('slug').notNull().unique(),
         visibility: visibilityEnum('visibility').notNull().default('PRIVATE'),
+        /**
+         * What the group calls itself here, when that differs from Roblox.
+         *
+         * Null means "whatever Roblox says", which is what a group gets on
+         * registration and keeps unless somebody types over it — so a rename
+         * on Roblox still follows through on its own. Copying the Roblox name
+         * into this column at registration would have frozen it at that
+         * moment for every group that never opened settings. Clearing the box
+         * puts it back to following.
+         */
+        name: text('name'),
         tagline: text('tagline').notNull().default(''),
         about: text('about').notNull().default(''),
+        /** Per-language versions of the three fields above. See `./translations.ts`. */
+        translations: translations(),
+
+        /**
+         * The language this group writes in.
+         *
+         * Every name, description and question a group types is in *some*
+         * language, and it is not safely English: TrP has groups that run in
+         * Ukrainian and would have had their own words labelled as the English
+         * original. It is set on registration from the manager's own account
+         * language, falling back to what their browser asked for, and is the
+         * language a reader falls back to when there is no version in theirs.
+         */
+        sourceLocale: text('source_locale').notNull().default('en'),
         accentColor: text('accent_color').notNull().default('#4287f5'),
         /** Public URL of the current banner, denormalised so page reads stay one query. */
         bannerImage: text('banner_image'),

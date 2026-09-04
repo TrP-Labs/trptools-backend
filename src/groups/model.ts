@@ -1,5 +1,10 @@
 import { t } from 'elysia'
 import { globalModel } from '../utils/globalModel'
+import { SUPPORTED_LOCALES } from '../utils/locales'
+import { translationsPatch, translationsResponse } from '../utils/translations'
+
+/** A language tag this instance knows. See `BotModel` for why it is a pattern. */
+const sourceLocale = t.String({ pattern: `^(${SUPPORTED_LOCALES.join('|')})$` })
 
 export namespace GroupModel {
     export const createGroupBody = t.Object({
@@ -20,7 +25,15 @@ export namespace GroupModel {
         createdAt: t.Date(),
 
         robloxId: t.String(),
+        /** What the group is called here, which may not be its Roblox name. */
         name: t.String(),
+        /**
+         * The Roblox name, so settings can offer to go back to following it.
+         * Null when Roblox has never been reachable for this group.
+         */
+        robloxName: t.Union([t.String(), t.Null()]),
+        /** Whether `name` is the group's own or Roblox's. */
+        nameIsCustom: t.Boolean(),
         description: t.String(),
         icon: t.Union([t.String(), t.Null()]),
         members: t.Number(),
@@ -28,6 +41,14 @@ export namespace GroupModel {
         visibility: globalModel.visibility,
         tagline: t.String(),
         about: t.String(),
+        /**
+         * The language this group writes in, which everything it types falls
+         * back to. Never assumed to be English — it is set on registration
+         * from whoever registered the group.
+         */
+        sourceLocale: t.String(),
+        /** Per-language versions of the name, tagline and about text. */
+        translations: translationsResponse,
         accentColor: t.String(),
         bannerImage: t.Union([t.String(), t.Null()]),
         bannerMediaId: t.Union([t.String(), t.Null()]),
@@ -56,6 +77,9 @@ export namespace GroupModel {
         icon: t.Union([t.String(), t.Null()]),
         members: t.Number(),
         tagline: t.String(),
+        sourceLocale: t.String(),
+        /** Per-language versions of the name and tagline. */
+        translations: translationsResponse,
         accentColor: t.String(),
         visibility: globalModel.visibility,
         permissionLevel: t.Number()
@@ -77,8 +101,17 @@ export namespace GroupModel {
     export const updateGroupBody = t.Object({
         visibility: t.Optional(globalModel.visibility),
         slug: t.Optional(t.String({ minLength: 3, maxLength: 48 })),
+        /**
+         * What the group calls itself here. Blank puts it back to following
+         * the Roblox name, which is what a group has until it types one.
+         */
+        name: t.Optional(t.String({ maxLength: 100 })),
         tagline: t.Optional(t.String({ maxLength: 160 })),
         about: t.Optional(t.String({ maxLength: 4000 })),
+        /** The language the fields above are written in. */
+        sourceLocale: t.Optional(sourceLocale),
+        /** Per-language versions of the name, tagline and about text. */
+        translations: t.Optional(translationsPatch),
         accentColor: t.Optional(globalModel.hexColor),
         showRoutes: t.Optional(t.Boolean()),
         showShifts: t.Optional(t.Boolean()),

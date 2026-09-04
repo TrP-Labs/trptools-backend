@@ -48,3 +48,31 @@ export function normaliseLocale(value: string | null | undefined): SupportedLoca
     const base = tag.split('-')[0] ?? ''
     return isSupportedLocale(base) ? base : null
 }
+
+/**
+ * The best language for a request, from what the caller has actually said.
+ *
+ * Preference order: the account's own setting, then the browser's
+ * `Accept-Language`, then English. That order matters — an account setting is
+ * a deliberate choice, where the header is whatever the machine was installed
+ * with — and it is what stops a group's source language being assumed to be
+ * English just because the server's is.
+ *
+ * The header is parsed for its tags in the order given and not by q-value:
+ * browsers already send them in preference order, and a full parse would be
+ * a lot of machinery to arrive at the same answer.
+ */
+export function preferredLocale(
+    accountLocale: string | null | undefined,
+    acceptLanguage: string | null | undefined
+): SupportedLocale {
+    const fromAccount = normaliseLocale(accountLocale)
+    if (fromAccount) return fromAccount
+
+    for (const part of (acceptLanguage ?? '').split(',')) {
+        const tag = normaliseLocale(part.split(';')[0])
+        if (tag) return tag
+    }
+
+    return DEFAULT_LOCALE
+}

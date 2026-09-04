@@ -6,6 +6,7 @@ import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertPermission, GetMembership } from '../utils/groupPermission'
 import { describeRule, isValidRule, occurrencesBetween } from '../utils/recurrence'
 import { childSlug, uniqueWithin } from '../utils/slug'
+import { presentTranslations, translationUpdate } from '../utils/translations'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../groups/service'
 import { GroupModel } from '../groups/model'
@@ -16,7 +17,11 @@ import { ScheduleModel } from './model'
 const MAX_HORIZON_DAYS = 120
 
 function presentEvent(event: Event): ScheduleModel.eventResponse {
-    return { ...event, recurrenceText: describeRule(event.rrule, event.startTime) }
+    return {
+        ...event,
+        translations: presentTranslations('SHIFT', event.translations),
+        recurrenceText: describeRule(event.rrule, event.startTime)
+    }
 }
 
 /** A shift page address free within its group. */
@@ -137,6 +142,7 @@ export abstract class Schedule {
                 slug: event.slug,
                 description: event.description,
                 color: event.color,
+                translations: presentTranslations('SHIFT', event.translations),
                 start: occurrence.start,
                 end: occurrence.end,
                 signupsOpen: open,
@@ -160,11 +166,16 @@ export abstract class Schedule {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         }
 
-        const { groupId, ...values } = body
+        const { groupId, translations, ...values } = body
 
         const [event] = await db
             .insert(events)
-            .values({ ...values, groupId: group.id, slug: await freeShiftSlug(group.id, body.name) })
+            .values({
+                ...values,
+                ...translationUpdate('SHIFT', null, translations),
+                groupId: group.id,
+                slug: await freeShiftSlug(group.id, body.name)
+            })
             .returning({ eventId: events.eventId })
 
         if (!event) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
@@ -184,11 +195,14 @@ export abstract class Schedule {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         }
 
+        const { translations, ...fields } = body
+
         if (Object.keys(body).length > 0) {
             await db
                 .update(events)
                 .set({
-                    ...body,
+                    ...fields,
+                    ...translationUpdate('SHIFT', event.translations, translations),
                     ...(body.name !== undefined && body.name !== event.name
                         ? { slug: await freeShiftSlug(event.groupId, body.name, eventId) }
                         : {}),

@@ -8,6 +8,8 @@ import { resolveCredentials, userCredentials } from '../utils/robloxCredentials'
 import { encryptSecret } from '../utils/crypto'
 import { assertPermission, GetPermissionLevel, invalidateGroupPermissions } from '../utils/groupPermission'
 import { isUuid, isValidSlug, uniqueSlug } from '../utils/slug'
+import { preferredLocale } from '../utils/locales'
+import { presentTranslations, translationUpdate } from '../utils/translations'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { seedGroupDefaults, seedVehicleTypes } from './defaults'
 import { GroupModel } from './model'
@@ -37,6 +39,19 @@ async function withFreshCache(group: Group, credentials: RobloxCredentials): Pro
     return { ...group, ...patch }
 }
 
+/**
+ * What a group is called.
+ *
+ * `groups.name` is null until somebody types one, and null means "follow
+ * Roblox" rather than "has no name" — so a group that never opens settings
+ * keeps tracking a rename on Roblox, and clearing the box puts it back to
+ * doing so. The Roblox name is the floor; `Group <id>` is only reached when
+ * Roblox has never been readable for this group at all.
+ */
+export function groupName(group: Group): string {
+    return group.name?.trim() || group.cachedName || `Group ${group.robloxId}`
+}
+
 function present(group: Group, permissionLevel: number): GroupModel.groupResponse {
     return {
         id: group.id,
@@ -44,7 +59,9 @@ function present(group: Group, permissionLevel: number): GroupModel.groupRespons
         createdAt: group.createdAt,
 
         robloxId: group.robloxId,
-        name: group.cachedName ?? `Group ${group.robloxId}`,
+        name: groupName(group),
+        robloxName: group.cachedName,
+        nameIsCustom: Boolean(group.name?.trim()),
         description: group.cachedDescription ?? '',
         icon: group.cachedIcon,
         members: group.cachedMembers ?? 0,
@@ -52,6 +69,8 @@ function present(group: Group, permissionLevel: number): GroupModel.groupRespons
         visibility: group.visibility,
         tagline: group.tagline,
         about: group.about,
+        sourceLocale: group.sourceLocale,
+        translations: presentTranslations('GROUP', group.translations),
         accentColor: group.accentColor,
         bannerImage: group.bannerImage,
         bannerMediaId: group.bannerMediaId,
@@ -74,10 +93,12 @@ export function summarise(group: Group, permissionLevel: number): GroupModel.gro
         id: group.id,
         slug: group.slug,
         robloxId: group.robloxId,
-        name: group.cachedName ?? `Group ${group.robloxId}`,
+        name: groupName(group),
         icon: group.cachedIcon,
         members: group.cachedMembers ?? 0,
         tagline: group.tagline,
+        sourceLocale: group.sourceLocale,
+        translations: presentTranslations('GROUP', group.translations),
         accentColor: group.accentColor,
         visibility: group.visibility,
         permissionLevel
@@ -148,7 +169,8 @@ export abstract class Group_ {
 
     static async createGroup(
         { robloxId }: GroupModel.createGroupBody,
-        session: session
+        session: session,
+        acceptLanguage?: string
     ): Promise<GroupModel.createGroupResponse> {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
@@ -175,6 +197,16 @@ export abstract class Group_ {
             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
         }
 
+        // Read rather than carried on the session: the session is resolved on
+        // every request in the instance and does not need to carry a field one
+        // endpoint reads once.
+        const [registrant] = await db
+            .select({ locale: users.locale })
+            .from(users)
+            .where(eq(users.id, session.user.userId))
+            .limit(1)
+            .catch(() => [])
+
         const roles = await Roblox.getRoles(robloxId, credentials)
         const ownerRole = roles.find((role) => role.rank === 255)
         if (!ownerRole) throw status(400, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -191,7 +223,13 @@ export abstract class Group_ {
                 cachedDescription: robloxGroup.description,
                 cachedIcon: icon,
                 cachedMembers: robloxGroup.memberCount,
-                cachedAt: new Date()
+                cachedAt: new Date(),
+
+                // Whatever the person registering the group writes in. Not
+                // English by default: TrP has groups that run in Ukrainian,
+                // and labelling their own words as the English original would
+                // make every translation of them a translation of nothing.
+                sourceLocale: preferredLocale(registrant?.locale, acceptLanguage)
             })
             .returning()
 
@@ -261,7 +299,18 @@ export abstract class Group_ {
             if (clash.length > 0) throw status(409, 'slug is unavailable' satisfies GroupModel.slugTaken)
         }
 
-        await db.update(groups).set(body).where(eq(groups.id, group.id))
+        const { translations, name, ...fields } = body
+
+        await db
+            .update(groups)
+            .set({
+                ...fields,
+                ...translationUpdate('GROUP', group.translations, translations),
+                // A blank box is not an empty name, it is "go back to
+                // following Roblox" — which is the state a group starts in.
+                ...(name !== undefined ? { name: name.trim() || null } : {})
+            })
+            .where(eq(groups.id, group.id))
 
         await recordAudit(group.id, session.user?.userId ?? null, 'group.update', 'Group settings updated')
 

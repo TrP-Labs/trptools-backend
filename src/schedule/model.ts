@@ -1,5 +1,6 @@
 import { t } from 'elysia'
 import { globalModel } from '../utils/globalModel'
+import { translationsPatch, translationsResponse } from '../utils/translations'
 
 export namespace ScheduleModel {
     export const eventResponse = t.Object({
@@ -20,6 +21,9 @@ export namespace ScheduleModel {
         visibility: globalModel.visibility,
         hostLevel: t.Number(),
 
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
+
         createdAt: t.Date(),
         updatedAt: t.Date()
     })
@@ -37,6 +41,9 @@ export namespace ScheduleModel {
         rrule: t.String({ minLength: 1, maxLength: 500 }),
         duration: t.Optional(t.Integer({ minimum: 5, maximum: 1440 })),
         visibility: t.Optional(globalModel.visibility),
+        /** Per-language versions of the text fields above. */
+        translations: t.Optional(translationsPatch),
+
         hostLevel: t.Optional(t.Integer({ minimum: 1, maximum: 3 }))
     })
     export type createBody = typeof createBody.static
@@ -49,6 +56,9 @@ export namespace ScheduleModel {
         rrule: t.Optional(t.String({ minLength: 1, maxLength: 500 })),
         duration: t.Optional(t.Integer({ minimum: 5, maximum: 1440 })),
         visibility: t.Optional(globalModel.visibility),
+        /** Per-language versions of the text fields above. */
+        translations: t.Optional(translationsPatch),
+
         hostLevel: t.Optional(t.Integer({ minimum: 1, maximum: 3 }))
     })
     export type updateBody = typeof updateBody.static
@@ -76,6 +86,9 @@ export namespace ScheduleModel {
         id: t.String(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
+
         capacity: t.Number(),
         order: t.Number(),
         signups: t.Array(signupUser)
@@ -95,6 +108,9 @@ export namespace ScheduleModel {
         robloxRank: t.Number(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
+
         color: t.String(),
         slots: t.Array(signupSlot)
     })
@@ -108,6 +124,8 @@ export namespace ScheduleModel {
         slug: t.String(),
         description: t.String(),
         color: t.String(),
+        /** Per-language versions of the shift's name and description. */
+        translations: translationsResponse,
         start: t.Date(),
         end: t.Date(),
         /**

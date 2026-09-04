@@ -1,6 +1,7 @@
 import { t } from 'elysia'
 import { globalModel } from '../../utils/globalModel'
 import { MediaModel } from '../../media/model'
+import { translationsPatch, translationsResponse } from '../../utils/translations'
 
 export namespace RouteModel {
     export const routeShape = t.Union([
@@ -44,6 +45,20 @@ export namespace RouteModel {
 
         images: MediaModel.list,
 
+        /**
+         * Per-language versions of this row's text, as
+         * `{ field: { locale: text } }`.
+         *
+         * Shipped with the row rather than resolved server-side. Public reads
+         * never consult the session so they stay CDN-cacheable (§9), and
+         * resolving here would mean either a locale on every one of them —
+         * and a cache entry per language — or a header the cache has to vary
+         * on. The site knows which language it is drawing in, the payload is
+         * a handful of short strings, and the dashboard needs all of them
+         * anyway to put them in the editor.
+         */
+        translations: translationsResponse,
+
         createdAt: t.Date(),
         updatedAt: t.Date()
     })
@@ -61,6 +76,9 @@ export namespace RouteModel {
         aliases: t.Optional(t.Array(t.String({ maxLength: 60 }), { maxItems: 12 })),
         visibility: t.Optional(globalModel.visibility),
         showOnGroupPage: t.Optional(t.Boolean()),
+        /** Per-language versions of the text fields above. */
+        translations: t.Optional(translationsPatch),
+
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 }))
     })
     export type createDepotBody = typeof createDepotBody.static
@@ -75,6 +93,9 @@ export namespace RouteModel {
         visibility: t.Optional(globalModel.visibility),
         showOnGroupPage: t.Optional(t.Boolean()),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 })),
+        /** Per-language versions of the text fields above. */
+        translations: t.Optional(translationsPatch),
+
         archived: t.Optional(t.Boolean())
     })
     export type patchDepotBody = typeof patchDepotBody.static
@@ -123,6 +144,20 @@ export namespace RouteModel {
         depots: t.Array(t.String()),
         images: MediaModel.list,
 
+        /**
+         * Per-language versions of this row's text, as
+         * `{ field: { locale: text } }`.
+         *
+         * Shipped with the row rather than resolved server-side. Public reads
+         * never consult the session so they stay CDN-cacheable (§9), and
+         * resolving here would mean either a locale on every one of them —
+         * and a cache entry per language — or a header the cache has to vary
+         * on. The site knows which language it is drawing in, the payload is
+         * a handful of short strings, and the dashboard needs all of them
+         * anyway to put them in the editor.
+         */
+        translations: translationsResponse,
+
         createdAt: t.Date(),
         updatedAt: t.Date()
     })
@@ -153,6 +188,9 @@ export namespace RouteModel {
         order: t.Optional(t.Integer({ minimum: 0, maximum: 9999 })),
         visibility: t.Optional(globalModel.visibility),
         showOnGroupPage: t.Optional(t.Boolean()),
+        /** Per-language versions of the text fields above. */
+        translations: t.Optional(translationsPatch),
+
         depots: t.Optional(t.Array(t.String({ format: 'uuid' }), { maxItems: 64 }))
     })
     export type createRouteBody = typeof createRouteBody.static
@@ -170,6 +208,9 @@ export namespace RouteModel {
         iconMediaId: t.Optional(t.Union([t.String({ format: 'uuid' }), t.Null()])),
         visibility: t.Optional(globalModel.visibility),
         showOnGroupPage: t.Optional(t.Boolean()),
+        /** Per-language versions of the text fields above. */
+        translations: t.Optional(translationsPatch),
+
         depots: t.Optional(t.Array(t.String({ format: 'uuid' }), { maxItems: 64 }))
     })
     export type patchRouteBody = typeof patchRouteBody.static

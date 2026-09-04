@@ -3,6 +3,7 @@ import { index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-c
 import { mediaOwnerEnum, moderationEnum } from './enums'
 import { groups } from './groups'
 import { users } from './users'
+import { translations } from './translations'
 
 /**
  * An uploaded image, stored in S3-compatible object storage.
@@ -29,6 +30,8 @@ export const media = pgTable(
         contentType: text('content_type').notNull(),
         size: integer('size').notNull(),
         caption: text('caption').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
         order: integer('order').notNull().default(0),
 
         moderation: moderationEnum('moderation').notNull().default('VISIBLE'),

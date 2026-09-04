@@ -1,5 +1,6 @@
 import { t } from 'elysia'
 import { globalModel } from '../../utils/globalModel'
+import { translationsPatch, translationsResponse } from '../../utils/translations'
 
 export namespace RankModel {
     export const createRankBody = t.Object({
@@ -57,6 +58,8 @@ export namespace RankModel {
     export const signupSlotInput = t.Object({
         name: t.String({ minLength: 1, maxLength: 60 }),
         description: t.Optional(t.String({ maxLength: 300 })),
+        /** Per-language versions of this slot's name and description. */
+        translations: t.Optional(translationsPatch),
         capacity: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 999 }))
     })
@@ -66,6 +69,8 @@ export namespace RankModel {
         id: t.String(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
         capacity: t.Number(),
         order: t.Number()
     })
@@ -80,6 +85,8 @@ export namespace RankModel {
         enabled: t.Boolean(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
         color: t.String(),
         discordChannel: t.Union([t.String(), t.Null()]),
         discordPingRole: t.Union([t.String(), t.Null()]),
@@ -97,6 +104,8 @@ export namespace RankModel {
         enabled: t.Optional(t.Boolean()),
         name: t.Optional(t.String({ minLength: 1, maxLength: 60 })),
         description: t.Optional(t.String({ maxLength: 300 })),
+        /** Per-language versions of the sheet's name and description. */
+        translations: t.Optional(translationsPatch),
         color: t.Optional(globalModel.hexColor),
         discordChannel: t.Optional(snowflake),
         discordPingRole: t.Optional(snowflake),
