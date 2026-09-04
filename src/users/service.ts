@@ -188,6 +188,17 @@ export abstract class UserService {
     static async setPreferences(body: UserModel.preferencesBody, session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
+        // A language tag is checked for shape, not for membership of a list.
+        // Which languages the site actually renders is decided by the frontend
+        // (`project.inlang/settings.json`), and a copy of that list here would
+        // drift — the day a language shipped, this would refuse it until
+        // somebody remembered to redeploy the API too. A tag that is
+        // well-formed but not shipped is harmless: the frontend's `isLocale`
+        // rejects it at render and falls back, exactly as it does for null.
+        if (body.locale != null && !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(body.locale)) {
+            throw status(400, 'Bad Request' satisfies globalModel.badRequest)
+        }
+
         // Pinning a group is a shortcut, not a grant — but a shortcut to a
         // group you cannot open is a broken link on your own dashboard, so the
         // pin is checked against the same permission the link leads to.

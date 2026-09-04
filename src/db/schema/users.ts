@@ -56,7 +56,19 @@ export const users = pgTable(
 
         // Preferences
         theme: text('theme').notNull().default('dim'),
-        locale: text('locale').notNull().default('en'),
+        /**
+         * The interface language, or null for "follow the browser".
+         *
+         * Nullable and without a default on purpose. A column default cannot
+         * be told apart from a choice, and every row held 'en' because that
+         * was the default rather than because anybody picked English — so the
+         * day a second language shipped, existing speakers of it would have
+         * been the only people still getting English. Null says "no
+         * preference" in a way the database itself understands, and the
+         * resolver already treats it that way: `isLocale(null)` is false, so
+         * the frontend falls through to `Accept-Language` on its own.
+         */
+        locale: text('locale'),
         timezone: text('timezone').notNull().default('UTC'),
 
         /**
