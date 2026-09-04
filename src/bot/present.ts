@@ -22,6 +22,7 @@ export function presentConfig(row: BotConfig): BotModel.config {
         placeId: row.placeId,
         ownerRobloxId: row.ownerRobloxId,
         announceJoinCode: row.announceJoinCode,
+        languages: row.languages,
 
         announcementsEnabled: row.announcementsEnabled,
         signupsEnabled: row.signupsEnabled,

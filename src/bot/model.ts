@@ -1,5 +1,18 @@
 import { t } from 'elysia'
 import { globalModel } from '../utils/globalModel'
+import { SUPPORTED_LOCALES } from '../utils/locales'
+
+/**
+ * A language tag this instance knows, as a pattern rather than a union of
+ * literals.
+ *
+ * Eden Treaty reads a body's `t.Array(t.Union([...]))` as a file upload — the
+ * frontend ends up being handed `File[]` where it passes language tags — so
+ * the constraint is expressed as a regular expression over a plain string
+ * instead. Same validation, at the same place, and the derived client type is
+ * the `string[]` it actually is.
+ */
+const supportedLocale = t.String({ pattern: `^(${SUPPORTED_LOCALES.join('|')})$` })
 
 export namespace BotModel {
     /** Snowflakes are 64-bit; they travel as digit strings, never numbers. */
@@ -73,6 +86,9 @@ export namespace BotModel {
         ownerRobloxId: t.Union([t.String(), t.Null()]),
         announceJoinCode: t.Boolean(),
 
+        /** The languages every message is rendered in, in order. */
+        languages: t.Array(t.String()),
+
         announcementsEnabled: t.Boolean(),
         signupsEnabled: t.Boolean(),
         pollsEnabled: t.Boolean(),
@@ -126,6 +142,17 @@ export namespace BotModel {
         // host who needs a different server for one shift sets it on that
         // occurrence with `/edit-shift`.
         announceJoinCode: t.Optional(t.Boolean()),
+
+        /**
+         * The languages the bot speaks, in the order they are to be shown.
+         *
+         * Validated against the instance's own list rather than accepted as
+         * free text: an unknown tag would fall back to English on every
+         * message, so the group would see the setting saved and nothing
+         * change. Capped at four because Discord's caps are per message —
+         * a fifth rendering of a title is what starts getting cut off.
+         */
+        languages: t.Optional(t.Array(supportedLocale, { minItems: 1, maxItems: 4 })),
 
         announcementsEnabled: t.Optional(t.Boolean()),
         signupsEnabled: t.Optional(t.Boolean()),
