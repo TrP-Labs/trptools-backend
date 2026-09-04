@@ -35,7 +35,8 @@ export namespace AuthModel {
         displayName: t.Union([t.String(), t.Null()]),
         avatar: t.Union([t.String(), t.Null()]),
         theme: t.String(),
-        locale: t.String(),
+        /** Null means "follow the browser" — see the column's own comment. */
+        locale: t.Union([t.String(), t.Null()]),
         timezone: t.String()
     })
     export type SessionUser = typeof SessionUser.static

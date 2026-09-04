@@ -770,7 +770,11 @@ export abstract class Applications {
             retryAt: blocker === 'DENIED' && row ? cooldownEndsAt(row, state) : null,
             blockedBy: blocker,
             timezone: preferences?.timezone ?? 'UTC',
-            locale: preferences?.locale ?? 'en'
+            // `||`, not `??`: the account's locale is null when it follows the
+            // browser, and the apply form needs a real tag to snapshot against
+            // the submission. The page overrides this with `navigator.language`
+            // anyway — this is only what it starts from.
+            locale: preferences?.locale || 'en'
         }
     }
 
