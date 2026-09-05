@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { translationsResponse } from '../utils/translations'
 
 export namespace UserModel {
     /**
@@ -13,6 +14,12 @@ export namespace UserModel {
         /** Null for a global route: the mark is against the name, not a row. */
         routeId: t.Union([t.String(), t.Null()]),
         name: t.String(),
+        /**
+         * Per-language versions of the name, for a group's own route. A
+         * global item is a built-in, whose name is the game's and the same
+         * everywhere, so it carries none.
+         */
+        translations: translationsResponse,
         color: t.String(),
         textColor: t.String(),
         shape: t.String(),
@@ -80,7 +87,8 @@ export namespace UserModel {
         theme: t.Optional(t.Union([t.Literal('dim'), t.Literal('midnight'), t.Literal('light')])),
         /** Null clears the preference back to following the browser. */
         locale: t.Optional(t.Union([t.String({ maxLength: 8 }), t.Null()])),
-        timezone: t.Optional(t.String({ maxLength: 64 })),
+        /** Null clears the preference back to following the browser. */
+        timezone: t.Optional(t.Union([t.String({ maxLength: 64 }), t.Null()])),
         profilePublic: t.Optional(t.Boolean()),
         favoriteRoutesPublic: t.Optional(t.Boolean()),
         dislikedRoutesPublic: t.Optional(t.Boolean()),
@@ -92,7 +100,8 @@ export namespace UserModel {
     export const preferencesResponse = t.Object({
         theme: t.String(),
         locale: t.Union([t.String(), t.Null()]),
-        timezone: t.String(),
+        /** Null means nobody has chosen one; the browser's answer stands. */
+        timezone: t.Union([t.String(), t.Null()]),
         profilePublic: t.Boolean(),
         favoriteRoutesPublic: t.Boolean(),
         dislikedRoutesPublic: t.Boolean(),
@@ -116,6 +125,12 @@ export namespace UserModel {
         routeId: t.Union([t.String(), t.Null()]),
         groupId: t.Union([t.String(), t.Null()]),
         name: t.String(),
+        /**
+         * Per-language versions of the route's name, for a custom route. A
+         * global item is a built-in, whose name is the game's and the same
+         * everywhere, so it carries none.
+         */
+        translations: translationsResponse,
         color: t.String(),
         preference: t.Union([t.Literal('FAVORITE'), t.Literal('DISLIKE')])
     })

@@ -13,6 +13,7 @@ import { Roblox } from '../utils/roblox'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { Session } from '../auth/service'
 import { UserModel } from './model'
+import { presentTranslations } from '../utils/translations'
 
 export abstract class UserService {
     static async getProfile(userId: string, session: session): Promise<UserModel.publicProfile> {
@@ -64,6 +65,7 @@ export abstract class UserService {
             .select({
                 routeId: routes.id,
                 name: routes.name,
+                translations: routes.translations,
                 color: routes.color,
                 textColor: routes.textColor,
                 shape: routes.shape,
@@ -119,6 +121,7 @@ export abstract class UserService {
                 return {
                     routeId: null,
                     name: row.routeName,
+                    translations: {},
                     color: preset?.color ?? '#4287f5',
                     textColor: '#111111',
                     shape: 'AUTO',
@@ -136,6 +139,7 @@ export abstract class UserService {
             ...rows.map((row) => ({
                 routeId: row.routeId,
                 name: row.name,
+                translations: presentTranslations('ROUTE', row.translations),
                 color: row.color,
                 textColor: row.textColor,
                 shape: row.shape,
@@ -224,6 +228,7 @@ export abstract class UserService {
                     routeId: routes.id,
                     groupId: routes.groupId,
                     name: routes.name,
+                    translations: routes.translations,
                     color: routes.color,
                     preference: routePreferences.preference
                 })
@@ -248,10 +253,17 @@ export abstract class UserService {
                 routeId: null,
                 groupId: null,
                 name: row.name,
+                // A built-in's name is the game's, the same in every group, so
+                // there is nothing per-group to translate it with.
+                translations: {},
                 color: BUILT_IN_ROUTES.find((route) => route.name === row.name)?.color ?? '#4287f5',
                 preference: row.preference
             })),
-            ...custom.map((row) => ({ global: false, ...row }))
+            ...custom.map((row) => ({
+                global: false,
+                ...row,
+                translations: presentTranslations('ROUTE', row.translations)
+            }))
         ]
     }
 

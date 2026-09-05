@@ -3,6 +3,7 @@ import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } 
 import { rankRelations } from './groups'
 import { events } from './events'
 import { users } from './users'
+import { translations } from './translations'
 
 /**
  * A sign-up sheet attached to a Roblox rank.
@@ -29,6 +30,8 @@ export const rankSignups = pgTable('rank_signups', {
     enabled: boolean('enabled').notNull().default(false),
     name: text('name').notNull().default('Staff'),
     description: text('description').notNull().default(''),
+    /** Per-language versions of the text above. See `./translations.ts`. */
+    translations: translations(),
     color: text('color').notNull().default('#4287f5'),
 
     /** Where the bot posts this sheet. Falls back to nothing, not to a default. */
@@ -47,6 +50,8 @@ export const rankSignupSlots = pgTable(
 
         name: text('name').notNull(),
         description: text('description').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
         capacity: integer('capacity').notNull().default(1),
         order: integer('order').notNull().default(0)
     },

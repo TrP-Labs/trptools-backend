@@ -14,6 +14,7 @@ import {
 import { moderationEnum, routePreferenceEnum, routeShapeEnum, visibilityEnum } from './enums'
 import { groups } from './groups'
 import { users } from './users'
+import { translations } from './translations'
 
 /**
  * A depot is a spawn location in game, identified by its number.
@@ -36,6 +37,8 @@ export const depots = pgTable(
         /** Address of this depot's own page, unique within the group. */
         slug: text('slug').notNull(),
         description: text('description').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
         color: text('color').notNull().default('#4287f5'),
 
         /**
@@ -88,6 +91,8 @@ export const routes = pgTable(
         /** Address of this route's own page, unique within the group. */
         slug: text('slug').notNull(),
         description: text('description').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
 
         // Presentation — this is what the legacy tool could never do for
         // custom routes.

@@ -19,6 +19,8 @@ import { mediaForOwners, mediaUrls } from '../media/service'
 import type { MediaModel } from '../media/model'
 import type { RouteModel } from '../groups/routes/model'
 import { openApplicationsFor } from '../applications/service'
+import { groupName } from '../groups/service'
+import { presentTranslations } from '../utils/translations'
 import { PublicModel } from './model'
 
 /**
@@ -46,9 +48,11 @@ function header(group: Group): PublicModel.groupHeader {
     return {
         id: group.id,
         slug: group.slug,
-        name: group.cachedName ?? `Group ${group.robloxId}`,
+        name: groupName(group),
         icon: group.cachedIcon,
         tagline: group.tagline,
+        sourceLocale: group.sourceLocale,
+        translations: presentTranslations('GROUP', group.translations),
         accentColor: group.accentColor
     }
 }
@@ -78,6 +82,7 @@ function presentRoute(
 ): RouteModel.routeBody {
     return {
         ...route,
+        translations: presentTranslations('ROUTE', route.translations),
         icon: route.iconMediaId ? (icons.get(route.iconMediaId) ?? null) : null,
         depots: depotIds,
         images: (images.get(route.id) ?? []).filter((image) => image.id !== route.iconMediaId)
@@ -91,6 +96,7 @@ function presentDepot(
 ): RouteModel.depotBody {
     return {
         ...depot,
+        translations: presentTranslations('DEPOT', depot.translations),
         icon: depot.iconMediaId ? (icons.get(depot.iconMediaId) ?? null) : null,
         images: (images.get(depot.id) ?? []).filter((image) => image.id !== depot.iconMediaId)
     }
@@ -145,9 +151,11 @@ export abstract class PublicPages {
 
         return rows.map((group) => ({
             slug: group.slug,
-            name: group.cachedName ?? `Group ${group.robloxId}`,
+            name: groupName(group),
             icon: group.cachedIcon,
             tagline: group.tagline,
+            sourceLocale: group.sourceLocale,
+            translations: presentTranslations('GROUP', group.translations),
             accentColor: group.accentColor,
             members: group.cachedMembers ?? 0,
             routeCount: routeTotals.get(group.id) ?? 0,
@@ -212,12 +220,14 @@ export abstract class PublicPages {
         return {
             id: group.id,
             slug: group.slug,
-            name: group.cachedName ?? `Group ${group.robloxId}`,
+            name: groupName(group),
             icon: group.cachedIcon,
             bannerImage: group.bannerImage,
             description: group.cachedDescription ?? '',
             tagline: group.tagline,
             about: group.about,
+            sourceLocale: group.sourceLocale,
+            translations: presentTranslations('GROUP', group.translations),
             accentColor: group.accentColor,
             members: group.cachedMembers ?? 0,
             robloxId: group.robloxId,
@@ -271,6 +281,7 @@ export abstract class PublicPages {
                 slug: depot.slug,
                 number: depot.number,
                 name: depot.name,
+                translations: presentTranslations('DEPOT', depot.translations),
                 color: depot.color,
                 icon: depot.iconMediaId ? (icons.get(depot.iconMediaId) ?? null) : null
             }))
@@ -356,6 +367,7 @@ export abstract class PublicPages {
                 slug: event.slug,
                 name: event.name,
                 description: event.description,
+                translations: presentTranslations('SHIFT', event.translations),
                 color: event.color,
                 duration: event.duration,
                 recurrenceText: describeRule(event.rrule, event.startTime)
@@ -365,6 +377,7 @@ export abstract class PublicPages {
                 slug: event.slug,
                 name: event.name,
                 description: event.description,
+                translations: presentTranslations('SHIFT', event.translations),
                 color: event.color,
                 start: occurrence.start,
                 end: occurrence.end
@@ -453,6 +466,7 @@ export abstract class PublicPages {
                 slug: event.slug,
                 name: event.name,
                 description: event.description,
+                translations: presentTranslations('SHIFT', event.translations),
                 color: event.color,
                 start: occurrence.start,
                 end: occurrence.end

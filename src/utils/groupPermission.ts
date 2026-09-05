@@ -5,7 +5,7 @@ import { groups, rankRelations, users } from '../db/schema'
 import { Roblox } from './roblox'
 import { resolveCredentials } from './robloxCredentials'
 import { dataRedis } from './redis'
-import { PERMISSION } from './globalModel'
+import { NON_MEMBER, resolveMembership, type Membership } from './membershipRule'
 import { isUuid } from './slug'
 import { isSiteAdmin, type session } from './sessionVerifier'
 
@@ -18,13 +18,12 @@ import { isSiteAdmin, type session } from './sessionVerifier'
  * — so rank-gated features such as staff sign-up sheets compare this instead.
  * It is -1 when the user holds no role in the group at all, which keeps a
  * non-member strictly below Roblox's lowest real rank of 0.
+ *
+ * The rule itself lives in `membershipRule.ts`, which imports nothing that
+ * reads the environment, so it can be tested — and so the group list cannot
+ * grow a second copy of the owner pin that drifts from this one.
  */
-export type Membership = {
-    permissionLevel: number
-    robloxRank: number
-}
-
-const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
+export type { Membership } from './membershipRule'
 
 /**
  * A group's own id, whichever identifier the caller had to hand.
@@ -156,7 +155,7 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
 
 /**
  * What a Roblox role grants in a group, according to `rank_relations` as it
- * stands right now.
+ * stands right now. The reading is here; the rule is in `membershipRule.ts`.
  */
 async function resolveRole(groupID: string, roleId: string, reportedRank: number): Promise<Membership> {
     const [relation] = await db
@@ -166,20 +165,7 @@ async function resolveRole(groupID: string, roleId: string, reportedRank: number
         .limit(1)
         .catch(() => [])
 
-    // A role Roblox reports but the group never bound still tells us the
-    // user's standing, so the rank number falls back to the reported one.
-    const robloxRank = relation?.cachedRank ?? reportedRank ?? -1
-
-    // The Roblox owner role always holds full control, and that is settled
-    // here rather than only where ranks are edited. A group whose owner row
-    // drifted below manage — bound before the rule existed, or written by an
-    // older seed — could not be repaired through the API, because editing rank
-    // 255 deliberately drops any permission change. Pinning at the point
-    // permission is *resolved* means such a group can never lock itself out.
-    const permissionLevel =
-        robloxRank >= 255 ? PERMISSION.MANAGE : (relation?.permissionLevel ?? PERMISSION.NONE)
-
-    return { permissionLevel, robloxRank }
+    return resolveMembership(relation, reportedRank)
 }
 
 export async function GetPermissionLevel(userID: string, groupIdOrSlug: string): Promise<number> {

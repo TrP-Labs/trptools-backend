@@ -2,6 +2,7 @@ import { relations } from 'drizzle-orm'
 import { index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
 import { visibilityEnum } from './enums'
 import { groups } from './groups'
+import { translations } from './translations'
 
 /**
  * A shift is a recurring scheduled event. `rrule` drives recurrence,
@@ -23,6 +24,8 @@ export const events = pgTable(
         /** Address of this shift's own page, unique within the group. */
         slug: text('slug').notNull(),
         description: text('description').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
         color: text('color').notNull().default('#4287f5'),
 
         startTime: timestamp('start_time', { withTimezone: true }).notNull(),

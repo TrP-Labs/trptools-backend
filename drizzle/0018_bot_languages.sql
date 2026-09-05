@@ -1,0 +1,1 @@
+ALTER TABLE "bot_configs" ADD COLUMN "languages" text[] DEFAULT '{"en"}' NOT NULL;

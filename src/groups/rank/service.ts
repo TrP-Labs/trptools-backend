@@ -7,6 +7,7 @@ import UserHasRank, { assertPermission, invalidateGroupPermissions } from '../..
 import { Roblox } from '../../utils/roblox'
 import { resolveCredentials } from '../../utils/robloxCredentials'
 import { isSiteAdmin, type session } from '../../utils/sessionVerifier'
+import { presentTranslations, translationUpdate } from '../../utils/translations'
 import { findGroup, recordAudit } from '../service'
 import { GroupModel } from '../model'
 import { RankModel } from './model'
@@ -28,6 +29,7 @@ async function presentSignup(rankId: string): Promise<RankModel.signupOrNull> {
         enabled: sheet.enabled,
         name: sheet.name,
         description: sheet.description,
+        translations: presentTranslations('SHEET', sheet.translations),
         color: sheet.color,
         discordChannel: sheet.discordChannel,
         discordPingRole: sheet.discordPingRole,
@@ -35,6 +37,7 @@ async function presentSignup(rankId: string): Promise<RankModel.signupOrNull> {
             id: slot.id,
             name: slot.name,
             description: slot.description,
+            translations: presentTranslations('SLOT', slot.translations),
             capacity: slot.capacity,
             order: slot.order
         }))
@@ -58,6 +61,9 @@ async function replaceSignupSlots(signupId: string, slots: RankModel.signupSlotI
         const values = {
             name: slot.name,
             description: slot.description ?? '',
+            // Reuse is by name, so a row that survives keeps whatever it had
+            // for any field this save does not mention.
+            ...translationUpdate('SLOT', match?.translations, slot.translations),
             capacity: slot.capacity ?? 1,
             order: slot.order ?? index
         }
@@ -298,7 +304,7 @@ export abstract class Rank {
 
         await assertPermission(session, rank.groupId, PERMISSION.MANAGE)
 
-        const { slots, ...patch } = body
+        const { slots, translations, ...patch } = body
 
         const [existing] = await db.select().from(rankSignups).where(eq(rankSignups.rankId, rankId)).limit(1)
 
@@ -307,14 +313,22 @@ export abstract class Rank {
             (
                 await db
                     .insert(rankSignups)
-                    .values({ rankId, name: patch.name ?? rank.cachedName, color: patch.color ?? rank.color })
+                    .values({
+                        rankId,
+                        name: patch.name ?? rank.cachedName,
+                        color: patch.color ?? rank.color,
+                        ...translationUpdate('SHEET', null, translations)
+                    })
                     .returning()
             )[0]
 
         if (!sheet) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
 
-        if (existing && Object.keys(patch).length > 0) {
-            await db.update(rankSignups).set(patch).where(eq(rankSignups.id, sheet.id))
+        if (existing && (Object.keys(patch).length > 0 || translations !== undefined)) {
+            await db
+                .update(rankSignups)
+                .set({ ...patch, ...translationUpdate('SHEET', sheet.translations, translations) })
+                .where(eq(rankSignups.id, sheet.id))
         }
 
         if (slots) await replaceSignupSlots(sheet.id, slots)

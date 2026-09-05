@@ -1,5 +1,6 @@
 import { t } from 'elysia'
 import { globalModel } from '../utils/globalModel'
+import { translationsResponse } from '../utils/translations'
 
 export namespace DashboardModel {
     /**
@@ -12,6 +13,8 @@ export namespace DashboardModel {
     export const upcomingShift = t.Object({
         eventId: t.String(),
         name: t.String(),
+        /** Per-language versions of the shift's name. See `utils/translations`. */
+        translations: translationsResponse,
         slug: t.String(),
         color: t.String(),
         start: t.Date(),
@@ -20,6 +23,14 @@ export namespace DashboardModel {
         groupId: t.String(),
         groupSlug: t.String(),
         groupName: t.String(),
+        /**
+         * The group's own per-language names.
+         *
+         * Carried separately from the shift's because both are drawn on the
+         * same card: without it the group's name here and the group's name on
+         * its status card, in the same list, would be in different languages.
+         */
+        groupTranslations: translationsResponse,
         groupIcon: t.Union([t.String(), t.Null()]),
 
         /** Whether this viewer already holds a slot on it. */
@@ -40,12 +51,22 @@ export namespace DashboardModel {
     export const pendingReview = t.Object({
         applicationId: t.String(),
         name: t.String(),
+        /** Per-language versions of the form's name. */
+        translations: translationsResponse,
         color: t.String(),
         pendingCount: t.Number(),
 
         groupId: t.String(),
         groupSlug: t.String(),
         groupName: t.String(),
+        /**
+         * The group's own per-language names.
+         *
+         * Carried separately from the shift's because both are drawn on the
+         * same card: without it the group's name here and the group's name on
+         * its status card, in the same list, would be in different languages.
+         */
+        groupTranslations: translationsResponse,
         groupIcon: t.Union([t.String(), t.Null()])
     })
     export type pendingReview = typeof pendingReview.static
@@ -62,6 +83,8 @@ export namespace DashboardModel {
         icon: t.Union([t.String(), t.Null()]),
         members: t.Number(),
         tagline: t.String(),
+        /** Per-language versions of the group's name and tagline. */
+        translations: translationsResponse,
         accentColor: t.String(),
         visibility: globalModel.visibility,
         permissionLevel: t.Number(),

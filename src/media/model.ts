@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { translationsPatch, translationsResponse } from '../utils/translations'
 
 export namespace MediaModel {
     export const ownerType = t.Union([
@@ -13,6 +14,8 @@ export namespace MediaModel {
         id: t.String(),
         url: t.String(),
         caption: t.String(),
+        /** Per-language versions of the caption. See `utils/translations`. */
+        translations: translationsResponse,
         order: t.Number(),
         contentType: t.String(),
         ownerType: ownerType,
@@ -72,6 +75,8 @@ export namespace MediaModel {
 
     export const patchBody = t.Object({
         caption: t.Optional(t.String({ maxLength: 200 })),
+        /** Per-language versions of the caption. */
+        translations: t.Optional(translationsPatch),
         order: t.Optional(t.Integer({ minimum: 0, maximum: 999 }))
     })
     export type patchBody = typeof patchBody.static

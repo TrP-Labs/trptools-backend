@@ -5,6 +5,7 @@ import { depots, media, routeDepots, routes, type Depot, type Route } from '../.
 import { globalModel, PERMISSION } from '../../utils/globalModel'
 import { assertPermission, GetPermissionLevel } from '../../utils/groupPermission'
 import { childSlug, uniqueWithin } from '../../utils/slug'
+import { presentTranslations, translationUpdate } from '../../utils/translations'
 import { mediaForOwners, mediaUrls } from '../../media/service'
 import { isSiteAdmin, type session } from '../../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../service'
@@ -44,6 +45,7 @@ async function decorateRoutes(rows: Route[], includeHidden: boolean): Promise<Ro
 
     return rows.map((route) => ({
         ...route,
+        translations: presentTranslations('ROUTE', route.translations),
         icon: route.iconMediaId ? (icons.get(route.iconMediaId) ?? null) : null,
         depots: byRoute.get(route.id) ?? [],
         // The badge lives in the same media table as the gallery, so it is
@@ -66,6 +68,7 @@ async function decorateDepots(rows: Depot[], includeHidden: boolean): Promise<Ro
 
     return rows.map((depot) => ({
         ...depot,
+        translations: presentTranslations('DEPOT', depot.translations),
         icon: depot.iconMediaId ? (icons.get(depot.iconMediaId) ?? null) : null,
         images: (images.get(depot.id) ?? []).filter((image) => image.id !== depot.iconMediaId)
     }))
@@ -203,13 +206,14 @@ export abstract class Route_ {
             throw status(409, 'a route with that name already exists' satisfies RouteModel.nameTaken)
         }
 
-        const { depots: depotIds, groupId, ...values } = body
+        const { depots: depotIds, groupId, translations, ...values } = body
 
         const [route] = await db
             .insert(routes)
             .values({
                 ...values,
                 ...(values.targetShare !== undefined ? { targetShare: roundShare(values.targetShare) } : {}),
+                ...translationUpdate('ROUTE', null, translations),
                 groupId: group.id,
                 slug: await freeRouteSlug(group.id, body.name)
             })
@@ -235,7 +239,12 @@ export abstract class Route_ {
         // Built-in routes exist in the game itself, so their identity is fixed.
         // Everything else about them — colour, share, depots, archived — is the
         // group's to change.
-        if (route.builtIn) delete patch.name
+        // A built-in's name is the game's, so neither it nor a per-language
+        // version of it is the group's to change.
+        if (route.builtIn) {
+            delete patch.name
+            if (patch.translations) delete patch.translations.name
+        }
 
         if (patch.name !== undefined && patch.name !== route.name) {
             const clash = await db
@@ -251,9 +260,9 @@ export abstract class Route_ {
 
         if (patch.iconMediaId) await assertOwnsMedia(patch.iconMediaId, route.groupId, routeId)
 
-        const { depots: depotIds, ...fields } = patch
+        const { depots: depotIds, translations, ...fields } = patch
 
-        if (Object.keys(fields).length > 0) {
+        if (Object.keys(fields).length > 0 || translations !== undefined) {
             await db
                 .update(routes)
                 .set({
@@ -261,6 +270,7 @@ export abstract class Route_ {
                     ...(fields.targetShare !== undefined
                         ? { targetShare: roundShare(fields.targetShare) }
                         : {}),
+                    ...translationUpdate('ROUTE', route.translations, translations),
                     // The page address follows the name, so a rename does not
                     // leave the URL describing something else.
                     ...(fields.name !== undefined && fields.name !== route.name
@@ -358,12 +368,13 @@ export abstract class Depot_ {
             throw status(409, 'a depot with that number already exists' satisfies RouteModel.numberTaken)
         }
 
-        const { groupId, ...values } = body
+        const { groupId, translations, ...values } = body
 
         const [depot] = await db
             .insert(depots)
             .values({
                 ...values,
+                ...translationUpdate('DEPOT', null, translations),
                 groupId: group.id,
                 slug: await freeDepotSlug(group.id, body.name, body.number)
             })
@@ -402,11 +413,14 @@ export abstract class Depot_ {
 
         if (body.iconMediaId) await assertOwnsMedia(body.iconMediaId, depot.groupId, depotId)
 
+        const { translations, ...fields } = body
+
         if (Object.keys(body).length > 0) {
             await db
                 .update(depots)
                 .set({
-                    ...body,
+                    ...fields,
+                    ...translationUpdate('DEPOT', depot.translations, translations),
                     ...(body.name !== undefined && body.name !== depot.name
                         ? {
                               slug: await freeDepotSlug(

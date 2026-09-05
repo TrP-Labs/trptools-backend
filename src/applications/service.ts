@@ -23,6 +23,7 @@ import { GroupModel } from '../groups/model'
 import { collectAnswers, isChoice, isStatic } from './answers'
 import { blockedBy, cooldownEndsAt, type FormState } from './eligibility'
 import { ApplicationModel } from './model'
+import { presentTranslations, translationUpdate } from '../utils/translations'
 
 /** Slugs already used by a group's other forms, for `uniqueWithin`. */
 async function takenSlugs(groupId: string, exceptId?: string): Promise<Set<string>> {
@@ -61,6 +62,7 @@ function presentQuestion(row: ApplicationQuestion, images: Map<string, string>):
         type: row.type,
         prompt: row.prompt,
         description: row.description,
+        translations: presentTranslations('QUESTION', row.translations),
         required: row.required,
         order: row.order,
         options: row.options,
@@ -130,6 +132,7 @@ function present(
         slug: row.slug,
         name: row.name,
         description: row.description,
+        translations: presentTranslations('APPLICATION', row.translations),
         color: row.color,
         open: row.open,
         permaDeny: row.permaDeny,
@@ -266,6 +269,7 @@ export async function openApplicationsFor(groupId: string): Promise<ApplicationM
             slug: applications.slug,
             name: applications.name,
             description: applications.description,
+            translations: applications.translations,
             color: applications.color,
             rankId: applications.rankId,
             rankName: rankRelations.cachedName
@@ -282,6 +286,7 @@ export async function openApplicationsFor(groupId: string): Promise<ApplicationM
         slug: row.slug,
         name: row.name,
         description: row.description,
+        translations: presentTranslations('APPLICATION', row.translations),
         color: row.color,
         rankName: row.rankName
     }))
@@ -361,7 +366,13 @@ export abstract class Applications {
     static async patch(applicationId: string, body: ApplicationModel.patchBody, session: session) {
         const row = await findManageable(applicationId, session)
 
-        const update: Record<string, unknown> = { ...body, updatedAt: new Date() }
+        const { translations, ...fields } = body
+
+        const update: Record<string, unknown> = {
+            ...fields,
+            ...translationUpdate('APPLICATION', row.translations, translations),
+            updatedAt: new Date()
+        }
 
         if (body.rankId) await assertOwnRank(row.groupId, body.rankId)
 
@@ -430,11 +441,11 @@ export abstract class Applications {
         const row = await findManageable(applicationId, session)
 
         const existing = await db
-            .select({ id: applicationQuestions.id })
+            .select({ id: applicationQuestions.id, translations: applicationQuestions.translations })
             .from(applicationQuestions)
             .where(eq(applicationQuestions.applicationId, row.id))
 
-        const known = new Set(existing.map((question) => question.id))
+        const known = new Map(existing.map((question) => [question.id, question]))
         const keep = new Set<string>()
 
         for (const [index, question] of body.questions.entries()) {
@@ -450,6 +461,14 @@ export abstract class Applications {
                 type: question.type,
                 prompt: question.prompt,
                 description: question.description ?? '',
+                // Rows are reused by id, so a question that survives an edit
+                // keeps every language it already had for a field this save
+                // does not mention.
+                ...translationUpdate(
+                    'QUESTION',
+                    question.id ? known.get(question.id)?.translations : null,
+                    question.translations
+                ),
                 required: answerable && (question.required ?? false),
                 order: index,
                 options,
@@ -708,6 +727,7 @@ export abstract class Applications {
             slug: row.application.slug,
             name: row.application.name,
             description: row.application.description,
+            translations: presentTranslations('APPLICATION', row.application.translations),
             color: row.application.color,
             // A form is only truly open while it still answers for a rank.
             open: row.application.open && Boolean(row.application.rankId),
@@ -769,7 +789,11 @@ export abstract class Applications {
             // Only worth showing while it is actually what is in the way.
             retryAt: blocker === 'DENIED' && row ? cooldownEndsAt(row, state) : null,
             blockedBy: blocker,
-            timezone: preferences?.timezone ?? 'UTC',
+            // Null rather than UTC: the page can only offer what the browser
+            // resolves if it can tell "nobody has chosen" apart from "chose
+            // UTC", and defaulting here is what made every application go out
+            // stamped UTC unless the applicant noticed.
+            timezone: preferences?.timezone ?? null,
             // `||`, not `??`: the account's locale is null when it follows the
             // browser, and the apply form needs a real tag to snapshot against
             // the submission. The page overrides this with `navigator.language`
@@ -881,6 +905,9 @@ export abstract class Applications {
                 // Sent with the form so a reviewer can see when somebody is
                 // actually around, defaulted from the account when the form
                 // did not say.
+                // The form is expected to send one — it knows the browser's
+                // zone and the account's. UTC is the floor for a caller that
+                // sends neither, not a default anybody is shown.
                 timezone: body.timezone?.trim() || preferences?.timezone || 'UTC',
                 locale: body.locale?.trim() || preferences?.locale || 'en'
             })

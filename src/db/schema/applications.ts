@@ -3,6 +3,7 @@ import { boolean, index, integer, pgTable, text, timestamp, unique, uniqueIndex,
 import { applicationQuestionEnum, applicationStatusEnum } from './enums'
 import { groups, rankRelations } from './groups'
 import { users } from './users'
+import { translations } from './translations'
 
 /**
  * A staff application form.
@@ -38,6 +39,8 @@ export const applications = pgTable(
         /** Address of this form's public page, unique within the group. */
         slug: text('slug').notNull(),
         description: text('description').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
         color: text('color').notNull().default('#4287f5'),
 
         /** Whether new submissions are accepted. Never affects existing ones. */
@@ -115,6 +118,8 @@ export const applicationQuestions = pgTable(
         prompt: text('prompt').notNull().default(''),
         /** Smaller text under the prompt: guidance, or the body of a section. */
         description: text('description').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
 
         required: boolean('required').notNull().default(false),
         order: integer('order').notNull().default(0),

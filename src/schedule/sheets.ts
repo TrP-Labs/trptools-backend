@@ -5,6 +5,8 @@ import { PERMISSION } from '../utils/globalModel'
 import type { Membership } from '../utils/groupPermission'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import type { ScheduleModel } from './model'
+import type { Translations } from '../db/schema/translations'
+import { presentTranslations } from '../utils/translations'
 
 /** A rank's sign-up sheet with its slots, before any occurrence is applied. */
 export type LoadedSheet = {
@@ -14,6 +16,7 @@ export type LoadedSheet = {
     robloxRank: number
     name: string
     description: string
+    translations: Translations
     color: string
     discordChannel: string | null
     discordPingRole: string | null
@@ -21,6 +24,7 @@ export type LoadedSheet = {
         id: string
         name: string
         description: string
+        translations: Translations
         capacity: number
         order: number
     }>
@@ -41,6 +45,7 @@ export async function loadSheets(groupId: string): Promise<LoadedSheet[]> {
             robloxRank: rankRelations.cachedRank,
             name: rankSignups.name,
             description: rankSignups.description,
+            translations: rankSignups.translations,
             color: rankSignups.color,
             discordChannel: rankSignups.discordChannel,
             discordPingRole: rankSignups.discordPingRole
@@ -65,12 +70,14 @@ export async function loadSheets(groupId: string): Promise<LoadedSheet[]> {
     return rows
         .map((row) => ({
             ...row,
+            translations: presentTranslations('SHEET', row.translations),
             slots: slots
                 .filter((slot) => slot.signupId === row.signupId)
                 .map((slot) => ({
                     id: slot.id,
                     name: slot.name,
                     description: slot.description,
+                    translations: presentTranslations('SLOT', slot.translations),
                     capacity: slot.capacity,
                     order: slot.order
                 }))
@@ -222,11 +229,13 @@ export function presentSheets(
         robloxRank: sheet.robloxRank,
         name: sheet.name,
         description: sheet.description,
+        translations: sheet.translations,
         color: sheet.color,
         slots: sheet.slots.map((slot) => ({
             id: slot.id,
             name: slot.name,
             description: slot.description,
+            translations: slot.translations,
             capacity: slot.capacity,
             order: slot.order,
             signups: signups.get(bucketKey(eventId, occurrence, slot.id)) ?? []

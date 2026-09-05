@@ -10,6 +10,7 @@ import { loadSheets, loadSignups, signupsOpen, signupsOpenAt, type LoadedSheet }
 import { BotInternal } from './internalModel'
 import type { BotModel } from './model'
 import { ownerRobloxId } from './owner'
+import { groupName } from '../groups/service'
 import { presentConfig } from './present'
 
 /**
@@ -151,7 +152,7 @@ export abstract class BotService {
             guildId: config.guildId,
             groupId: group.id,
             groupSlug: group.slug,
-            groupName: group.cachedName ?? group.slug,
+            groupName: groupName(group),
             siteUrl: FRONTEND_URL,
             config: presentConfig({ ...config, ownerRobloxId: owner }) satisfies BotModel.config,
             sheets: sheets.map((sheet) => ({

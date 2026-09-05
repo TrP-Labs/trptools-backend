@@ -80,6 +80,24 @@ export const botConfigs = pgTable('bot_configs', {
      */
     announceJoinCode: boolean('announce_join_code').notNull().default(true),
 
+    // --- Languages ----------------------------------------------------------
+    /**
+     * The languages the bot says everything in, in the order the group chose.
+     *
+     * A list rather than one language, because a group is one community
+     * speaking several: the bot renders every message in all of them at once
+     * — "Upcoming shift / Наступна зміна" — rather than posting the same
+     * announcement twice. Order is the group's, and is what decides which
+     * language leads and which one is used alone in the two places Discord
+     * allows only one (a modal's labels, a poll's answers).
+     *
+     * Defaults to English because that is the language the bot's own strings
+     * are written in, not because a group is assumed to speak it. Empty means
+     * the same thing, since `resolveLocales` in the bot is the one place that
+     * decision is made.
+     */
+    languages: text('languages').array().notNull().default(['en']),
+
     // --- Features -----------------------------------------------------------
     // Each of these gates a whole capability, automated or not. Turning one
     // off also hides its slash command's effect rather than only its schedule.

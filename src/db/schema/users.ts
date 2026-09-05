@@ -69,7 +69,16 @@ export const users = pgTable(
          * the frontend falls through to `Accept-Language` on its own.
          */
         locale: text('locale'),
-        timezone: text('timezone').notNull().default('UTC'),
+        /**
+         * The zone this person is in, or null to follow their browser.
+         *
+         * Nullable for the same reason `locale` above is: the column used to
+         * default to `UTC`, which made "never chose one" and "chose UTC"
+         * indistinguishable — so every application form went out stamped UTC
+         * unless the applicant noticed and pressed Detect. Null means nobody
+         * has said, and the answer to that is whatever the browser resolves.
+         */
+        timezone: text('timezone'),
 
         /**
          * The group this person actually works for, out of however many they

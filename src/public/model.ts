@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { translationsResponse } from '../utils/translations'
 import { RouteModel } from '../groups/routes/model'
 import { RankModel } from '../groups/rank/model'
 import { ApplicationModel } from '../applications/model'
@@ -9,6 +10,9 @@ export namespace PublicModel {
         name: t.String(),
         icon: t.Union([t.String(), t.Null()]),
         tagline: t.String(),
+        sourceLocale: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
         accentColor: t.String(),
         members: t.Number(),
         routeCount: t.Number(),
@@ -36,6 +40,8 @@ export namespace PublicModel {
         slug: t.String(),
         name: t.String(),
         description: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
         color: t.String(),
         start: t.Date(),
         end: t.Date()
@@ -51,6 +57,10 @@ export namespace PublicModel {
         name: t.String(),
         icon: t.Union([t.String(), t.Null()]),
         tagline: t.String(),
+        /** What language the group writes in, so a reader knows the fallback. */
+        sourceLocale: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
         accentColor: t.String()
     })
     export type groupHeader = typeof groupHeader.static
@@ -66,6 +76,8 @@ export namespace PublicModel {
                 slug: t.String(),
                 number: t.Number(),
                 name: t.String(),
+                /** Per-language versions of this row's text. See `utils/translations`. */
+                translations: translationsResponse,
                 color: t.String(),
                 icon: t.Union([t.String(), t.Null()])
             })
@@ -89,6 +101,8 @@ export namespace PublicModel {
             slug: t.String(),
             name: t.String(),
             description: t.String(),
+            /** Per-language versions of this row's text. See `utils/translations`. */
+            translations: translationsResponse,
             color: t.String(),
             duration: t.Number(),
             recurrenceText: t.String()
@@ -107,6 +121,9 @@ export namespace PublicModel {
         description: t.String(),
         tagline: t.String(),
         about: t.String(),
+        sourceLocale: t.String(),
+        /** Per-language versions of this row's text. See `utils/translations`. */
+        translations: translationsResponse,
         accentColor: t.String(),
         members: t.Number(),
         robloxId: t.String(),
