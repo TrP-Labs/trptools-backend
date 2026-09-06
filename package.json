@@ -1,6 +1,6 @@
 {
   "name": "trptools-backend",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "private": true,
   "type": "module",
   "module": "src/index.ts",
