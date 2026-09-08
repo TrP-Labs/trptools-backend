@@ -14,6 +14,7 @@ import { dataRedis } from '../utils/redis'
 import { DEFAULT_RETURN_PATH, safeReturnPath } from '../utils/returnPath'
 import { FRONTEND_URL } from '../utils/env'
 import { avatarUrl, Discord, discordConfigured, displayName } from '../bot/discord'
+import { adoptDiscordSignups } from '../schedule/identity'
 import { BotModel } from '../bot/model'
 import { API_SCOPES, AuthModel } from './model'
 
@@ -172,6 +173,7 @@ export abstract class Session {
             user: {
                 userId: user.id,
                 robloxId: user.robloxId,
+                createdAt: user.createdAt,
                 siteRank: user.siteRank,
                 // Read back off the session rather than the account: the
                 // standing is the account's, using it is this session's.
@@ -411,6 +413,20 @@ export abstract class DiscordLink {
                 discordLinkedAt: new Date()
             })
             .where(eq(users.id, userId))
+
+        /**
+         * Anything this Discord account already signed up for is now theirs
+         * under the account.
+         *
+         * A slot taken from a Discord sheet before connecting carries only the
+         * Discord id, so without this the website would not offer to withdraw
+         * from it and the next sign-up — made under the account — would be a
+         * second row for the same person on the same shift. Best effort: the
+         * link itself has been written, and failing the whole callback over
+         * housekeeping would leave somebody staring at "failed" over an
+         * account that is in fact connected.
+         */
+        await adoptDiscordSignups(userId, identity.id).catch(() => undefined)
 
         return back('linked')
     }

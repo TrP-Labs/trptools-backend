@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { and, asc, eq } from 'drizzle-orm'
 import db from '../db'
-import { events, rankSignupSlots, shiftSignups, users, type Event } from '../db/schema'
+import { events, rankSignupSlots, shiftSignups, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
@@ -14,6 +14,7 @@ import { findGroup, recordAudit } from '../groups/service'
 import { GroupModel } from '../groups/model'
 import { publishSignupChange } from './events'
 import { canUseSheet, loadSheets, loadSignups, presentSheets, sheetsVisibleTo, signupsOpen } from './sheets'
+import { actorForUser, ownedBy, ownsSignup } from './identity'
 import { ScheduleModel } from './model'
 
 const MAX_HORIZON_DAYS = 120
@@ -311,43 +312,51 @@ export abstract class Schedule {
          * A rule that traps people in a slot is worse than one they can step
          * around by not signing up in the first place.
          */
-        if (group?.requireDiscordForSignups) {
-            const [account] = await db
-                .select({ discordId: users.discordId })
-                .from(users)
-                .where(eq(users.id, session.user.userId))
-                .limit(1)
+        // Resolved once, and carried out of here: it is both the Discord
+        // requirement's answer and the identity every duplicate check below
+        // is asked about.
+        const actor = await actorForUser(session.user.userId)
 
-            if (!account?.discordId) {
-                throw status(
-                    403,
-                    'this group asks you to link a Discord account before signing up' satisfies ScheduleModel.discordRequired
-                )
-            }
+        if (group?.requireDiscordForSignups && !actor.discordUserId) {
+            throw status(
+                403,
+                'this group asks you to link a Discord account before signing up' satisfies ScheduleModel.discordRequired
+            )
         }
 
-        return { event, sheet, slot }
+        return { event, sheet, slot, actor }
     }
 
     static async signUp(body: ScheduleModel.signupBody, session: session) {
-        const { event, sheet, slot } = await Schedule.resolveSlot(body, session)
+        const { event, sheet, slot, actor } = await Schedule.resolveSlot(body, session)
 
+        /**
+         * Every sign-up on this occurrence, not only the slot being taken.
+         *
+         * One person holds one slot per shift — the sheets say so and the
+         * Discord menu has always enforced it — so the duplicate test is over
+         * the whole occurrence, across every sheet. Reading the slot alone let
+         * somebody hold the dispatcher slot and a maintenance one at the same
+         * time, on a shift they can only be in one place for.
+         */
         const existing = await db
-            .select({ id: shiftSignups.id, userId: shiftSignups.userId })
+            .select({
+                id: shiftSignups.id,
+                slotId: shiftSignups.slotId,
+                userId: shiftSignups.userId,
+                discordUserId: shiftSignups.discordUserId
+            })
             .from(shiftSignups)
-            .where(
-                and(
-                    eq(shiftSignups.slotId, body.slotId),
-                    eq(shiftSignups.eventId, body.eventId),
-                    eq(shiftSignups.occurrence, body.occurrence)
-                )
-            )
+            .where(and(eq(shiftSignups.eventId, body.eventId), eq(shiftSignups.occurrence, body.occurrence)))
 
-        if (existing.some((row) => row.userId === session.user!.userId)) {
+        // Asked of both identity columns: a slot taken from a Discord sheet
+        // before this account was connected is still theirs, and answering
+        // "no" would put the same person on the shift twice.
+        if (existing.some((row) => ownsSignup(row, actor))) {
             throw status(409, 'already signed up for this shift' satisfies ScheduleModel.alreadySignedUp)
         }
 
-        if (existing.length >= slot.capacity) {
+        if (existing.filter((row) => row.slotId === body.slotId).length >= slot.capacity) {
             throw status(409, 'that slot is full' satisfies ScheduleModel.slotFull)
         }
 
@@ -366,6 +375,12 @@ export abstract class Schedule {
     static async withdraw(body: ScheduleModel.signupBody, session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
+        // Matched on either identity, so a slot taken from a Discord sheet can
+        // be given up from the website. Withdrawing is never gated on the
+        // group's Discord rule, so nothing here consults it.
+        const mine = ownedBy(await actorForUser(session.user.userId))
+        if (!mine) return 'Success' as globalModel.genericSuccess
+
         const [removed] = await db
             .delete(shiftSignups)
             .where(
@@ -373,7 +388,7 @@ export abstract class Schedule {
                     eq(shiftSignups.slotId, body.slotId),
                     eq(shiftSignups.eventId, body.eventId),
                     eq(shiftSignups.occurrence, body.occurrence),
-                    eq(shiftSignups.userId, session.user.userId)
+                    mine
                 )
             )
             .returning({ id: shiftSignups.id })

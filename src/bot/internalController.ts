@@ -107,8 +107,10 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
                 detail: {
                     summary: 'Take, move or release a slot from Discord',
                     description:
-                        'Selecting a slot already held releases it; selecting another on the same sheet moves. ' +
-                        'A linked Discord account is recorded as its TrPTools user so both halves show one person.'
+                        'Selecting a slot already held releases it; selecting any other one moves, across sheets ' +
+                        'as well as within one, because a person holds one slot per shift. A linked Discord ' +
+                        'account is recorded as its TrPTools user, and a slot that person took on the website ' +
+                        'counts as already held.'
                 }
             })
 

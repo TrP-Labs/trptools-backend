@@ -116,8 +116,9 @@ export namespace BotInternal {
     /**
      * What happened, so the bot can word its ephemeral reply.
      *
-     * `MOVED` covers picking a different slot on a sheet you already hold —
-     * the legacy bot made people withdraw first, which was a needless step.
+     * `MOVED` covers picking a different slot while already holding one —
+     * on this sheet or another, since one person holds one slot per shift.
+     * The legacy bot made people withdraw first, which was a needless step.
      */
     export const signupResult = t.Object({
         status: t.Union([
