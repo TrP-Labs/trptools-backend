@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import {
+    avatarUrl,
     channelPermissions,
+    displayName,
     guildPermissions,
     has,
     PERMISSIONS,
     type DiscordChannel,
-    type DiscordRole
+    type DiscordRole,
+    type DiscordUser
 } from './permissions'
 
 /**
@@ -177,5 +180,45 @@ describe('channelPermissions', () => {
         const permissions = channelPermissions(channel(), pollRoles, [], GUILD, BOT)
 
         expect(has(permissions, 'SEND_POLLS')).toBe(true)
+    })
+})
+
+/**
+ * How a linked Discord account is rendered.
+ *
+ * Discord retired discriminators partway through this API's life, so an
+ * account has both a handle and a display name and only one of them is worth
+ * showing — and the two are not interchangeable, since `global_name` is
+ * routinely null on accounts that never set one.
+ */
+describe('a linked Discord account', () => {
+    const account = (overrides: Partial<DiscordUser> = {}): DiscordUser => ({
+        id: '123',
+        username: 'handle',
+        ...overrides
+    })
+
+    test('is called by its display name when it has one', () => {
+        expect(displayName(account({ global_name: 'Display Name' }))).toBe('Display Name')
+    })
+
+    test('falls back to the handle, which every account has', () => {
+        expect(displayName(account({ global_name: null }))).toBe('handle')
+        expect(displayName(account({ global_name: '   ' }))).toBe('handle')
+        expect(displayName(account())).toBe('handle')
+    })
+
+    test('has no avatar URL while it is still on a default one', () => {
+        // Default avatars live on another path and are derived from the id
+        // rather than stored, so there is nothing to keep — a client draws
+        // initials instead.
+        expect(avatarUrl(account({ avatar: null }))).toBeNull()
+        expect(avatarUrl(account())).toBeNull()
+    })
+
+    test('builds the CDN URL from the id and the hash', () => {
+        expect(avatarUrl(account({ avatar: 'abc123' }))).toBe(
+            'https://cdn.discordapp.com/avatars/123/abc123.png?size=128'
+        )
     })
 })

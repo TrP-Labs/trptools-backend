@@ -141,6 +141,16 @@ export namespace ScheduleModel {
          * advertising one to everybody who cannot use it.
          */
         sheetsAvailable: t.Boolean(),
+        /**
+         * Whether this group asks for a linked Discord account before a slot
+         * can be taken.
+         *
+         * Carried on the occurrence rather than left to the client to look up
+         * per group: whoever is drawing sheets needs it to disable the button
+         * and explain why, and the shifts page draws occurrences from more
+         * than one group at once.
+         */
+        discordRequired: t.Boolean(),
         /** Only the sheets the caller's own rank permits. */
         sheets: t.Array(signupSheet)
     })
@@ -182,4 +192,7 @@ export namespace ScheduleModel {
 
     export const signupsClosed = t.Literal('sign-ups are not open for that shift yet')
     export type signupsClosed = typeof signupsClosed.static
+
+    export const discordRequired = t.Literal('this group asks you to link a Discord account before signing up')
+    export type discordRequired = typeof discordRequired.static
 }

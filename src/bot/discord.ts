@@ -10,6 +10,7 @@ import {
     type DiscordGuild,
     type DiscordMember,
     type DiscordRole,
+    type DiscordUser,
     type PermissionName
 } from './permissions'
 
@@ -152,6 +153,47 @@ export const Discord = {
 
         const token = (await response.json().catch(() => null)) as { guild?: DiscordGuild } | null
         return token?.guild ?? null
+    },
+
+    /**
+     * Exchanges an account-linking code for the Discord account behind it.
+     *
+     * A separate exchange from `exchangeInstall` above even though both post
+     * to the same endpoint: that one is asking which guild the bot landed in
+     * and throws the token away, this one is asking who authorised it and has
+     * to spend the token on `/users/@me` before doing so. Nothing is stored —
+     * the id and the name are all the site ever wants, and holding a live
+     * Discord token for every account would be a credential we have no use
+     * for and would still have to protect.
+     */
+    async exchangeIdentity(code: string, redirectUri: string): Promise<DiscordUser | null> {
+        const body = new URLSearchParams({
+            client_id: env.DISCORD_APP_ID,
+            client_secret: env.DISCORD_CLIENT_SECRET,
+            grant_type: 'authorization_code',
+            code,
+            redirect_uri: redirectUri
+        })
+
+        const response = await fetch(`${API}/oauth2/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body
+        }).catch(() => null)
+
+        if (!response?.ok) return null
+
+        const token = (await response.json().catch(() => null)) as { access_token?: string } | null
+        if (!token?.access_token) return null
+
+        const identity = await fetch(`${API}/users/@me`, {
+            headers: { Authorization: `Bearer ${token.access_token}` }
+        }).catch(() => null)
+
+        if (!identity?.ok) return null
+
+        const user = (await identity.json().catch(() => null)) as DiscordUser | null
+        return user?.id ? user : null
     }
 }
 

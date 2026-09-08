@@ -1,9 +1,10 @@
 /**
  * Whether one person may apply to one form right now.
  *
- * Four rules interact here — the form being open, the rank the applicant
- * already holds, the intake a decision was made in, and an admin clearing a
- * record — and every one of them has a plausible wrong version. They live
+ * Five rules interact here — the form being open, the rank the applicant
+ * already holds, the intake a decision was made in, an admin clearing a
+ * record, and whether the group demands a linked Discord account — and every
+ * one of them has a plausible wrong version. They live
  * apart from the service, importing nothing, so `eligibility.test.ts` can pin
  * them without a database; the same reasoning as `answers.ts` and
  * `rooms/dispatch/assign.ts`.
@@ -40,15 +41,24 @@ export type FormState = {
      * the whole point is that it does not lapse.
      */
     denyCooldownDays: number | null
+    /**
+     * Whether the group requires a linked Discord account to apply.
+     *
+     * A property of the group rather than of the form: it is one decision
+     * about how a group is reachable, and a group that wants an applicant on
+     * Discord wants it on every form they run.
+     */
+    requiresDiscord: boolean
 }
 
 /**
  * Why somebody cannot apply, or `null` when they can.
  *
  * `PENDING` is their own application waiting; `APPROVED` and `DENIED` are a
- * decision that still stands.
+ * decision that still stands. `DISCORD_REQUIRED` is the only one the person
+ * can do something about on the spot, which is why it is reported last.
  */
-export type Blocker = 'CLOSED' | 'PENDING' | 'APPROVED' | 'DENIED' | 'RANK_TOO_HIGH'
+export type Blocker = 'CLOSED' | 'PENDING' | 'APPROVED' | 'DENIED' | 'RANK_TOO_HIGH' | 'DISCORD_REQUIRED'
 
 /**
  * Whether a decision still counts against the person it was made about.
@@ -107,6 +117,7 @@ export function blockedBy(
     submission: LastSubmission | null,
     robloxRank: number,
     targetRank: number | null,
+    hasDiscord = true,
     now = new Date()
 ): Blocker | null {
     // Closed comes first: it is true of everybody, and is what the page should
@@ -117,6 +128,16 @@ export function blockedBy(
 
     if (submission && decisionStands(submission, form, now)) return submission.status
 
+    /**
+     * Reported last, after everything that is not the reader's to fix.
+     *
+     * The page turns this one into a button, so it has to be the thing
+     * actually in the way — offering "link your Discord account" to somebody
+     * whose application is already sitting in the queue, or who was turned
+     * down last week, would promise that pressing it lets them apply.
+     */
+    if (form.requiresDiscord && !hasDiscord) return 'DISCORD_REQUIRED'
+
     return null
 }
 
@@ -124,5 +145,6 @@ export const canApply = (
     form: FormState,
     submission: LastSubmission | null,
     robloxRank: number,
-    targetRank: number | null
-): boolean => blockedBy(form, submission, robloxRank, targetRank) === null
+    targetRank: number | null,
+    hasDiscord = true
+): boolean => blockedBy(form, submission, robloxRank, targetRank, hasDiscord) === null

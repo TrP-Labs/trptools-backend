@@ -38,6 +38,16 @@ export const users = pgTable(
          */
         discordId: text('discord_id').unique(),
         discordUsername: text('discord_username'),
+        /** Their Discord avatar, as a ready-to-render URL. */
+        discordAvatar: text('discord_avatar'),
+        /**
+         * When the link was made.
+         *
+         * `discordId` alone cannot say it: a Discord sign-up recorded against
+         * an id is not the same event as somebody deliberately connecting the
+         * two accounts, and the settings card says when they did.
+         */
+        discordLinkedAt: timestamp('discord_linked_at', { withTimezone: true }),
 
         /**
          * Account suspension, applied by a site admin.

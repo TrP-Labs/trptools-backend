@@ -69,6 +69,23 @@ export const groups = pgTable(
          */
         signupLeadMinutes: integer('signup_lead_minutes').notNull().default(1440),
 
+        /**
+         * Whether a member has to have connected a Discord account before
+         * they may sign up for a shift, or send a staff application.
+         *
+         * Two switches rather than one because the two are different asks. A
+         * group runs its shifts in Discord and needs to be able to reach
+         * whoever put their name down — that is the sign-up case. Vetting an
+         * applicant is the other, and a group may well want the Discord
+         * account on the application without demanding one to fill a slot.
+         *
+         * Both off by default: turning either on withdraws something people
+         * could do the day before, so it is a decision a group makes rather
+         * than one made for them.
+         */
+        requireDiscordForSignups: boolean('require_discord_for_signups').notNull().default(false),
+        requireDiscordForApplications: boolean('require_discord_for_applications').notNull().default(false),
+
         // Which parts of the public page are exposed
         showRoutes: boolean('show_routes').notNull().default(true),
         showShifts: boolean('show_shifts').notNull().default(true),

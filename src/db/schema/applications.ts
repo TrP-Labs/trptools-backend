@@ -181,7 +181,19 @@ export const applicationSubmissions = pgTable(
          * changed since would silently rewrite the answer.
          */
         timezone: text('timezone').notNull().default('UTC'),
-        locale: text('locale').notNull().default('en')
+        locale: text('locale').notNull().default('en'),
+
+        /**
+         * The Discord account the applicant held when they applied.
+         *
+         * Snapshotted for the same reason the zone above is: it is how a
+         * reviewer reaches the person about the application in front of them,
+         * and somebody who unlinks or relinks afterwards would otherwise
+         * rewrite what was sent. Null when nothing was linked — a group only
+         * requiring Discord today still has archived applications from before.
+         */
+        discordId: text('discord_id'),
+        discordUsername: text('discord_username')
     },
     (table) => [
         // Partial rather than a plain unique: somebody may only have one

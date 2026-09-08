@@ -163,6 +163,18 @@ export namespace ApplicationModel {
         /** Where the applicant was, as they had it when they applied. */
         timezone: t.String(),
         locale: t.String(),
+        /**
+         * The Discord account they had linked when they applied, or null.
+         *
+         * Snapshotted with the application rather than read off the account
+         * now, so a reviewer opening an archived one sees who it was sent by
+         * — and null on every application sent before the account was linked,
+         * which is the honest answer rather than a name nobody gave.
+         */
+        discord: t.Union([
+            t.Object({ id: t.String(), username: t.Union([t.String(), t.Null()]) }),
+            t.Null()
+        ]),
         applicant,
         reviewer: t.Union([applicant, t.Null()])
     })
@@ -274,8 +286,11 @@ export namespace ApplicationModel {
             t.Literal('APPROVED'),
             t.Literal('DENIED'),
             t.Literal('RANK_TOO_HIGH'),
+            t.Literal('DISCORD_REQUIRED'),
             t.Null()
         ]),
+        /** Whether this caller has a Discord account linked at all. */
+        hasDiscord: t.Boolean(),
         /**
          * What the form will send unless they change it.
          *
@@ -300,6 +315,14 @@ export namespace ApplicationModel {
         open: t.Boolean(),
         rankName: t.Union([t.String(), t.Null()]),
         rankColor: t.Union([t.String(), t.Null()]),
+        /**
+         * Whether the group demands a linked Discord account to apply.
+         *
+         * On the form rather than only on the standing so the page can say so
+         * to somebody who is not signed in yet — the standing is the one part
+         * that varies by caller, and this does not.
+         */
+        requiresDiscord: t.Boolean(),
         questions: t.Array(question)
     })
     export type publicApplication = typeof publicApplication.static
@@ -340,4 +363,7 @@ export namespace ApplicationModel {
 
     export const missingAnswers = t.Literal('answer every required question')
     export type missingAnswers = typeof missingAnswers.static
+
+    export const discordRequired = t.Literal('this group asks applicants to link a Discord account first')
+    export type discordRequired = typeof discordRequired.static
 }

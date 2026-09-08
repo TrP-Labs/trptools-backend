@@ -1,6 +1,6 @@
 import { status } from 'elysia'
 import { decodeIdToken, generateCodeVerifier, generateState, type OAuth2Tokens } from 'arctic'
-import { and, desc, eq, isNull } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
 import db from '../db'
 import { apiKeys, sessions, users } from '../db/schema'
 import { env } from '../utils/env'
@@ -10,6 +10,11 @@ import { generateSessionToken, hashToken, isAdminAccount, type session } from '.
 import { invalidateUserPermissions } from '../utils/groupPermission'
 import { isBanned } from '../utils/moderation'
 import { globalModel } from '../utils/globalModel'
+import { dataRedis } from '../utils/redis'
+import { DEFAULT_RETURN_PATH, safeReturnPath } from '../utils/returnPath'
+import { FRONTEND_URL } from '../utils/env'
+import { avatarUrl, Discord, discordConfigured, displayName } from '../bot/discord'
+import { BotModel } from '../bot/model'
 import { API_SCOPES, AuthModel } from './model'
 
 /**
@@ -29,6 +34,29 @@ interface RobloxOAuthClaims {
 }
 
 const SESSION_TTL_MS = env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000
+
+/**
+ * A linked Discord account as every response shows it, or null.
+ *
+ * `discordId` is the one field that decides: the username and avatar are
+ * conveniences that a link made before this shipped may not carry, and an
+ * account whose id is set is linked whether or not we know what to call it.
+ */
+export function presentDiscord(user: {
+    discordId: string | null
+    discordUsername: string | null
+    discordAvatar: string | null
+    discordLinkedAt: Date | null
+}): AuthModel.DiscordAccount | null {
+    if (!user.discordId) return null
+
+    return {
+        id: user.discordId,
+        username: user.discordUsername ?? user.discordId,
+        avatar: user.discordAvatar,
+        linkedAt: user.discordLinkedAt
+    }
+}
 
 export abstract class Session {
     static async GenerateLogin(): Promise<AuthModel.GeneratedLoginData> {
@@ -154,7 +182,8 @@ export abstract class Session {
                 avatar: user.cachedAvatar,
                 theme: user.theme,
                 locale: user.locale,
-                timezone: user.timezone
+                timezone: user.timezone,
+                discord: presentDiscord(user)
             }
         }
     }
@@ -265,5 +294,149 @@ export abstract class ApiKeys {
             .returning({ keyId: apiKeys.keyId })
 
         if (revoked.length === 0) throw status(404, 'Not Found' satisfies globalModel.notFound)
+    }
+}
+
+/**
+ * Connecting a Discord account to a TrPTools one.
+ *
+ * The site has always *recorded* a Discord id — a sign-up taken from a Discord
+ * sheet carries one — but nothing ever put one on an account, so the column
+ * was only ever read and the two halves of a sign-up sheet could not be shown
+ * as the same person. This is the flow that fills it in.
+ *
+ * Nothing is gated on it site-wide. A group may require it (`groups`), and
+ * that is the only thing it decides.
+ */
+const LINK_TTL = 600
+const linkKey = (state: string) => `discord:link:${state}`
+
+const discordRedirectUri = () => `${env.BASE_URL}/auth/discord/callback`
+
+
+function assertDiscordConfigured() {
+    if (!discordConfigured) {
+        throw status(503, 'Discord is not configured on this instance' satisfies BotModel.unavailable)
+    }
+}
+
+export abstract class DiscordLink {
+    /**
+     * Begins the link, parking who asked under a random state value.
+     *
+     * The user id goes into Redis rather than being read off the session at
+     * the callback: the callback is a top-level navigation from Discord, and a
+     * cookie is not guaranteed to travel with it under every SameSite policy
+     * a deployment might end up with. It is the same reasoning the bot install
+     * uses, and it keeps the callback outside the session plugin entirely.
+     */
+    static async Begin(
+        session: session,
+        query: AuthModel.DiscordLinkQuery = {}
+    ): Promise<AuthModel.DiscordLinkResponse> {
+        if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
+        assertDiscordConfigured()
+
+        const state = generateSessionToken()
+        await dataRedis.set(
+            linkKey(state),
+            JSON.stringify({ userId: session.user.userId, returnTo: safeReturnPath(query.returnTo) }),
+            'EX',
+            LINK_TTL
+        )
+
+        const url = new URL('https://discord.com/oauth2/authorize')
+        url.searchParams.set('client_id', env.DISCORD_APP_ID)
+        // `identify` and nothing else: the site wants a name and an id, and a
+        // scope it does not read is one it would still have to justify to
+        // whoever is being asked to grant it.
+        url.searchParams.set('scope', 'identify')
+        url.searchParams.set('response_type', 'code')
+        url.searchParams.set('redirect_uri', discordRedirectUri())
+        url.searchParams.set('state', state)
+        // Discord otherwise skips the consent screen for an application the
+        // account has already authorised, which makes "link a different
+        // account" impossible to do without visiting Discord's own settings.
+        url.searchParams.set('prompt', 'consent')
+
+        return { url: url.toString() }
+    }
+
+    /**
+     * Finishes the link and lands the browser back on the settings page.
+     *
+     * Every outcome is a redirect, including the failures: this is a top-level
+     * navigation, so a JSON error would leave somebody looking at a bare
+     * string where a page should be.
+     */
+    static async Complete(query: AuthModel.DiscordCallbackQuery): Promise<string> {
+        // Until the parked state is read there is nowhere to go back to, so
+        // everything before that lands on settings — which is where the link
+        // can be tried again from in any case.
+        let path = DEFAULT_RETURN_PATH
+        const back = (result: string) =>
+            `${FRONTEND_URL}${path}${path.includes('?') ? '&' : '?'}discord=${result}`
+
+        if (!discordConfigured) return back('unavailable')
+        if (query.error || !query.code || !query.state) return back('cancelled')
+
+        const raw = await dataRedis.get(linkKey(query.state)).catch(() => null)
+        if (!raw) return back('expired')
+        await dataRedis.del(linkKey(query.state)).catch(() => undefined)
+
+        const { userId, returnTo } = JSON.parse(raw) as { userId: string; returnTo: string }
+        path = safeReturnPath(returnTo)
+
+        const identity = await Discord.exchangeIdentity(query.code, discordRedirectUri())
+        if (!identity) return back('failed')
+
+        // One Discord account cannot stand for two TrPTools ones: a sign-up
+        // sheet resolves a Discord id to an account, and a shared id would
+        // make that ambiguous. The column is unique, so this is the readable
+        // version of an error the database would raise anyway.
+        const [claimed] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.discordId, identity.id))
+            .limit(1)
+
+        if (claimed && claimed.id !== userId) return back('taken')
+
+        await db
+            .update(users)
+            .set({
+                discordId: identity.id,
+                discordUsername: displayName(identity),
+                discordAvatar: avatarUrl(identity),
+                discordLinkedAt: new Date()
+            })
+            .where(eq(users.id, userId))
+
+        return back('linked')
+    }
+
+    /**
+     * Disconnects the account.
+     *
+     * Sign-ups already taken keep whatever identity they were taken under —
+     * a web sign-up carries the user id and a Discord one its own — so this
+     * withdraws the link and nothing else. It may cost the person access to a
+     * group that requires one, which is the group's rule rather than a reason
+     * to refuse.
+     */
+    static async Unlink(session: session) {
+        if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
+
+        const [cleared] = await db
+            .update(users)
+            .set({ discordId: null, discordUsername: null, discordAvatar: null, discordLinkedAt: null })
+            .where(and(eq(users.id, session.user.userId), isNotNull(users.discordId)))
+            .returning({ id: users.id })
+
+        if (!cleared) {
+            throw status(404, 'no Discord account is linked' satisfies AuthModel.noDiscordLinked)
+        }
+
+        return 'Success' as globalModel.genericSuccess
     }
 }

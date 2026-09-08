@@ -1,6 +1,16 @@
 import { t } from 'elysia'
 
 export namespace AuthModel {
+    /** A linked Discord account, as every surface that shows one reads it. */
+    export const DiscordAccount = t.Object({
+        id: t.String(),
+        /** Their display name, falling back to the handle. */
+        username: t.String(),
+        avatar: t.Union([t.String(), t.Null()]),
+        linkedAt: t.Union([t.Date(), t.Null()])
+    })
+    export type DiscordAccount = typeof DiscordAccount.static
+
     export const GeneratedLoginData = t.Object({
         url: t.String(),
         state: t.String(),
@@ -37,7 +47,17 @@ export namespace AuthModel {
         theme: t.String(),
         /** Both null mean "follow the browser" — see the columns' own comments. */
         locale: t.Union([t.String(), t.Null()]),
-        timezone: t.Union([t.String(), t.Null()])
+        timezone: t.Union([t.String(), t.Null()]),
+
+        /**
+         * The Discord account this person has connected, or null.
+         *
+         * Carried on the session rather than fetched where it is needed
+         * because a group can require it before a sign-up or an application
+         * is accepted, and the pages offering those have to be able to say so
+         * — and offer the button — without a second round trip per shift.
+         */
+        discord: t.Union([DiscordAccount, t.Null()])
     })
     export type SessionUser = typeof SessionUser.static
 
@@ -85,6 +105,36 @@ export namespace AuthModel {
 
     export const oauthUnavailable = t.Literal('Roblox OAuth is not configured')
     export type oauthUnavailable = typeof oauthUnavailable.static
+
+    export const DiscordLinkQuery = t.Object({
+        json: t.Optional(t.String()),
+        /**
+         * Where to land afterwards, as a path on the site.
+         *
+         * The button that starts this appears on the shift page and the apply
+         * form as well as in settings, and sending everybody to settings
+         * regardless means somebody who pressed it to unblock a form has to
+         * find their way back to the form. Validated as a site-relative path
+         * on the way in — an absolute URL here would make the callback an open
+         * redirect.
+         */
+        returnTo: t.Optional(t.String({ maxLength: 300 }))
+    })
+    export type DiscordLinkQuery = typeof DiscordLinkQuery.static
+
+    /** Where to send the browser to authorise the Discord link. */
+    export const DiscordLinkResponse = t.Object({ url: t.String() })
+    export type DiscordLinkResponse = typeof DiscordLinkResponse.static
+
+    export const DiscordCallbackQuery = t.Object({
+        code: t.Optional(t.String()),
+        state: t.Optional(t.String()),
+        error: t.Optional(t.String())
+    })
+    export type DiscordCallbackQuery = typeof DiscordCallbackQuery.static
+
+    export const noDiscordLinked = t.Literal('no Discord account is linked')
+    export type noDiscordLinked = typeof noDiscordLinked.static
 }
 
 export const API_SCOPES = [

@@ -1,6 +1,7 @@
 import { Elysia, redirect, status, t } from 'elysia'
 import { AuthModel } from './model'
-import { ApiKeys, Session } from './service'
+import { ApiKeys, DiscordLink, Session } from './service'
+import { BotModel } from '../bot/model'
 import { globalModel } from '../utils/globalModel'
 import { cookieSecure, env, FRONTEND_URL } from '../utils/env'
 import { requireUser, sessionPlugin } from '../utils/authPlugin'
@@ -21,6 +22,20 @@ const baseCookie = {
 }
 
 export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
+    /**
+     * Discord hands the link back here as a top-level navigation carrying no
+     * session worth trusting, so this sits outside the session plugin and
+     * authorises itself through the parked state value — the same shape the
+     * bot install callback uses.
+     */
+    .get('/discord/callback', async ({ query }) => redirect(await DiscordLink.Complete(query), 303), {
+        query: AuthModel.DiscordCallbackQuery,
+        detail: {
+            summary: 'Finish linking a Discord account',
+            description: 'Always answers with a redirect to the settings page, success or not.'
+        }
+    })
+
     .use(sessionPlugin)
 
     .get(
@@ -137,6 +152,50 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
             }
         }
     )
+
+    /**
+     * Connecting a Discord account, so a group that runs its shifts there can
+     * reach whoever signed up.
+     *
+     * Mirrors `/auth/login`: a browser is redirected, and a client that wants
+     * to open the window itself asks for `json=true` and gets the URL.
+     */
+    .get(
+        '/discord/link',
+        async ({ session, query, request }) => {
+            await rateLimit('auth:discord', clientKey(request), 20, 60)
+
+            const { url } = await DiscordLink.Begin(session, query)
+
+            if (query.json === 'true') return { url } satisfies AuthModel.DiscordLinkResponse
+
+            return redirect(url, 303)
+        },
+        {
+            query: AuthModel.DiscordLinkQuery,
+            response: {
+                200: AuthModel.DiscordLinkResponse,
+                401: globalModel.unauthorized,
+                429: globalModel.rateLimited,
+                503: BotModel.unavailable
+            },
+            detail: { summary: 'Begin linking a Discord account' }
+        }
+    )
+
+    .delete('/discord', async ({ session }) => DiscordLink.Unlink(session), {
+        response: {
+            200: globalModel.genericSuccess,
+            401: globalModel.unauthorized,
+            404: AuthModel.noDiscordLinked
+        },
+        detail: {
+            summary: 'Disconnect the linked Discord account',
+            description:
+                'Sign-ups already taken keep the identity they were taken under. A group requiring a linked ' +
+                'account will refuse new ones until another is connected.'
+        }
+    })
 
     .post(
         '/logout',
