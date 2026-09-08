@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { and, asc, eq } from 'drizzle-orm'
 import db from '../db'
-import { events, rankSignupSlots, shiftSignups, type Event } from '../db/schema'
+import { events, rankSignupSlots, shiftSignups, users, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
@@ -161,6 +161,7 @@ export abstract class Schedule {
                 signupsOpen: open,
                 signupsOpenAt: new Date(occurrence.start.getTime() - group.signupLeadMinutes * 60_000),
                 sheetsAvailable: sheets.length > 0,
+                discordRequired: group.requireDiscordForSignups,
                 sheets: open ? presentSheets(sheets, event.eventId, occurrence.start, signups) : []
             }
         })
@@ -298,6 +299,31 @@ export abstract class Schedule {
 
         if (!signupsOpen(matches[0]!.start, matches[0]!.end, lead)) {
             throw status(409, 'sign-ups are not open for that shift yet' satisfies ScheduleModel.signupsClosed)
+        }
+
+        /**
+         * The group's Discord requirement, checked on the way in rather than
+         * on the way out.
+         *
+         * Withdrawing is deliberately not gated on it: somebody who signed up
+         * and then unlinked, or whose group turned the rule on afterwards,
+         * must still be able to take their name off a shift they cannot make.
+         * A rule that traps people in a slot is worse than one they can step
+         * around by not signing up in the first place.
+         */
+        if (group?.requireDiscordForSignups) {
+            const [account] = await db
+                .select({ discordId: users.discordId })
+                .from(users)
+                .where(eq(users.id, session.user.userId))
+                .limit(1)
+
+            if (!account?.discordId) {
+                throw status(
+                    403,
+                    'this group asks you to link a Discord account before signing up' satisfies ScheduleModel.discordRequired
+                )
+            }
         }
 
         return { event, sheet, slot }

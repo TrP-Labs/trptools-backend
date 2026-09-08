@@ -94,6 +94,8 @@ function present(group: Group, membership: Membership): GroupModel.groupResponse
         showDispatch: group.showDispatch,
         roomOpenLeadMinutes: group.roomOpenLeadMinutes,
         signupLeadMinutes: group.signupLeadMinutes,
+        requireDiscordForSignups: group.requireDiscordForSignups,
+        requireDiscordForApplications: group.requireDiscordForApplications,
 
         permissionLevel: membership.permissionLevel,
         permissions: membership.permissions,
@@ -389,6 +391,15 @@ export abstract class Group_ {
 
         if (touches('roomOpenLeadMinutes', 'signupLeadMinutes')) {
             await assertGroupPermission(session, groupId, PERM.MANAGE_SHIFTS)
+        }
+
+        // Whoever keeps the group's Discord integration decides this, rather
+        // than whoever keeps the timetable or the application forms: it is one
+        // decision about Discord that happens to affect two surfaces, and
+        // splitting it across their two grants would mean neither rank could
+        // see the pair of switches together.
+        if (touches('requireDiscordForSignups', 'requireDiscordForApplications')) {
+            await assertGroupPermission(session, groupId, PERM.MANAGE_BOT)
         }
 
         if (touches('slug', 'name', 'tagline', 'about', 'sourceLocale', 'translations', 'accentColor')) {

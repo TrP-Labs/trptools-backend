@@ -17,6 +17,7 @@ const form = (overrides: Partial<FormState> = {}): FormState => ({
     permaDeny: false,
     openedAt: march,
     denyCooldownDays: null,
+    requiresDiscord: false,
     ...overrides
 })
 
@@ -130,5 +131,35 @@ describe('blockedBy', () => {
 
     test('reopening lets a previously refused applicant back in', () => {
         expect(blockedBy(form({ openedAt: june }), denied({ reviewedAt: march }), -1, 1)).toBeNull()
+    })
+})
+
+describe('a group requiring a linked Discord account', () => {
+    const discord = form({ requiresDiscord: true })
+
+    test('turns away an applicant with nothing linked', () => {
+        expect(blockedBy(discord, null, -1, 1, false)).toBe('DISCORD_REQUIRED')
+    })
+
+    test('lets one through who has linked', () => {
+        expect(blockedBy(discord, null, -1, 1, true)).toBeNull()
+    })
+
+    test('is not asked for when the group has not turned it on', () => {
+        expect(blockedBy(form(), null, -1, 1, false)).toBeNull()
+    })
+
+    /**
+     * Reported last on purpose: the page turns this blocker into a button, and
+     * linking an account does not release somebody whose application is
+     * already waiting or who was refused.
+     */
+    test('never displaces a reason linking cannot fix', () => {
+        expect(blockedBy(form({ requiresDiscord: true, open: false }), null, -1, 1, false)).toBe('CLOSED')
+        expect(blockedBy(discord, null, 254, 1, false)).toBe('RANK_TOO_HIGH')
+        expect(blockedBy(discord, denied(), -1, 1, false)).toBe('DENIED')
+        expect(
+            blockedBy(discord, { status: 'PENDING', reviewedAt: null, clearedAt: null }, -1, 1, false)
+        ).toBe('PENDING')
     })
 })

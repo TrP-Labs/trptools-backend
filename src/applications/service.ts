@@ -188,14 +188,49 @@ async function assertOwnRank(groupId: string, rankId: string) {
     if (!rank) throw status(404, 'that application does not exist' satisfies ApplicationModel.applicationInvalid)
 }
 
-/** The form as the eligibility rules see it. */
-function formState(row: Application): FormState {
+/**
+ * The form as the eligibility rules see it.
+ *
+ * `requiresDiscord` belongs to the group rather than the form, so it is passed
+ * in: one decision about how a group is reachable, applied to every form it
+ * runs.
+ */
+function formState(row: Application, requiresDiscord = false): FormState {
     return {
         open: row.open,
         hasRank: Boolean(row.rankId),
         permaDeny: row.permaDeny,
         openedAt: row.openedAt,
-        denyCooldownDays: row.denyCooldownDays
+        denyCooldownDays: row.denyCooldownDays,
+        requiresDiscord
+    }
+}
+
+/**
+ * The two facts about a group and a caller that decide the Discord rule.
+ *
+ * Read together because they are only ever wanted together, and because
+ * `blockedBy` is given both — the requirement without the account, or the
+ * other way round, cannot answer anything on its own.
+ */
+async function discordStanding(groupId: string, userId: string) {
+    const [[group], [user]] = await Promise.all([
+        db
+            .select({ requiresDiscord: groups.requireDiscordForApplications })
+            .from(groups)
+            .where(eq(groups.id, groupId))
+            .limit(1),
+        db
+            .select({ discordId: users.discordId, discordUsername: users.discordUsername })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1)
+    ])
+
+    return {
+        requiresDiscord: group?.requiresDiscord ?? false,
+        discordId: user?.discordId ?? null,
+        discordUsername: user?.discordUsername ?? null
     }
 }
 
@@ -268,6 +303,11 @@ const applicantColumns = {
     username: users.cachedUsername,
     displayName: users.cachedDisplayName,
     avatar: users.cachedAvatar
+}
+
+/** The Discord account an application was sent under, as a reviewer reads it. */
+function presentSubmissionDiscord(row: { discordId: string | null; discordUsername: string | null }) {
+    return row.discordId ? { id: row.discordId, username: row.discordUsername } : null
 }
 
 /**
@@ -605,6 +645,8 @@ export abstract class Applications {
                 clearedAt: applicationSubmissions.clearedAt,
                 timezone: applicationSubmissions.timezone,
                 locale: applicationSubmissions.locale,
+                discordId: applicationSubmissions.discordId,
+                discordUsername: applicationSubmissions.discordUsername,
                 ...applicantColumns
             })
             .from(applicationSubmissions)
@@ -632,6 +674,7 @@ export abstract class Applications {
             clearedAt: submission.clearedAt,
             timezone: submission.timezone,
             locale: submission.locale,
+            discord: presentSubmissionDiscord(submission),
             applicant: {
                 userId: submission.userId,
                 robloxId: submission.robloxId,
@@ -657,6 +700,8 @@ export abstract class Applications {
                 clearedAt: applicationSubmissions.clearedAt,
                 timezone: applicationSubmissions.timezone,
                 locale: applicationSubmissions.locale,
+                discordId: applicationSubmissions.discordId,
+                discordUsername: applicationSubmissions.discordUsername,
                 ...applicantColumns
             })
             .from(applicationSubmissions)
@@ -688,6 +733,7 @@ export abstract class Applications {
             clearedAt: row.clearedAt,
             timezone: row.timezone,
             locale: row.locale,
+            discord: presentSubmissionDiscord(row),
             applicant: {
                 userId: row.userId,
                 robloxId: row.robloxId,
@@ -781,7 +827,8 @@ export abstract class Applications {
                 rankName: rankRelations.cachedName,
                 rankColor: rankRelations.color,
                 visibility: groups.visibility,
-                moderation: groups.moderation
+                moderation: groups.moderation,
+                requiresDiscord: groups.requireDiscordForApplications
             })
             .from(applications)
             .innerJoin(groups, eq(applications.groupId, groups.id))
@@ -806,6 +853,7 @@ export abstract class Applications {
             open: row.application.open && Boolean(row.application.rankId),
             rankName: row.rankName,
             rankColor: row.rankColor,
+            requiresDiscord: row.requiresDiscord,
             questions
         }
     }
@@ -837,14 +885,15 @@ export abstract class Applications {
             .where(eq(users.id, user.userId))
             .limit(1)
 
-        const [row, membership, target] = await Promise.all([
+        const [row, membership, target, discord] = await Promise.all([
             lastSubmission(application.id, user.userId),
             GetMembership(user.userId, application.groupId),
-            targetRankOf(application.rankId)
+            targetRankOf(application.rankId),
+            discordStanding(application.groupId, user.userId)
         ])
 
-        const state = formState(application)
-        const blocker = blockedBy(state, row, membership.robloxRank, target)
+        const state = formState(application, discord.requiresDiscord)
+        const blocker = blockedBy(state, row, membership.robloxRank, target, Boolean(discord.discordId))
 
         return {
             submission: row
@@ -862,6 +911,7 @@ export abstract class Applications {
             // Only worth showing while it is actually what is in the way.
             retryAt: blocker === 'DENIED' && row ? cooldownEndsAt(row, state) : null,
             blockedBy: blocker,
+            hasDiscord: Boolean(discord.discordId),
             // Null rather than UTC: the page can only offer what the browser
             // resolves if it can tell "nobody has chosen" apart from "chose
             // UTC", and defaulting here is what made every application go out
@@ -929,15 +979,24 @@ export abstract class Applications {
             throw status(404, 'that application does not exist' satisfies ApplicationModel.applicationInvalid)
         }
 
-        const [previous, membership, target] = await Promise.all([
+        const [previous, membership, target, discord] = await Promise.all([
             lastSubmission(application.id, user.userId),
             GetMembership(user.userId, application.groupId),
-            targetRankOf(application.rankId)
+            targetRankOf(application.rankId),
+            discordStanding(application.groupId, user.userId)
         ])
 
         // Every refusal comes from one place, so what the form showed and what
         // the server accepts cannot drift apart.
-        switch (blockedBy(formState(application), previous, membership.robloxRank, target)) {
+        switch (
+            blockedBy(
+                formState(application, discord.requiresDiscord),
+                previous,
+                membership.robloxRank,
+                target,
+                Boolean(discord.discordId)
+            )
+        ) {
             case 'CLOSED':
                 throw status(409, 'this application is closed' satisfies ApplicationModel.closed)
             case 'RANK_TOO_HIGH':
@@ -950,6 +1009,11 @@ export abstract class Applications {
             case 'APPROVED':
             case 'DENIED':
                 throw status(409, 'this application has already been decided' satisfies ApplicationModel.decided)
+            case 'DISCORD_REQUIRED':
+                throw status(
+                    403,
+                    'this group asks applicants to link a Discord account first' satisfies ApplicationModel.discordRequired
+                )
         }
 
         const questions = await db
@@ -982,7 +1046,14 @@ export abstract class Applications {
                 // zone and the account's. UTC is the floor for a caller that
                 // sends neither, not a default anybody is shown.
                 timezone: body.timezone?.trim() || preferences?.timezone || 'UTC',
-                locale: body.locale?.trim() || preferences?.locale || 'en'
+                locale: body.locale?.trim() || preferences?.locale || 'en',
+                // Sent with the application whether or not the group demands
+                // one: a reviewer reaching an applicant on Discord is useful
+                // wherever the account happens to be linked, and reading it
+                // off the account at review time would show whoever they are
+                // linked to *now* rather than who applied.
+                discordId: discord.discordId,
+                discordUsername: discord.discordUsername
             })
             .returning({ id: applicationSubmissions.id })
 

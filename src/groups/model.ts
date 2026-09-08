@@ -62,6 +62,11 @@ export namespace GroupModel {
         roomOpenLeadMinutes: t.Number(),
         signupLeadMinutes: t.Number(),
 
+        /** Whether a linked Discord account is required to take a slot. */
+        requireDiscordForSignups: t.Boolean(),
+        /** Whether one is required to send a staff application. */
+        requireDiscordForApplications: t.Boolean(),
+
         /** The requesting user's permission level, 0-3. */
         permissionLevel: t.Number(),
         /**
@@ -129,7 +134,15 @@ export namespace GroupModel {
         showDispatch: t.Optional(t.Boolean()),
         roomOpenLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 120 })),
         /** Minutes before a shift that its sign-up sheets open. Up to 30 days. */
-        signupLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 43200 }))
+        signupLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 43200 })),
+        /**
+         * No `default` on either, deliberately. Elysia injects one into the
+         * parsed body, so a default on an optional field turns every PATCH
+         * into an edit of it — the shifts card saving a lead time would also
+         * switch a group's Discord requirement back off.
+         */
+        requireDiscordForSignups: t.Optional(t.Boolean()),
+        requireDiscordForApplications: t.Optional(t.Boolean())
     })
     export type updateGroupBody = typeof updateGroupBody.static
 

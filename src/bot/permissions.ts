@@ -79,6 +79,39 @@ export type DiscordMember = {
     user?: { id: string }
 }
 
+/**
+ * A Discord account, as `/users/@me` reports it.
+ *
+ * `global_name` is the display name Discord moved to when discriminators went
+ * away; `username` is the unique handle underneath it. Both are read because
+ * the one worth showing somebody is whichever they actually go by.
+ */
+export type DiscordUser = {
+    id: string
+    username: string
+    global_name?: string | null
+    discriminator?: string
+    avatar?: string | null
+}
+
+/**
+ * A Discord avatar as a URL, or null for an account still on a default one.
+ *
+ * The default avatars are served from a separate path and are derived from the
+ * account id rather than stored against it, so there is nothing to keep — a
+ * client showing initials in their place says the same thing without a
+ * request.
+ */
+export function avatarUrl(user: DiscordUser): string | null {
+    if (!user.avatar) return null
+    return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`
+}
+
+/** What to call somebody: their display name, falling back to the handle. */
+export function displayName(user: DiscordUser): string {
+    return user.global_name?.trim() || user.username
+}
+
 /** Channel types the bot can post into. 0 text, 5 announcement, 11/12 threads. */
 export const POSTABLE_CHANNEL_TYPES = new Set([0, 5, 11, 12])
 /** Category, so the picker can group channels under their parent. */

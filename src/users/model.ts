@@ -1,5 +1,6 @@
 import { t } from 'elysia'
 import { translationsResponse } from '../utils/translations'
+import { AuthModel } from '../auth/model'
 
 export namespace UserModel {
     /**
@@ -105,7 +106,16 @@ export namespace UserModel {
         profilePublic: t.Boolean(),
         favoriteRoutesPublic: t.Boolean(),
         dislikedRoutesPublic: t.Boolean(),
-        primaryGroupId: t.Union([t.String(), t.Null()])
+        primaryGroupId: t.Union([t.String(), t.Null()]),
+        /**
+         * The linked Discord account, or null.
+         *
+         * On preferences as well as on the session because the settings card
+         * is what links and unlinks one, and it reads this endpoint on mount
+         * — a session payload refreshed by a full navigation would leave the
+         * card a step behind the button that was just pressed.
+         */
+        discord: t.Union([AuthModel.DiscordAccount, t.Null()])
     })
     export type preferencesResponse = typeof preferencesResponse.static
 

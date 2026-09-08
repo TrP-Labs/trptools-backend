@@ -12,7 +12,7 @@ import { requireSiteAdmin } from '../utils/authPlugin'
 import { isBanned } from '../utils/moderation'
 import { Roblox } from '../utils/roblox'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
-import { Session } from '../auth/service'
+import { presentDiscord, Session } from '../auth/service'
 import { UserModel } from './model'
 import { presentTranslations } from '../utils/translations'
 
@@ -179,7 +179,11 @@ export abstract class UserService {
                 profilePublic: users.profilePublic,
                 favoriteRoutesPublic: users.favoriteRoutesPublic,
                 dislikedRoutesPublic: users.dislikedRoutesPublic,
-                primaryGroupId: users.primaryGroupId
+                primaryGroupId: users.primaryGroupId,
+                discordId: users.discordId,
+                discordUsername: users.discordUsername,
+                discordAvatar: users.discordAvatar,
+                discordLinkedAt: users.discordLinkedAt
             })
             .from(users)
             .where(eq(users.id, session.user.userId))
@@ -187,7 +191,12 @@ export abstract class UserService {
 
         if (!user) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        return user
+        const { discordId, discordUsername, discordAvatar, discordLinkedAt, ...preferences } = user
+
+        return {
+            ...preferences,
+            discord: presentDiscord({ discordId, discordUsername, discordAvatar, discordLinkedAt })
+        }
     }
 
     static async setPreferences(body: UserModel.preferencesBody, session: session) {
