@@ -1,12 +1,13 @@
 import { status } from 'elysia'
 import { and, eq } from 'drizzle-orm'
 import db from '../db'
-import { botConfigs, events, groups, shiftSignups, users } from '../db/schema'
+import { botConfigs, events, groups, shiftSignups } from '../db/schema'
 import { FRONTEND_URL } from '../utils/env'
 import { dataRedis } from '../utils/redis'
 import { activeOccurrence, occurrencesBetween, upcomingOccurrences } from '../utils/recurrence'
 import { publishSignupChange } from '../schedule/events'
 import { loadSheets, loadSignups, signupsOpen, signupsOpenAt, type LoadedSheet } from '../schedule/sheets'
+import { actorForDiscord, identityFor, ownsSignup } from '../schedule/identity'
 import { BotInternal } from './internalModel'
 import type { BotModel } from './model'
 import { ownerRobloxId } from './owner'
@@ -237,12 +238,16 @@ export abstract class BotService {
     /**
      * Takes, moves or releases a slot on behalf of a Discord user.
      *
-     * Selecting a slot you already hold releases it, and selecting a different
-     * one on the same sheet moves you — the legacy bot made people withdraw
-     * first, which was a needless round trip through an ephemeral reply.
+     * Selecting a slot you already hold releases it, and selecting any other
+     * one moves you — the legacy bot made people withdraw first, which was a
+     * needless round trip through an ephemeral reply. The move crosses sheets
+     * as well as slots, because one person holds one slot per shift: picking a
+     * maintenance slot while holding a dispatcher one used to add a second row
+     * rather than replace the first.
      *
      * A Discord account linked to a TrPTools user is recorded as that user, so
-     * the website and the sheet show one person rather than two.
+     * the website and the sheet show one person rather than two — and a slot
+     * that person took on the website is recognised here as already theirs.
      */
     static async signup(guildId: string, body: BotInternal.signupBody): Promise<BotInternal.signupResult> {
         const { group } = await requireGuild(guildId)
@@ -276,17 +281,8 @@ export abstract class BotService {
 
         if (!sheet || !slot) return { status: 'GONE', slotName: '', previousSlotName: null }
 
-        const [linked] = await db
-            .select({ id: users.id })
-            .from(users)
-            .where(eq(users.discordId, body.discordUserId))
-            .limit(1)
-
-        const identity = linked
-            ? { userId: linked.id, discordUserId: null, discordUsername: null }
-            : { userId: null, discordUserId: body.discordUserId, discordUsername: body.discordUsername }
-
-        const slotIds = sheet.slots.map((candidate) => candidate.id)
+        const actor = await actorForDiscord(body.discordUserId)
+        const identity = identityFor(actor, body.discordUsername)
 
         const existing = await db
             .select({
@@ -298,10 +294,10 @@ export abstract class BotService {
             .from(shiftSignups)
             .where(and(eq(shiftSignups.eventId, body.eventId), eq(shiftSignups.occurrence, occurrence)))
 
-        const isThem = (row: (typeof existing)[number]) =>
-            linked ? row.userId === linked.id : row.discordUserId === body.discordUserId
-
-        const held = existing.find((row) => isThem(row) && slotIds.includes(row.slotId))
+        // Whatever they hold on this occurrence, on any sheet — including one
+        // taken on the website, and one taken from Discord before they
+        // connected their account.
+        const held = existing.find((row) => ownsSignup(row, actor))
 
         // Selecting the slot they already hold gives it up.
         if (held?.slotId === body.slotId) {
@@ -316,7 +312,14 @@ export abstract class BotService {
             return { status: 'FULL', slotName: slot.name, previousSlotName: null }
         }
 
-        const previous = held ? (sheet.slots.find((candidate) => candidate.id === held.slotId)?.name ?? null) : null
+        // The sheet they are leaving, which is not always the one they are
+        // joining. Both messages have to be redrawn, or the old sheet keeps
+        // showing somebody who is no longer on it.
+        const from = held
+            ? sheets.find((candidate) => candidate.slots.some((s) => s.id === held.slotId))
+            : undefined
+        const previous = from?.slots.find((candidate) => candidate.id === held!.slotId)?.name ?? null
+
         if (held) await db.delete(shiftSignups).where(eq(shiftSignups.id, held.id))
 
         await db.insert(shiftSignups).values({
@@ -327,6 +330,9 @@ export abstract class BotService {
         })
 
         await publishSignupChange(group.id, body.eventId, occurrence, sheet.signupId)
+        if (from && from.signupId !== sheet.signupId) {
+            await publishSignupChange(group.id, body.eventId, occurrence, from.signupId)
+        }
 
         return {
             status: held ? 'MOVED' : 'TAKEN',

@@ -28,6 +28,15 @@ export namespace AuthModel {
     export const SessionUser = t.Object({
         userId: t.String(),
         robloxId: t.Number(),
+        /**
+         * When this account first signed in with Roblox.
+         *
+         * There is no separate "connected on" for the Roblox account, because
+         * signing in with it is what creates the account — so the row's own
+         * age is the date, and the settings card says so the same way the
+         * Discord card does.
+         */
+        createdAt: t.Date(),
         /** What the account is. `adminMode` says what it is currently doing. */
         siteRank: t.String(),
         /**
