@@ -31,6 +31,7 @@ import { generateSessionToken, hashToken } from '../utils/sessionVerifier'
 import { seedGroupDefaults, seedVehicleTypes } from '../groups/defaults'
 import { childSlug } from '../utils/slug'
 import { env } from '../utils/env'
+import { permissionsForLevel } from '../utils/permissions'
 
 if (env.isProduction) {
     console.error('Refusing to seed a production database.')
@@ -95,6 +96,7 @@ async function seed() {
                 cachedName: 'Owner',
                 cachedRank: 255,
                 permissionLevel: 3,
+                permissions: permissionsForLevel(3),
                 visible: true,
                 color: '#9b59b6',
                 description: 'Runs the group and holds every permission.'
@@ -105,6 +107,7 @@ async function seed() {
                 cachedName: 'Admin',
                 cachedRank: 254,
                 permissionLevel: 2,
+                permissions: permissionsForLevel(2),
                 visible: true,
                 color: '#4287f5',
                 description: 'Opens shifts and assigns routes during dispatch.'
@@ -115,6 +118,7 @@ async function seed() {
                 cachedName: 'Member',
                 cachedRank: 1,
                 permissionLevel: 1,
+                permissions: permissionsForLevel(1),
                 visible: true,
                 color: '#3fb950',
                 description: 'Drives assigned routes on shift.'

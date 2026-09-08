@@ -5,7 +5,8 @@ import db from '../db'
 import { events } from '../db/schema'
 import { dataRedis, deleteByPrefix } from '../utils/redis'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertPermission, GetPermissionLevel } from '../utils/groupPermission'
+import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
+import { has, PERM } from '../utils/permissions'
 import { activeOccurrence } from '../utils/recurrence'
 import { isElevated, type session, type SessionUser } from '../utils/sessionVerifier'
 import { findGroup } from '../groups/service'
@@ -55,7 +56,10 @@ export abstract class RoomControls {
         const [event] = await db.select().from(events).where(eq(events.eventId, body.eventId)).limit(1)
         if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, event.groupId, Math.max(event.hostLevel, PERMISSION.HOST))
+        // Two questions, and both have to hold: may this rank open rooms at
+        // all, and does this particular shift ask for more standing than the
+        // group's default (`events.hostLevel`).
+        await assertGroupPermission(session, event.groupId, PERM.START_ROOM, event.hostLevel)
 
         // The countdown on the dispatch page greys the button out until the
         // window opens; this is the same rule enforced where it counts.
@@ -105,7 +109,7 @@ export abstract class RoomControls {
         const group = await findGroup(groupIdOrSlug)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, group.id, PERMISSION.DISPATCH)
+        await assertGroupPermission(session, group.id, PERM.DISPATCH)
 
         const roomId = await dataRedis.get(groupIndexKey(group.id))
         if (!roomId) throw status(404, 'Not Found' satisfies globalModel.notFound)
@@ -117,7 +121,7 @@ export abstract class RoomControls {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
         const info = await requireRoom(roomId)
-        await assertPermission(session, info.groupId, PERMISSION.DISPATCH)
+        await assertGroupPermission(session, info.groupId, PERM.DISPATCH)
 
         const [dispatchers, vehicles] = await Promise.all([
             dataRedis.hgetall(roomUsersKey(roomId)),
@@ -144,7 +148,7 @@ export abstract class RoomControls {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
         const info = await requireRoom(roomId)
-        await assertPermission(session, info.groupId, PERMISSION.HOST)
+        await assertGroupPermission(session, info.groupId, PERM.START_ROOM)
 
         await Promise.all([
             dataRedis.del(groupIndexKey(info.groupId)),
@@ -162,8 +166,8 @@ export async function canDispatch(user: SessionUser, roomId: string): Promise<Ro
     if (!groupId) return null
 
     if (!isElevated(user)) {
-        const level = await GetPermissionLevel(user.userId, groupId)
-        if (level < PERMISSION.DISPATCH) return null
+        const membership = await GetMembership(user.userId, groupId)
+        if (!has(membership.permissions, PERM.DISPATCH)) return null
     }
 
     return requireRoom(roomId)

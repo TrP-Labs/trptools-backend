@@ -4,7 +4,8 @@ import db from '../db'
 import { botConfigs, rankRelations, rankSignups } from '../db/schema'
 import { env, FRONTEND_URL } from '../utils/env'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertPermission } from '../utils/groupPermission'
+import { assertGroupPermission } from '../utils/groupPermission'
+import { PERM } from '../utils/permissions'
 import { dataRedis } from '../utils/redis'
 import { generateSessionToken } from '../utils/sessionVerifier'
 import type { session } from '../utils/sessionVerifier'
@@ -96,11 +97,11 @@ async function guildStatus(guildId: string): Promise<BotModel.guildStatus> {
     }
 }
 
-async function requireConfig(groupIdOrSlug: string, session: session, level = PERMISSION.MANAGE) {
+async function requireConfig(groupIdOrSlug: string, session: session, grant = PERM.MANAGE_BOT) {
     const group = await findGroup(groupIdOrSlug)
     if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-    await assertPermission(session, group.id, level)
+    await assertGroupPermission(session, group.id, grant)
 
     const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, group.id)).limit(1)
     if (!config) throw status(404, 'no bot is connected to this group' satisfies BotModel.notConnected)
@@ -122,7 +123,7 @@ export abstract class Bot {
         const group = await findGroup(groupIdOrSlug)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_BOT)
 
         const state = generateSessionToken()
         await dataRedis.set(
@@ -206,7 +207,7 @@ export abstract class Bot {
         const group = await findGroup(groupIdOrSlug)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_BOT)
 
         const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, group.id)).limit(1)
 

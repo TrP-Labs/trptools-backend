@@ -108,6 +108,7 @@ export namespace ApplicationModel {
     export const listQuery = t.Object({ groupId: t.String() })
     export type listQuery = typeof listQuery.static
 
+
     export const createBody = t.Object({
         groupId: t.String(),
         name: t.String({ minLength: 1, maxLength: 100 }),
@@ -178,6 +179,41 @@ export namespace ApplicationModel {
         limit: t.Optional(t.String())
     })
     export type submissionsQuery = typeof submissionsQuery.static
+
+    export const pendingQuery = t.Object({
+        groupId: t.String(),
+        limit: t.Optional(t.String())
+    })
+    export type pendingQuery = typeof pendingQuery.static
+
+    /**
+     * Somebody waiting on a decision, with enough of the form attached to be
+     * read on its own.
+     *
+     * The group's overview shows who is waiting across every form at once, so
+     * a submission has to carry which form it came from — otherwise the page
+     * would need a second request per row to say what anybody applied *for*.
+     */
+    export const pendingApplicant = t.Object({
+        id: t.String(),
+        /** The form applied to, carried whole so a row reads on its own. */
+        application: t.Object({
+            id: t.String(),
+            name: t.String(),
+            /** Per-language versions of the form's name. */
+            translations: translationsResponse,
+            color: t.String(),
+            /** The rank the form answers for, where it is bound to one. */
+            rankName: t.Union([t.String(), t.Null()])
+        }),
+        submittedAt: t.Date(),
+        applicant
+    })
+    export type pendingApplicant = typeof pendingApplicant.static
+
+    export const pendingList = t.Array(pendingApplicant)
+    export type pendingList = typeof pendingList.static
+
 
     export const reviewBody = t.Object({
         decision: t.Union([t.Literal('APPROVE'), t.Literal('DENY')]),

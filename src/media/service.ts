@@ -3,7 +3,8 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import db from '../db'
 import { applications, depots, groups, media, routes, type Media } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertPermission } from '../utils/groupPermission'
+import { assertGroupPermission } from '../utils/groupPermission'
+import { PERM } from '../utils/permissions'
 import {
     ALLOWED_IMAGE_TYPES,
     MAX_UPLOAD_BYTES,
@@ -177,12 +178,32 @@ async function dropIcon(mediaId: string | null) {
     await deleteObject(row.key).catch(() => undefined)
 }
 
+/**
+ * The grant that owns an image, which is the grant that owns the thing it is
+ * attached to. A rank allowed to edit depots may change a depot's pictures;
+ * that is not a reason to let it repaint the group's banner.
+ */
+function ownerGrant(ownerType: MediaModel.ownerType): number {
+    switch (ownerType) {
+        case 'ROUTE':
+            return PERM.MANAGE_ROUTES
+        case 'DEPOT':
+            return PERM.MANAGE_DEPOTS
+        case 'APPLICATION':
+            return PERM.MANAGE_APPLICATIONS
+        case 'GROUP':
+            return PERM.MANAGE_GROUP
+    }
+}
+
 export abstract class MediaService {
     static async list(query: MediaModel.listQuery, session: session): Promise<MediaModel.list> {
         const group = await findGroup(query.groupId)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        // Listing everything the group holds is a group-level read; listing
+        // one owner's images is whatever that owner's grant is.
+        await assertGroupPermission(session, group.id, query.ownerType ? ownerGrant(query.ownerType) : PERM.MANAGE_GROUP)
 
         const filters = [eq(media.groupId, group.id)]
         if (query.ownerType) filters.push(eq(media.ownerType, query.ownerType))
@@ -207,7 +228,7 @@ export abstract class MediaService {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, ownerGrant(body.ownerType))
 
         if (body.file.size > MAX_UPLOAD_BYTES) {
             throw status(413, 'that file is not a supported image' satisfies MediaModel.notAnImage)
@@ -299,7 +320,7 @@ export abstract class MediaService {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, ownerGrant(body.ownerType))
 
         const owner = await resolveIconOwner(group.id, body.ownerType, body.ownerId)
 
@@ -348,7 +369,7 @@ export abstract class MediaService {
         const group = await findGroup(query.groupId)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, ownerGrant(query.ownerType))
 
         const owner = await resolveIconOwner(group.id, query.ownerType, query.ownerId)
 
@@ -364,7 +385,7 @@ export abstract class MediaService {
         const [row] = await db.select().from(media).where(eq(media.id, id)).limit(1)
         if (!row) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, row.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, row.groupId, ownerGrant(row.ownerType))
 
         const { translations, ...fields } = body
 
@@ -382,7 +403,7 @@ export abstract class MediaService {
         const [row] = await db.select().from(media).where(eq(media.id, id)).limit(1)
         if (!row) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, row.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, row.groupId, ownerGrant(row.ownerType))
 
         await db.delete(media).where(eq(media.id, id))
         await deleteObject(row.key)

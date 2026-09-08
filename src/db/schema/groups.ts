@@ -118,7 +118,23 @@ export const rankRelations = pgTable(
         cachedRank: integer('cached_rank').notNull(),
 
         // 0 = none, 1 = dispatch, 2 = host, 3 = manage
+        //
+        // Kept alongside `permissions` rather than replaced by it: this is
+        // what the group list filters on and what a dozen callers still
+        // compare, and re-deriving it per row in SQL would mean teaching
+        // Postgres the bit rules. It is written from `permissions` on every
+        // save, never edited on its own, so the two cannot disagree.
         permissionLevel: integer('permission_level').notNull().default(0),
+
+        /**
+         * What this rank may actually do, as a bitfield (`utils/permissions`).
+         *
+         * The four levels said what a rank *was*, so every dashboard surface
+         * had to be filed under one of them — which put the Discord bot, the
+         * route list and the group's Open Cloud key behind a single grant.
+         * These are the grants; the level above is the rung they land on.
+         */
+        permissions: integer('permissions').notNull().default(0),
 
         maxActivity: integer('max_activity'),
         minActivity: integer('min_activity')

@@ -6,8 +6,13 @@ import { globalModel, PERMISSION } from '../utils/globalModel'
 import { Roblox, type RobloxCredentials } from '../utils/roblox'
 import { resolveCredentials, userCredentials } from '../utils/robloxCredentials'
 import { encryptSecret } from '../utils/crypto'
-import { assertPermission, GetPermissionLevel, invalidateGroupPermissions } from '../utils/groupPermission'
-import { resolveMembership } from '../utils/membershipRule'
+import {
+    assertGroupPermission,
+    GetMembership,
+    invalidateGroupPermissions
+} from '../utils/groupPermission'
+import { PERM, permissionsForLevel } from '../utils/permissions'
+import { ELEVATED, NON_MEMBER, resolveMembership, type Membership } from '../utils/membershipRule'
 import { isUuid, isValidSlug, uniqueSlug } from '../utils/slug'
 import { preferredLocale } from '../utils/locales'
 import { presentTranslations, translationUpdate } from '../utils/translations'
@@ -53,7 +58,14 @@ export function groupName(group: Group): string {
     return group.name?.trim() || group.cachedName || `Group ${group.robloxId}`
 }
 
-function present(group: Group, permissionLevel: number): GroupModel.groupResponse {
+/**
+ * The group as one viewer reads it.
+ *
+ * `membership` rather than a bare level: every dashboard screen now decides
+ * what to draw from the grants, and a level alone cannot answer "may this
+ * person edit depots but not ranks".
+ */
+function present(group: Group, membership: Membership): GroupModel.groupResponse {
     return {
         id: group.id,
         slug: group.slug,
@@ -83,13 +95,14 @@ function present(group: Group, permissionLevel: number): GroupModel.groupRespons
         roomOpenLeadMinutes: group.roomOpenLeadMinutes,
         signupLeadMinutes: group.signupLeadMinutes,
 
-        permissionLevel,
+        permissionLevel: membership.permissionLevel,
+        permissions: membership.permissions,
         hasOpenCloudKey: Boolean(group.openCloudKey),
         moderation: group.moderation
     }
 }
 
-export function summarise(group: Group, permissionLevel: number): GroupModel.groupSummary {
+export function summarise(group: Group, membership: Membership): GroupModel.groupSummary {
     return {
         id: group.id,
         slug: group.slug,
@@ -102,7 +115,8 @@ export function summarise(group: Group, permissionLevel: number): GroupModel.gro
         translations: presentTranslations('GROUP', group.translations),
         accentColor: group.accentColor,
         visibility: group.visibility,
-        permissionLevel
+        permissionLevel: membership.permissionLevel,
+        permissions: membership.permissions
     }
 }
 
@@ -149,7 +163,7 @@ export abstract class Group_ {
         // difference is most obvious.
         if (isSiteAdmin(session)) {
             const all = await db.select().from(groups).orderBy(asc(groups.cachedName))
-            return all.map((entry) => summarise(entry, PERMISSION.MANAGE))
+            return all.map((entry) => summarise(entry, ELEVATED))
         }
 
         const memberships = await Roblox.getUserGroups(session.user.robloxId)
@@ -158,14 +172,21 @@ export abstract class Group_ {
         const roleIds = memberships.map((membership) => membership.role.id)
 
         const rows = await db
-            .select({ group: groups, permissionLevel: rankRelations.permissionLevel })
+            .select({
+                group: groups,
+                permissions: rankRelations.permissions,
+                cachedRank: rankRelations.cachedRank
+            })
             .from(rankRelations)
             .innerJoin(groups, eq(rankRelations.groupId, groups.id))
             .where(inArray(rankRelations.robloxId, roleIds))
 
-        const visible = rows.filter((row) => row.permissionLevel >= PERMISSION.DISPATCH)
-
-        return visible.map((row) => summarise(row.group, row.permissionLevel))
+        // Through the same rule as every per-group check, so the owner pin and
+        // the grant-to-level mapping cannot exist in two places and drift.
+        return rows
+            .map((row) => ({ group: row.group, membership: resolveMembership(row, undefined) }))
+            .filter((row) => row.membership.permissionLevel >= PERMISSION.DISPATCH)
+            .map((row) => summarise(row.group, row.membership))
     }
 
     /**
@@ -188,7 +209,7 @@ export abstract class Group_ {
         // an elevated admin operates the instance.
         if (isSiteAdmin(session)) {
             const all = await db.select().from(groups).orderBy(asc(groups.cachedName))
-            return all.map((entry) => summarise(entry, PERMISSION.MANAGE))
+            return all.map((entry) => summarise(entry, ELEVATED))
         }
 
         const memberships = await Roblox.getUserGroups(session.user.robloxId)
@@ -207,7 +228,7 @@ export abstract class Group_ {
         const relations = await db
             .select({
                 groupId: rankRelations.groupId,
-                permissionLevel: rankRelations.permissionLevel,
+                permissions: rankRelations.permissions,
                 cachedRank: rankRelations.cachedRank
             })
             .from(rankRelations)
@@ -229,11 +250,7 @@ export abstract class Group_ {
         // Through the same rule `GetMembership` uses, so this list and every
         // per-group check agree about the owner pin and about an unbound role.
         return rows.map((group) =>
-            summarise(
-                group,
-                resolveMembership(bound.get(group.id), byRobloxId.get(group.robloxId)?.role.rank)
-                    .permissionLevel
-            )
+            summarise(group, resolveMembership(bound.get(group.id), byRobloxId.get(group.robloxId)?.role.rank))
         )
     }
 
@@ -313,6 +330,7 @@ export abstract class Group_ {
             color: '#9b59b6',
             visible: true,
             permissionLevel: PERMISSION.MANAGE,
+            permissions: permissionsForLevel(PERMISSION.MANAGE),
             cachedName: ownerRole.name,
             cachedRank: ownerRole.rank
         })
@@ -331,15 +349,14 @@ export abstract class Group_ {
 
         // An elevated site admin operates the instance, so they always report
         // full access here — matching the bypass `assertPermission` applies.
-        const permissionLevel =
-            isSiteAdmin(session)
-                ? PERMISSION.MANAGE
-                : session.user
-                  ? await GetPermissionLevel(session.user.userId, group.id)
-                  : PERMISSION.NONE
+        const membership = isSiteAdmin(session)
+            ? ELEVATED
+            : session.user
+              ? await GetMembership(session.user.userId, group.id)
+              : NON_MEMBER
 
         // A private group is only visible to people who hold a rank in it.
-        if (group.visibility === 'PRIVATE' && permissionLevel < PERMISSION.DISPATCH) {
+        if (group.visibility === 'PRIVATE' && membership.permissionLevel < PERMISSION.DISPATCH) {
             if (!isSiteAdmin(session)) {
                 throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
             }
@@ -348,11 +365,38 @@ export abstract class Group_ {
         const credentials = await resolveCredentials(group.id, session.user?.userId)
         const fresh = await withFreshCache(group, credentials)
 
-        return present(fresh, permissionLevel)
+        return present(fresh, membership)
     }
 
+    /**
+     * Saves group settings, checking each part of the form against the grant
+     * that owns it.
+     *
+     * One endpoint, three grants: who can see the group is not the same
+     * decision as what it is called, and neither is how early its rooms open.
+     * The settings page draws those as separate sections and a rank can hold
+     * any one of them, so the check is per field rather than per request —
+     * otherwise the narrowest grant would have to be the one that opens the
+     * whole form.
+     */
     static async updateGroup(groupId: string, body: GroupModel.updateGroupBody, session: session) {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        const touches = (...keys: (keyof GroupModel.updateGroupBody)[]) =>
+            keys.some((key) => body[key] !== undefined)
+
+        if (touches('visibility', 'showRoutes', 'showShifts', 'showRoster', 'showDispatch')) {
+            await assertGroupPermission(session, groupId, PERM.MANAGE_VISIBILITY)
+        }
+
+        if (touches('roomOpenLeadMinutes', 'signupLeadMinutes')) {
+            await assertGroupPermission(session, groupId, PERM.MANAGE_SHIFTS)
+        }
+
+        if (touches('slug', 'name', 'tagline', 'about', 'sourceLocale', 'translations', 'accentColor')) {
+            await assertGroupPermission(session, groupId, PERM.MANAGE_GROUP)
+        }
+
+        // An empty patch still has to prove the caller belongs here at all.
+        await assertGroupPermission(session, groupId, PERM.VIEW_DASHBOARD)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -395,7 +439,7 @@ export abstract class Group_ {
      * game's own vehicles rather than empty.
      */
     static async getVehicleTypes(groupId: string, session: session): Promise<GroupModel.vehicleTypeList> {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, groupId, PERM.MANAGE_VEHICLES)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -419,7 +463,7 @@ export abstract class Group_ {
      * half-apply. Order is the order given, which is the order the table shows.
      */
     static async setVehicleTypes(groupId: string, body: GroupModel.updateVehicleTypesBody, session: session) {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, groupId, PERM.MANAGE_VEHICLES)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -458,7 +502,7 @@ export abstract class Group_ {
      * every permission check down to the slower fallback tiers.
      */
     static async setOpenCloudKey(groupId: string, body: GroupModel.openCloudKeyBody, session: session) {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, groupId, PERM.MANAGE_OPEN_CLOUD)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -515,7 +559,7 @@ export abstract class Group_ {
         const group = await findGroup(groupIdOrSlug)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, PERM.VIEW_AUDIT_LOG)
 
         const rows = await db
             .select({
@@ -553,7 +597,7 @@ export abstract class Group_ {
     }
 
     static async deleteGroup(groupId: string, session: session) {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, groupId, PERM.ADMINISTRATOR)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
