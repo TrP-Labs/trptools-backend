@@ -6,7 +6,8 @@ import { globalRoutePreferences, groups, routePreferences, routes, users } from 
 import { BUILT_IN_ROUTES } from '../groups/defaults'
 import { mediaUrls } from '../media/service'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertPermission } from '../utils/groupPermission'
+import { assertGroupPermission } from '../utils/groupPermission'
+import { PERM } from '../utils/permissions'
 import { requireSiteAdmin } from '../utils/authPlugin'
 import { isBanned } from '../utils/moderation'
 import { Roblox } from '../utils/roblox'
@@ -207,7 +208,7 @@ export abstract class UserService {
         // group you cannot open is a broken link on your own dashboard, so the
         // pin is checked against the same permission the link leads to.
         if (body.primaryGroupId) {
-            await assertPermission(session, body.primaryGroupId, PERMISSION.DISPATCH)
+            await assertGroupPermission(session, body.primaryGroupId, PERM.VIEW_DASHBOARD)
         }
 
         if (Object.keys(body).length > 0) {

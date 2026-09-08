@@ -6,6 +6,7 @@ import { Roblox } from './roblox'
 import { resolveCredentials } from './robloxCredentials'
 import { dataRedis } from './redis'
 import { NON_MEMBER, resolveMembership, type Membership } from './membershipRule'
+import { has, permissionsForLevel } from './permissions'
 import { isUuid } from './slug'
 import { isSiteAdmin, type session } from './sessionVerifier'
 
@@ -47,11 +48,24 @@ async function resolveGroupId(idOrSlug: string): Promise<string | null> {
     return group?.id ?? null
 }
 
-const encode = (membership: Membership) => `${membership.permissionLevel}:${membership.robloxRank}`
+const encode = (membership: Membership) =>
+    `${membership.permissionLevel}:${membership.robloxRank}:${membership.permissions}`
 
+/**
+ * Reads an entry back.
+ *
+ * Entries written before ranks carried granular grants have two fields rather
+ * than three. They are a minute from expiring in the worst case, but a missing
+ * third field would otherwise decode as `NaN` grants and refuse the holder
+ * everything, so the level they *do* carry stands in.
+ */
 function decode(value: string): Membership {
-    const [level, rank] = value.split(':')
-    return { permissionLevel: Number(level), robloxRank: Number(rank) }
+    const [level, rank, permissions] = value.split(':')
+    return {
+        permissionLevel: Number(level),
+        robloxRank: Number(rank),
+        permissions: permissions === undefined ? permissionsForLevel(Number(level)) : Number(permissions)
+    }
 }
 
 /**
@@ -159,7 +173,7 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
  */
 async function resolveRole(groupID: string, roleId: string, reportedRank: number): Promise<Membership> {
     const [relation] = await db
-        .select({ permissionLevel: rankRelations.permissionLevel, cachedRank: rankRelations.cachedRank })
+        .select({ permissions: rankRelations.permissions, cachedRank: rankRelations.cachedRank })
         .from(rankRelations)
         .where(and(eq(rankRelations.groupId, groupID), eq(rankRelations.robloxId, roleId)))
         .limit(1)
@@ -186,6 +200,56 @@ export async function assertPermission(session: session, groupIdOrSlug: string, 
     if (!session.user) throw status(401, 'Unauthorized')
     if (isSiteAdmin(session)) return
     if (!(await UserHasRank(session.user.userId, groupIdOrSlug, level))) throw status(403, 'Forbidden')
+}
+
+/** Whether the session holds one granular grant in the group. */
+export async function hasGroupPermission(session: session, groupIdOrSlug: string, flag: number): Promise<boolean> {
+    if (!session.user) return false
+    if (isSiteAdmin(session)) return true
+
+    const membership = await GetMembership(session.user.userId, groupIdOrSlug)
+    return has(membership.permissions, flag)
+}
+
+/**
+ * Throws 401/403 unless the session holds at least one of several grants.
+ *
+ * For surfaces two different grants can open — an application form is read by
+ * whoever builds it *and* by whoever reviews its queue — where insisting on
+ * one would shut out a rank that legitimately holds the other.
+ */
+export async function assertAnyGroupPermission(session: session, groupIdOrSlug: string, flags: number[]) {
+    if (!session.user) throw status(401, 'Unauthorized')
+    if (isSiteAdmin(session)) return
+
+    const membership = await GetMembership(session.user.userId, groupIdOrSlug)
+    if (!flags.some((flag) => has(membership.permissions, flag))) throw status(403, 'Forbidden')
+}
+
+/**
+ * Throws 401/403 unless the session holds a specific grant in the group.
+ *
+ * This is what the dashboard's write paths ask, rather than a rung of the
+ * ladder: "may edit routes" and "may configure the bot" were the same question
+ * while both meant level 3, and a group had no way to separate them.
+ *
+ * A second `level` may be given where a feature has its own floor on top of
+ * the grant — a shift can insist its host holds more than the group's default
+ * (`events.hostLevel`) — and both must hold.
+ */
+export async function assertGroupPermission(
+    session: session,
+    groupIdOrSlug: string,
+    flag: number,
+    level?: number
+) {
+    if (!session.user) throw status(401, 'Unauthorized')
+    if (isSiteAdmin(session)) return
+
+    const membership = await GetMembership(session.user.userId, groupIdOrSlug)
+
+    if (!has(membership.permissions, flag)) throw status(403, 'Forbidden')
+    if (level !== undefined && membership.permissionLevel < level) throw status(403, 'Forbidden')
 }
 
 /**

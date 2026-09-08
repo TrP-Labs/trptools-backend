@@ -88,6 +88,8 @@ export namespace DashboardModel {
         accentColor: t.String(),
         visibility: globalModel.visibility,
         permissionLevel: t.Number(),
+        /** The viewer's granular grants, which decide the links on the card. */
+        permissions: t.Number(),
 
         /** The dispatch room open for this group right now, if there is one. */
         roomId: t.Union([t.String(), t.Null()]),

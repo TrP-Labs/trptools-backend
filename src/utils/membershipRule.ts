@@ -1,4 +1,5 @@
 import { PERMISSION } from './globalModel'
+import { ALL_PERMISSIONS, levelForPermissions } from './permissions'
 
 /**
  * What a Roblox role grants in a group.
@@ -6,7 +7,7 @@ import { PERMISSION } from './globalModel'
  * Split out from `groupPermission.ts` for the reason `assign.ts` is split from
  * `solver.ts` (§7): that file imports `db`, which imports `env.ts`, which
  * exits when the environment is not set — so nothing importing it can be
- * tested in CI. This imports one constant and nothing else.
+ * tested in CI. This imports two pure modules and nothing else.
  *
  * It also stopped being one rule in one place. `Group_.getMemberGroups` has to
  * answer the same question in bulk, over a join rather than a lookup, and a
@@ -16,9 +17,24 @@ import { PERMISSION } from './globalModel'
 export type Membership = {
     permissionLevel: number
     robloxRank: number
+    /** The rank's granular grants. See `utils/permissions`. */
+    permissions: number
 }
 
-export const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
+export const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, robloxRank: -1, permissions: 0 }
+
+/**
+ * What a site admin running with admin mode on holds in every group (§5.1).
+ *
+ * Named here rather than written out wherever the bypass applies, because a
+ * bypass that reports a *different* shape from the one `GetMembership` returns
+ * is how the `canDispatch` and `getGroup` misses happened.
+ */
+export const ELEVATED: Membership = {
+    permissionLevel: PERMISSION.MANAGE,
+    robloxRank: 255,
+    permissions: ALL_PERMISSIONS
+}
 
 /**
  * Resolves a role against the group's binding for it.
@@ -32,17 +48,22 @@ export const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, roblox
  * rather than only where ranks are edited. A group whose owner row drifted
  * below manage could not be repaired through the API at all, because editing
  * rank 255 deliberately drops any permission change.
+ *
+ * The level is *derived* from the grants rather than read from the row beside
+ * them. The column is written from the same rule on every save, but deriving
+ * it here means a row that somehow disagrees — a hand-edited database, a
+ * half-applied migration — cannot hand somebody a level their grants do not
+ * back.
  */
 export function resolveMembership(
-    relation: { permissionLevel: number; cachedRank: number } | undefined,
+    relation: { permissions: number; cachedRank: number } | undefined,
     reportedRank: number | undefined
 ): Membership {
     const robloxRank = relation?.cachedRank ?? reportedRank ?? -1
 
-    const permissionLevel =
-        robloxRank >= 255 ? PERMISSION.MANAGE : (relation?.permissionLevel ?? PERMISSION.NONE)
+    const permissions = robloxRank >= 255 ? ALL_PERMISSIONS : (relation?.permissions ?? 0)
 
-    return { permissionLevel, robloxRank }
+    return { permissionLevel: levelForPermissions(permissions), robloxRank, permissions }
 }
 
 /**

@@ -24,6 +24,11 @@ export namespace RankModel {
         visible: t.Boolean(),
 
         permissionLevel: t.Number(),
+        /**
+         * What this rank may actually do, as a bitfield. The level above is
+         * the rung these land on. See `utils/permissions.ts`.
+         */
+        permissions: t.Number(),
 
         maxActivity: t.Union([t.Number(), t.Null()]),
         minActivity: t.Union([t.Number(), t.Null()])
@@ -37,7 +42,13 @@ export namespace RankModel {
         color: t.Optional(globalModel.hexColor),
         description: t.Optional(t.String({ maxLength: 300 })),
         visible: t.Optional(t.Boolean()),
+        /**
+         * A preset off the old ladder. Sending one replaces the grants below
+         * wholesale, which is what the editor's preset buttons do.
+         */
         permissionLevel: t.Optional(t.Integer({ minimum: 0, maximum: 3 })),
+        /** The rank's grants as a bitfield. Unknown bits are dropped. */
+        permissions: t.Optional(t.Integer({ minimum: 0, maximum: 2147483647 })),
         maxActivity: t.Optional(t.Union([t.Integer({ minimum: 0 }), t.Null()])),
         minActivity: t.Optional(t.Union([t.Integer({ minimum: 0 }), t.Null()])),
         /** Re-reads the role name and rank from Roblox. */

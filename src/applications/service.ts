@@ -13,7 +13,8 @@ import {
     type ApplicationQuestion
 } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { GetMembership, assertPermission } from '../utils/groupPermission'
+import { GetMembership, assertAnyGroupPermission, assertGroupPermission } from '../utils/groupPermission'
+import { PERM } from '../utils/permissions'
 import { requireUser } from '../utils/authPlugin'
 import { childSlug, uniqueWithin } from '../utils/slug'
 import { mediaUrls } from '../media/service'
@@ -148,15 +149,28 @@ function present(
     }
 }
 
-/** The form behind an id, with the group's permission check already applied. */
-async function findManageable(applicationId: string, session: session): Promise<Application> {
+/**
+ * The form behind an id, with the group's permission check already applied.
+ *
+ * Building forms and deciding on applicants are separate grants, so the caller
+ * says which it is doing. Reading a form is either — the reviewer needs the
+ * questions to make sense of the answers.
+ */
+async function findManageable(
+    applicationId: string,
+    session: session,
+    grants: number[] = [PERM.MANAGE_APPLICATIONS]
+): Promise<Application> {
     const [row] = await db.select().from(applications).where(eq(applications.id, applicationId)).limit(1)
     if (!row) throw status(404, 'that application does not exist' satisfies ApplicationModel.applicationInvalid)
 
-    await assertPermission(session, row.groupId, PERMISSION.MANAGE)
+    await assertAnyGroupPermission(session, row.groupId, grants)
 
     return row
 }
+
+/** Grants that open a form for reading: whoever builds it, or reviews it. */
+const READ_GRANTS = [PERM.MANAGE_APPLICATIONS, PERM.REVIEW_APPLICATIONS]
 
 /**
  * A rank binding this group actually owns.
@@ -243,7 +257,7 @@ async function findReviewable(submissionId: string, session: session) {
 
     if (!row) throw status(404, 'that application does not exist' satisfies ApplicationModel.applicationInvalid)
 
-    await assertPermission(session, row.groupId, PERMISSION.MANAGE)
+    await assertGroupPermission(session, row.groupId, PERM.REVIEW_APPLICATIONS)
 
     return row
 }
@@ -297,7 +311,7 @@ export abstract class Applications {
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertAnyGroupPermission(session, group.id, READ_GRANTS)
 
         const rows = await db
             .select()
@@ -324,8 +338,67 @@ export abstract class Applications {
         return rows.map((row) => present(row, ranks, counts, questionCounts.get(row.id) ?? 0))
     }
 
+    /**
+     * Everybody waiting on a decision, across every form the group has.
+     *
+     * One query rather than a request per form: the group's overview shows
+     * who has applied and it is the first thing a manager opens, so it must
+     * not fan out over however many forms a group happens to run.
+     */
+    static async pending(
+        query: ApplicationModel.pendingQuery,
+        session: session
+    ): Promise<ApplicationModel.pendingList> {
+        const group = await findGroup(query.groupId)
+        if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
+
+        await assertGroupPermission(session, group.id, PERM.REVIEW_APPLICATIONS)
+
+        const limit = Math.min(Math.max(Number(query.limit ?? 8) || 8, 1), 50)
+
+        const rows = await db
+            .select({
+                id: applicationSubmissions.id,
+                applicationId: applications.id,
+                applicationName: applications.name,
+                applicationTranslations: applications.translations,
+                color: applications.color,
+                rankName: rankRelations.cachedName,
+                submittedAt: applicationSubmissions.submittedAt,
+                ...applicantColumns
+            })
+            .from(applicationSubmissions)
+            .innerJoin(applications, eq(applicationSubmissions.applicationId, applications.id))
+            .innerJoin(users, eq(applicationSubmissions.userId, users.id))
+            .leftJoin(rankRelations, eq(applications.rankId, rankRelations.id))
+            .where(and(eq(applications.groupId, group.id), eq(applicationSubmissions.status, 'PENDING')))
+            // Whoever has been waiting longest is who a reviewer should reach
+            // next, which is the same order the queue itself uses.
+            .orderBy(asc(applicationSubmissions.submittedAt))
+            .limit(limit)
+
+        return rows.map((row) => ({
+            id: row.id,
+            application: {
+                id: row.applicationId,
+                name: row.applicationName,
+                translations: presentTranslations('APPLICATION', row.applicationTranslations),
+                color: row.color,
+                rankName: row.rankName
+            },
+            submittedAt: row.submittedAt,
+            applicant: {
+                userId: row.userId,
+                robloxId: row.robloxId,
+                username: row.username,
+                displayName: row.displayName,
+                avatar: row.avatar
+            }
+        }))
+    }
+
     static async get(applicationId: string, session: session): Promise<ApplicationModel.applicationDetail> {
-        const row = await findManageable(applicationId, session)
+        const row = await findManageable(applicationId, session, READ_GRANTS)
 
         const [ranks, counts, questions] = await Promise.all([
             loadRanks([row.rankId]),
@@ -345,7 +418,7 @@ export abstract class Applications {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_APPLICATIONS)
 
         if (body.rankId) await assertOwnRank(group.id, body.rankId)
 
@@ -513,7 +586,7 @@ export abstract class Applications {
         query: ApplicationModel.submissionsQuery,
         session: session
     ): Promise<ApplicationModel.submissionList> {
-        const row = await findManageable(applicationId, session)
+        const row = await findManageable(applicationId, session, [PERM.REVIEW_APPLICATIONS])
 
         const limit = Math.min(Math.max(Number(query.limit ?? 100) || 100, 1), 200)
 
@@ -594,7 +667,7 @@ export abstract class Applications {
 
         if (!row) throw status(404, 'that application does not exist' satisfies ApplicationModel.applicationInvalid)
 
-        await assertPermission(session, row.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, row.groupId, PERM.REVIEW_APPLICATIONS)
 
         const [answers, reviewers] = await Promise.all([
             db
@@ -665,7 +738,7 @@ export abstract class Applications {
 
         if (!row) throw status(404, 'that application does not exist' satisfies ApplicationModel.applicationInvalid)
 
-        await assertPermission(session, row.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, row.groupId, PERM.REVIEW_APPLICATIONS)
 
         if (row.statusValue !== 'PENDING') {
             throw status(409, 'this application has already been decided' satisfies ApplicationModel.decided)

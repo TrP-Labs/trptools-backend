@@ -3,8 +3,9 @@ import { and, asc, eq } from 'drizzle-orm'
 import db from '../db'
 import { events, rankSignupSlots, shiftSignups, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertPermission, GetMembership } from '../utils/groupPermission'
-import { isGroupMember } from '../utils/membershipRule'
+import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
+import { PERM } from '../utils/permissions'
+import { isGroupMember, NON_MEMBER } from '../utils/membershipRule'
 import { describeRule, isValidRule, occurrencesBetween } from '../utils/recurrence'
 import { childSlug, uniqueWithin } from '../utils/slug'
 import { presentTranslations, translationUpdate } from '../utils/translations'
@@ -51,7 +52,7 @@ async function assertCanRead(groupIdOrSlug: string, session: session) {
 
     const membership = session.user
         ? await GetMembership(session.user.userId, group.id)
-        : { permissionLevel: PERMISSION.NONE, robloxRank: -1 }
+        : NON_MEMBER
 
     const isMember = isGroupMember(membership) || isSiteAdmin(session)
 
@@ -172,7 +173,7 @@ export abstract class Schedule {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_SHIFTS)
 
         if (!isValidRule(body.rrule)) {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
@@ -201,7 +202,7 @@ export abstract class Schedule {
         const [event] = await db.select().from(events).where(eq(events.eventId, eventId)).limit(1)
         if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, event.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, event.groupId, PERM.MANAGE_SHIFTS)
 
         if (body.rrule !== undefined && !isValidRule(body.rrule)) {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
@@ -232,7 +233,7 @@ export abstract class Schedule {
         const [event] = await db.select().from(events).where(eq(events.eventId, eventId)).limit(1)
         if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, event.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, event.groupId, PERM.MANAGE_SHIFTS)
 
         await db.delete(events).where(eq(events.eventId, eventId))
 

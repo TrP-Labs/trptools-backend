@@ -64,6 +64,14 @@ export namespace GroupModel {
 
         /** The requesting user's permission level, 0-3. */
         permissionLevel: t.Number(),
+        /**
+         * The requesting user's granular grants as a bitfield.
+         *
+         * The dashboard decides what to draw from these — the level above is
+         * the rung they land on, kept for everything that still compares one.
+         * See `utils/permissions.ts` for the flags.
+         */
+        permissions: t.Number(),
         hasOpenCloudKey: t.Boolean(),
         moderation: t.Union([t.Literal('VISIBLE'), t.Literal('HIDDEN'), t.Literal('APPROVED')])
     })
@@ -82,7 +90,9 @@ export namespace GroupModel {
         translations: translationsResponse,
         accentColor: t.String(),
         visibility: globalModel.visibility,
-        permissionLevel: t.Number()
+        permissionLevel: t.Number(),
+        /** The requesting user's granular grants. See `utils/permissions.ts`. */
+        permissions: t.Number()
     })
     export type groupSummary = typeof groupSummary.static
 

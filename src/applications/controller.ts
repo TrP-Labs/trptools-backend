@@ -33,6 +33,22 @@ export const applicationRoutes = new Elysia({ prefix: '/applications', tags: ['A
         detail: { summary: 'Create an application form' }
     })
 
+    .get('/pending', async ({ query, session }) => Applications.pending(query, session), {
+        query: ApplicationModel.pendingQuery,
+        response: {
+            200: ApplicationModel.pendingList,
+            401: globalModel.unauthorized,
+            403: globalModel.forbidden,
+            404: GroupModel.groupInvalid
+        },
+        detail: {
+            summary: 'List everybody waiting on a decision in a group',
+            description:
+                'Across every form the group runs, oldest first. What the group\'s overview shows, ' +
+                'so it does not have to ask per form.'
+        }
+    })
+
     // Read before the parameterised group, so `/submissions/:id` is not taken
     // for an application id.
     .get('/submissions/:submissionId', async ({ params: { submissionId }, session }) => Applications.submission(submissionId, session), {

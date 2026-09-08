@@ -2,7 +2,8 @@ import { status } from 'elysia'
 import { and, count, eq, inArray } from 'drizzle-orm'
 import db from '../db'
 import { applications, applicationSubmissions, users } from '../db/schema'
-import { globalModel, PERMISSION } from '../utils/globalModel'
+import { globalModel } from '../utils/globalModel'
+import { has, PERM } from '../utils/permissions'
 import { dataRedis } from '../utils/redis'
 import type { session } from '../utils/sessionVerifier'
 import { Group_ } from '../groups/service'
@@ -117,7 +118,9 @@ export abstract class Dashboard {
         const from = new Date()
         const to = new Date(from.getTime() + HORIZON_DAYS * 24 * 60 * 60 * 1000)
 
-        const manageable = groups.filter((group) => group.permissionLevel >= PERMISSION.MANAGE)
+        // Whoever may decide on applicants, which is no longer the same set
+        // as whoever manages the group.
+        const manageable = groups.filter((group) => has(group.permissions, PERM.REVIEW_APPLICATIONS))
 
         const [schedules, rooms, reviews] = await Promise.all([
             Promise.all(

@@ -3,7 +3,8 @@ import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import db from '../../db'
 import { depots, media, routeDepots, routes, type Depot, type Route } from '../../db/schema'
 import { globalModel, PERMISSION } from '../../utils/globalModel'
-import { assertPermission, GetPermissionLevel } from '../../utils/groupPermission'
+import { assertGroupPermission, GetPermissionLevel } from '../../utils/groupPermission'
+import { PERM } from '../../utils/permissions'
 import { childSlug, uniqueWithin } from '../../utils/slug'
 import { presentTranslations, translationUpdate } from '../../utils/translations'
 import { mediaForOwners, mediaUrls } from '../../media/service'
@@ -194,7 +195,7 @@ export abstract class Route_ {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_ROUTES)
 
         const clash = await db
             .select({ id: routes.id })
@@ -232,7 +233,7 @@ export abstract class Route_ {
         const [route] = await db.select().from(routes).where(eq(routes.id, routeId)).limit(1)
         if (!route) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, route.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, route.groupId, PERM.MANAGE_ROUTES)
 
         const patch = { ...body }
 
@@ -292,7 +293,7 @@ export abstract class Route_ {
         const [route] = await db.select().from(routes).where(eq(routes.id, routeId)).limit(1)
         if (!route) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, route.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, route.groupId, PERM.MANAGE_ROUTES)
 
         if (route.builtIn) {
             throw status(
@@ -356,7 +357,7 @@ export abstract class Depot_ {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
-        await assertPermission(session, group.id, PERMISSION.MANAGE)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_DEPOTS)
 
         const clash = await db
             .select({ id: depots.id })
@@ -391,7 +392,7 @@ export abstract class Depot_ {
         const [depot] = await db.select().from(depots).where(eq(depots.id, depotId)).limit(1)
         if (!depot) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, depot.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, depot.groupId, PERM.MANAGE_DEPOTS)
 
         if (body.number !== undefined && body.number !== depot.number) {
             const clash = await db
@@ -445,7 +446,7 @@ export abstract class Depot_ {
         const [depot] = await db.select().from(depots).where(eq(depots.id, depotId)).limit(1)
         if (!depot) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertPermission(session, depot.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, depot.groupId, PERM.MANAGE_DEPOTS)
 
         await db.delete(depots).where(eq(depots.id, depotId))
 

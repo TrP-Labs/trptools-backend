@@ -7,6 +7,7 @@ import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import type { ScheduleModel } from './model'
 import type { Translations } from '../db/schema/translations'
 import { presentTranslations } from '../utils/translations'
+import { has, PERM } from '../utils/permissions'
 
 /** A rank's sign-up sheet with its slots, before any occurrence is applied. */
 export type LoadedSheet = {
@@ -96,13 +97,13 @@ export async function loadSheets(groupId: string): Promise<LoadedSheet[]> {
  * rather than the coarse TrPTools permission level. A driver never sees the
  * dispatcher sheet.
  *
- * Managers and site admins see every sheet regardless — they are the people
- * who configure them, and a manager who happens to hold a low Roblox rank
- * still has to be able to staff a shift.
+ * Whoever keeps the timetable sees every sheet regardless — they are the
+ * people who configure them, and somebody who happens to hold a low Roblox
+ * rank still has to be able to staff a shift. Site admins likewise.
  */
 export function canUseSheet(sheet: LoadedSheet, membership: Membership, session: session): boolean {
     if (isSiteAdmin(session)) return true
-    if (membership.permissionLevel >= PERMISSION.MANAGE) return true
+    if (has(membership.permissions, PERM.MANAGE_SHIFTS)) return true
     return membership.robloxRank >= sheet.robloxRank
 }
 

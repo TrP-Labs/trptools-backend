@@ -3,7 +3,19 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import db from '../../db'
 import { rankRelations, rankSignups, rankSignupSlots } from '../../db/schema'
 import { globalModel, PERMISSION } from '../../utils/globalModel'
-import UserHasRank, { assertPermission, invalidateGroupPermissions } from '../../utils/groupPermission'
+import UserHasRank, {
+    assertGroupPermission,
+    GetMembership,
+    invalidateGroupPermissions
+} from '../../utils/groupPermission'
+import {
+    ALL_PERMISSIONS,
+    capToOwnGrants,
+    levelForPermissions,
+    normalise,
+    permissionsForLevel,
+    PERM
+} from '../../utils/permissions'
 import { Roblox } from '../../utils/roblox'
 import { resolveCredentials } from '../../utils/robloxCredentials'
 import { isSiteAdmin, type session } from '../../utils/sessionVerifier'
@@ -91,9 +103,22 @@ async function replaceSignupSlots(signupId: string, slots: RankModel.signupSlotI
     }
 }
 
+/**
+ * What the person doing the editing holds, for the escalation check below.
+ *
+ * A site admin operating the instance (§5.1) is not bounded by a rank, so they
+ * hold everything.
+ */
+async function editorGrants(session: session, groupId: string): Promise<number> {
+    if (isSiteAdmin(session)) return ALL_PERMISSIONS
+    if (!session.user) return 0
+
+    return (await GetMembership(session.user.userId, groupId)).permissions
+}
+
 export abstract class Rank {
     static async getAllRanks(groupId: string, session: session): Promise<RankModel.rankListResponse> {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, groupId, PERM.MANAGE_RANKS)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -108,14 +133,19 @@ export abstract class Rank {
         // that disagrees is repaired here rather than left to show the wrong
         // level forever. Editing rank 255 deliberately drops any permission
         // change, so this is the only place such a row can be corrected.
-        const drifted = ranks.filter((rank) => rank.cachedRank >= 255 && rank.permissionLevel !== PERMISSION.MANAGE)
+        const drifted = ranks.filter(
+            (rank) =>
+                rank.cachedRank >= 255 &&
+                (rank.permissionLevel !== PERMISSION.MANAGE || rank.permissions !== ALL_PERMISSIONS)
+        )
 
         for (const rank of drifted) {
             await db
                 .update(rankRelations)
-                .set({ permissionLevel: PERMISSION.MANAGE })
+                .set({ permissionLevel: PERMISSION.MANAGE, permissions: ALL_PERMISSIONS })
                 .where(eq(rankRelations.id, rank.id))
             rank.permissionLevel = PERMISSION.MANAGE
+            rank.permissions = ALL_PERMISSIONS
         }
 
         if (drifted.length > 0) await invalidateGroupPermissions(group.id)
@@ -127,7 +157,7 @@ export abstract class Rank {
         const [rank] = await db.select().from(rankRelations).where(eq(rankRelations.id, rankId)).limit(1)
         if (!rank) throw status(404, 'rank does not exist' satisfies RankModel.rankInvalid)
 
-        await assertPermission(session, rank.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, rank.groupId, PERM.MANAGE_RANKS)
 
         return rank
     }
@@ -137,7 +167,7 @@ export abstract class Rank {
         robloxRoleId: string,
         session: session
     ): Promise<RankModel.createRankResponse> {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, groupId, PERM.MANAGE_RANKS)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -163,7 +193,8 @@ export abstract class Rank {
                 cachedRank: role.rank,
                 color: '#9b59b6',
                 visible: false,
-                permissionLevel: PERMISSION.NONE
+                permissionLevel: PERMISSION.NONE,
+                permissions: 0
             })
             .returning({ id: rankRelations.id })
 
@@ -179,17 +210,35 @@ export abstract class Rank {
         const [rank] = await db.select().from(rankRelations).where(eq(rankRelations.id, rankId)).limit(1)
         if (!rank) throw status(404, 'rank does not exist' satisfies RankModel.rankInvalid)
 
-        await assertPermission(session, rank.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, rank.groupId, PERM.MANAGE_RANKS)
 
-        const { refresh, ...patch } = modification
-
-        // The Roblox owner role always keeps full control. Without this, an
-        // administrator could demote the owner and lock everyone out.
-        if (rank.cachedRank === 255) {
-            delete (patch as { permissionLevel?: number }).permissionLevel
-        }
+        const { refresh, permissionLevel, permissions, ...patch } = modification
 
         const update: Record<string, unknown> = { ...patch }
+
+        // The Roblox owner role always keeps full control. Without this, an
+        // administrator could demote the owner and lock everyone out — and
+        // §5 records what that costs: the row could then only be repaired by
+        // a site admin, because the one edit that would fix it is dropped.
+        if (rank.cachedRank !== 255) {
+            // A preset replaces the grants wholesale; the granular list sends
+            // the grants themselves. Both write both columns, so the level and
+            // the bits beside it can never disagree about what a rank is.
+            const next =
+                permissions !== undefined
+                    ? normalise(permissions)
+                    : permissionLevel !== undefined
+                      ? permissionsForLevel(permissionLevel)
+                      : undefined
+
+            if (next !== undefined) {
+                const editor = await editorGrants(session, rank.groupId)
+                const granted = capToOwnGrants(next, rank.permissions, editor)
+
+                update.permissions = granted
+                update.permissionLevel = levelForPermissions(granted)
+            }
+        }
 
         if (refresh) {
             const group = await findGroup(rank.groupId)
@@ -217,7 +266,7 @@ export abstract class Rank {
         const [rank] = await db.select().from(rankRelations).where(eq(rankRelations.id, rankId)).limit(1)
         if (!rank) throw status(404, 'rank does not exist' satisfies RankModel.rankInvalid)
 
-        await assertPermission(session, rank.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, rank.groupId, PERM.MANAGE_RANKS)
 
         if (rank.cachedRank === 255) throw status(403, 'Forbidden' satisfies globalModel.forbidden)
 
@@ -302,7 +351,7 @@ export abstract class Rank {
         const [rank] = await db.select().from(rankRelations).where(eq(rankRelations.id, rankId)).limit(1)
         if (!rank) throw status(404, 'rank does not exist' satisfies RankModel.rankInvalid)
 
-        await assertPermission(session, rank.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, rank.groupId, PERM.MANAGE_RANKS)
 
         const { slots, translations, ...patch } = body
 
@@ -350,7 +399,7 @@ export abstract class Rank {
         const [rank] = await db.select().from(rankRelations).where(eq(rankRelations.id, rankId)).limit(1)
         if (!rank) throw status(404, 'rank does not exist' satisfies RankModel.rankInvalid)
 
-        await assertPermission(session, rank.groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, rank.groupId, PERM.MANAGE_RANKS)
 
         await db.delete(rankSignups).where(eq(rankSignups.rankId, rankId))
 
@@ -366,7 +415,7 @@ export abstract class Rank {
 
     /** Roblox roles in the group that are not bound on TrPTools yet. */
     static async getUnassignedRanks(groupId: string, session: session): Promise<RankModel.availableRanksResponse> {
-        await assertPermission(session, groupId, PERMISSION.MANAGE)
+        await assertGroupPermission(session, groupId, PERM.MANAGE_RANKS)
 
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
