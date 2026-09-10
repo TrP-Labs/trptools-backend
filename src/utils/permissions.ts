@@ -52,7 +52,38 @@ export const PERM = {
     VIEW_AUDIT_LOG: 1 << 14,
 
     /** Everything, including anything added later. */
-    ADMINISTRATOR: 1 << 15
+    ADMINISTRATOR: 1 << 15,
+
+    /**
+     * Build sign-up sheets: their slots, their rank lists and where the bot
+     * posts them.
+     *
+     * Separate from `MANAGE_SHIFTS` because they are separate jobs — one
+     * decides when the service runs, the other who staffs it — and separate
+     * from `MANAGE_RANKS`, which is where sheets lived while they hung off a
+     * rank. Handing somebody the sheet editor should not also hand them the
+     * ability to make themselves an administrator.
+     */
+    MANAGE_SIGNUPS: 1 << 16,
+
+    /**
+     * Take a slot whose rank list does not include this rank.
+     *
+     * The escape hatch for the person actually running the shift: a sheet
+     * says who it is *for*, and a manager standing in for an absent
+     * dispatcher is not a reason to edit the sheet. Holding this also means
+     * seeing every sheet, since a slot you may fill is one you may read.
+     */
+    OVERRIDE_SIGNUPS: 1 << 17,
+
+    /**
+     * Move somebody else's sign-up to another slot, or take it off entirely.
+     *
+     * Only ever acts on rows that already exist — it does not put anybody on
+     * a shift who did not put themselves there, which is a different and much
+     * louder thing to be able to do to somebody's Saturday.
+     */
+    EDIT_SIGNUPS: 1 << 18
 } as const
 
 export type PermissionFlag = (typeof PERM)[keyof typeof PERM]
@@ -72,8 +103,17 @@ export const ALL_PERMISSIONS = Object.values(PERM).reduce((all, flag) => all | f
 export const LEVEL_PERMISSIONS: Record<number, number> = {
     [PERMISSION.NONE]: 0,
     [PERMISSION.DISPATCH]: PERM.VIEW_DASHBOARD | PERM.DISPATCH,
+    // `OVERRIDE_SIGNUPS` is here because a host could already take any slot
+    // in their group: sheet visibility used to answer yes to `MANAGE_SHIFTS`
+    // outright. Leaving it out would make the preset quietly narrower than the
+    // one it replaces.
     [PERMISSION.HOST]:
-        PERM.VIEW_DASHBOARD | PERM.DISPATCH | PERM.START_ROOM | PERM.MANAGE_SHIFTS | PERM.REVIEW_APPLICATIONS,
+        PERM.VIEW_DASHBOARD |
+        PERM.DISPATCH |
+        PERM.START_ROOM |
+        PERM.MANAGE_SHIFTS |
+        PERM.REVIEW_APPLICATIONS |
+        PERM.OVERRIDE_SIGNUPS,
     [PERMISSION.MANAGE]: ALL_PERMISSIONS
 }
 

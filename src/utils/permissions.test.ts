@@ -43,6 +43,16 @@ describe('presets', () => {
         expect(has(permissionsForLevel(PERMISSION.HOST), PERM.START_ROOM)).toBe(true)
         expect(has(permissionsForLevel(PERMISSION.HOST), PERM.MANAGE_ROUTES)).toBe(false)
 
+        // A host could take any slot in their group while sheet visibility
+        // answered yes to `MANAGE_SHIFTS` outright, so the preset carries the
+        // grant that replaced it. Dropping this narrows every existing host.
+        expect(has(permissionsForLevel(PERMISSION.HOST), PERM.OVERRIDE_SIGNUPS)).toBe(true)
+        // The other two are genuinely new and go to nobody by preset:
+        // building sheets was `MANAGE_RANKS`, and nobody could move somebody
+        // else's sign-up at all.
+        expect(has(permissionsForLevel(PERMISSION.HOST), PERM.MANAGE_SIGNUPS)).toBe(false)
+        expect(has(permissionsForLevel(PERMISSION.HOST), PERM.EDIT_SIGNUPS)).toBe(false)
+
         expect(permissionsForLevel(PERMISSION.MANAGE)).toBe(ALL_PERMISSIONS)
         expect(permissionsForLevel(PERMISSION.NONE)).toBe(0)
     })

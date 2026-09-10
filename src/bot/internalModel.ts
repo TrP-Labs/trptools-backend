@@ -28,10 +28,17 @@ export namespace BotInternal {
     })
 
     export const sheet = t.Object({
-        signupId: t.String(),
-        rankId: t.String(),
-        rankName: t.String(),
-        robloxRank: t.Number(),
+        sheetId: t.String(),
+        /**
+         * Who the sheet is for, in words, for `/status` to print.
+         *
+         * A list rather than the single rank a sheet used to hang off, because
+         * eligibility is now an explicit list per slot; empty means every
+         * member of the group. Nothing in Discord is *gated* on it — a sheet
+         * is gated by the channel it is posted in, as it always has been — so
+         * this is a label and never a check.
+         */
+        rankNames: t.Array(t.String()),
         name: t.String(),
         description: t.String(),
         color: t.String(),

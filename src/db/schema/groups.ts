@@ -4,7 +4,7 @@ import { moderationEnum, visibilityEnum, vehicleCategoryEnum } from './enums'
 import { routes, depots } from './routes'
 import { events } from './events'
 import { botConfigs } from './bot'
-import { rankSignups } from './signups'
+import { signupSheets, signupSheetRanks } from './signups'
 import { translations } from './translations'
 
 export const groups = pgTable(
@@ -206,12 +206,15 @@ export const groupsRelations = relations(groups, ({ many, one }) => ({
     depots: many(depots),
     events: many(events),
     vehicleRules: many(vehicleRules),
+    signupSheets: many(signupSheets),
     bot: one(botConfigs)
 }))
 
-export const rankRelationsRelations = relations(rankRelations, ({ one }) => ({
+export const rankRelationsRelations = relations(rankRelations, ({ one, many }) => ({
     group: one(groups, { fields: [rankRelations.groupId], references: [groups.id] }),
-    signup: one(rankSignups)
+    // A rank no longer owns a sheet; it appears on the lists that say which
+    // sheets it may fill, and unbinding it takes those entries with it.
+    signupSheets: many(signupSheetRanks)
 }))
 
 export const auditMessagesRelations = relations(auditMessages, ({ one }) => ({

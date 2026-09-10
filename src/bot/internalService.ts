@@ -40,6 +40,18 @@ async function readNote(eventId: string, occurrence: Date): Promise<StoredNote> 
 
 type TrimmedSignup = { userId: string; displayName: string | null; discordId: string | null }
 
+/**
+ * The ranks a sheet is for, across all of its slots, for `/status` to print.
+ *
+ * Flattened here rather than sent per slot: the bot has one line per sheet and
+ * a slot-by-slot breakdown would not fit in it. Empty stays empty, which is
+ * what the sheet means by it — every member of the group.
+ */
+function sheetRankNames(sheet: LoadedSheet): string[] {
+    if (sheet.slots.some((slot) => slot.rankNames.length === 0)) return []
+    return [...new Set(sheet.slots.flatMap((slot) => slot.rankNames))]
+}
+
 function presentSheet(
     sheet: LoadedSheet,
     signups: Map<string, TrimmedSignup[]>,
@@ -47,17 +59,19 @@ function presentSheet(
     occurrence: Date
 ): BotInternal.sheet {
     return {
-        signupId: sheet.signupId,
-        rankId: sheet.rankId,
-        rankName: sheet.rankName,
-        robloxRank: sheet.robloxRank,
+        sheetId: sheet.sheetId,
+        rankNames: sheetRankNames(sheet),
         name: sheet.name,
         description: sheet.description,
         color: sheet.color,
         discordChannel: sheet.discordChannel,
         discordPingRole: sheet.discordPingRole,
         slots: sheet.slots.map((slot) => ({
-            ...slot,
+            id: slot.id,
+            name: slot.name,
+            description: slot.description,
+            capacity: slot.capacity,
+            order: slot.order,
             signups: signups.get(`${eventId}:${occurrence.getTime()}:${slot.id}`) ?? []
         }))
     }
@@ -157,16 +171,21 @@ export abstract class BotService {
             siteUrl: FRONTEND_URL,
             config: presentConfig({ ...config, ownerRobloxId: owner }) satisfies BotModel.config,
             sheets: sheets.map((sheet) => ({
-                signupId: sheet.signupId,
-                rankId: sheet.rankId,
-                rankName: sheet.rankName,
-                robloxRank: sheet.robloxRank,
+                sheetId: sheet.sheetId,
+                rankNames: sheetRankNames(sheet),
                 name: sheet.name,
                 description: sheet.description,
                 color: sheet.color,
                 discordChannel: sheet.discordChannel,
                 discordPingRole: sheet.discordPingRole,
-                slots: sheet.slots.map((slot) => ({ ...slot, signups: [] }))
+                slots: sheet.slots.map((slot) => ({
+                    id: slot.id,
+                    name: slot.name,
+                    description: slot.description,
+                    capacity: slot.capacity,
+                    order: slot.order,
+                    signups: []
+                }))
             }))
         }
     }
@@ -302,7 +321,7 @@ export abstract class BotService {
         // Selecting the slot they already hold gives it up.
         if (held?.slotId === body.slotId) {
             await db.delete(shiftSignups).where(eq(shiftSignups.id, held.id))
-            await publishSignupChange(group.id, body.eventId, occurrence, sheet.signupId)
+            await publishSignupChange(group.id, body.eventId, occurrence, sheet.sheetId)
 
             return { status: 'RELEASED', slotName: slot.name, previousSlotName: null }
         }
@@ -329,9 +348,9 @@ export abstract class BotService {
             ...identity
         })
 
-        await publishSignupChange(group.id, body.eventId, occurrence, sheet.signupId)
-        if (from && from.signupId !== sheet.signupId) {
-            await publishSignupChange(group.id, body.eventId, occurrence, from.signupId)
+        await publishSignupChange(group.id, body.eventId, occurrence, sheet.sheetId)
+        if (from && from.sheetId !== sheet.sheetId) {
+            await publishSignupChange(group.id, body.eventId, occurrence, from.sheetId)
         }
 
         return {

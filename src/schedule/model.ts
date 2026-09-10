@@ -72,6 +72,8 @@ export namespace ScheduleModel {
     export type eventsRequest = typeof eventsRequest.static
 
     export const signupUser = t.Object({
+        /** The row's own id, which is what moving or removing one names. */
+        id: t.String(),
         userId: t.String(),
         robloxId: t.Number(),
         username: t.Union([t.String(), t.Null()]),
@@ -91,21 +93,32 @@ export namespace ScheduleModel {
 
         capacity: t.Number(),
         order: t.Number(),
+        /**
+         * The ranks this slot is for, by name. Empty means every member of the
+         * group, which is what an untouched rank list means everywhere.
+         */
+        rankNames: t.Array(t.String()),
+        /**
+         * Whether this viewer may take it.
+         *
+         * Not always true of a slot that arrived: somebody who may move other
+         * people's sign-ups sees slots they cannot fill themselves, and the
+         * page has no other way to tell the two apart.
+         */
+        canFill: t.Boolean(),
         signups: t.Array(signupUser)
     })
     export type signupSlot = typeof signupSlot.static
 
     /**
-     * One rank's sign-up sheet as it applies to a single occurrence.
+     * One sign-up sheet as it applies to a single occurrence.
      *
-     * `robloxRank` travels with it so a client can explain why a sheet is
-     * visible without a second lookup.
+     * Sheets belong to the group rather than to a rank, so nothing here names
+     * one: who may fill a slot is the slot's own list, reported as
+     * `rankNames` beside the `canFill` this viewer got.
      */
     export const signupSheet = t.Object({
-        signupId: t.String(),
-        rankId: t.String(),
-        rankName: t.String(),
-        robloxRank: t.Number(),
+        sheetId: t.String(),
         name: t.String(),
         description: t.String(),
         /** Per-language versions of this row's text. See `utils/translations`. */
@@ -135,12 +148,19 @@ export namespace ScheduleModel {
         signupsOpen: t.Boolean(),
         signupsOpenAt: t.Date(),
         /**
-         * Whether this viewer's rank reaches any sheet on this shift at all,
-         * regardless of the window. Lets a client say "sign-ups open in an
-         * hour" only to somebody who will actually get a form, rather than
+         * Whether any sheet on this shift has a slot this viewer may see at
+         * all, regardless of the window. Lets a client say "sign-ups open in
+         * an hour" only to somebody who will actually get a form, rather than
          * advertising one to everybody who cannot use it.
          */
         sheetsAvailable: t.Boolean(),
+        /**
+         * Whether this viewer may move or remove other people's sign-ups on
+         * this occurrence (`EDIT_SIGNUPS`). Carried per occurrence for the
+         * same reason `discordRequired` is: the shifts page draws occurrences
+         * from more than one group at once, and the grant is per group.
+         */
+        canEditSignups: t.Boolean(),
         /**
          * Whether this group asks for a linked Discord account before a slot
          * can be taken.
@@ -178,6 +198,12 @@ export namespace ScheduleModel {
     })
     export type signupBody = typeof signupBody.static
 
+    /** Where a host is moving somebody else's sign-up to. */
+    export const moveSignupBody = t.Object({
+        slotId: t.String({ format: 'uuid' })
+    })
+    export type moveSignupBody = typeof moveSignupBody.static
+
     export const invalidRRule = t.Literal('invalid recurrence rule')
     export type invalidRRule = typeof invalidRRule.static
 
@@ -189,6 +215,10 @@ export namespace ScheduleModel {
 
     export const wrongRank = t.Literal('your rank cannot take that slot')
     export type wrongRank = typeof wrongRank.static
+
+    export const notSameShift = t.Literal('that slot is on a different shift')
+    export type notSameShift = typeof notSameShift.static
+
 
     export const signupsClosed = t.Literal('sign-ups are not open for that shift yet')
     export type signupsClosed = typeof signupsClosed.static

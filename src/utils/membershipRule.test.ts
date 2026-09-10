@@ -17,26 +17,29 @@ describe('resolveMembership', () => {
         expect(resolveMembership(undefined, 10)).toEqual({
             permissionLevel: PERMISSION.NONE,
             robloxRank: 10,
-            permissions: 0
+            permissions: 0,
+            rankId: null
         })
     })
 
     test('a bound role grants what the group bound it to', () => {
         const permissions = permissionsForLevel(PERMISSION.DISPATCH)
 
-        expect(resolveMembership({ permissions, cachedRank: 50 }, 50)).toEqual({
+        expect(resolveMembership({ id: 'rank-a', permissions, cachedRank: 50 }, 50)).toEqual({
             permissionLevel: PERMISSION.DISPATCH,
             robloxRank: 50,
-            permissions
+            permissions,
+            rankId: 'rank-a'
         })
     })
 
     test('the owner role holds full control however the row was left', () => {
         // The drift §5 is about: a row bound before the rule existed.
-        expect(resolveMembership({ permissions: 0, cachedRank: 255 }, 255)).toEqual({
+        expect(resolveMembership({ id: 'owner', permissions: 0, cachedRank: 255 }, 255)).toEqual({
             permissionLevel: PERMISSION.MANAGE,
             robloxRank: 255,
-            permissions: ALL_PERMISSIONS
+            permissions: ALL_PERMISSIONS,
+            rankId: 'owner'
         })
     })
 
@@ -48,7 +51,8 @@ describe('resolveMembership', () => {
         expect(resolveMembership(undefined, undefined)).toEqual({
             permissionLevel: PERMISSION.NONE,
             robloxRank: -1,
-            permissions: 0
+            permissions: 0,
+            rankId: null
         })
     })
 
@@ -74,10 +78,14 @@ describe('isGroupMember', () => {
     test('a member with no permission is still a member', () => {
         // The shifts bug: this is the driver who was shown an empty schedule
         // for every group they actually drive for.
-        expect(isGroupMember({ permissionLevel: PERMISSION.NONE, robloxRank: 0, permissions: 0 })).toBe(true)
+        expect(
+            isGroupMember({ permissionLevel: PERMISSION.NONE, robloxRank: 0, permissions: 0, rankId: null })
+        ).toBe(true)
     })
 
     test('a non-member is not', () => {
-        expect(isGroupMember({ permissionLevel: PERMISSION.NONE, robloxRank: -1, permissions: 0 })).toBe(false)
+        expect(
+            isGroupMember({ permissionLevel: PERMISSION.NONE, robloxRank: -1, permissions: 0, rankId: null })
+        ).toBe(false)
     })
 })
