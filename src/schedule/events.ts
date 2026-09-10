@@ -16,14 +16,14 @@ export type SignupChange = {
     /** ISO 8601, milliseconds preserved. */
     occurrence: string
     /** The sheet that changed, so the bot edits one message rather than all. */
-    signupId: string
+    sheetId: string
 }
 
 export async function publishSignupChange(
     groupId: string,
     eventId: string,
     occurrence: Date,
-    signupId: string
+    sheetId: string
 ) {
     const payload: SignupChange = {
         groupId,
@@ -31,7 +31,7 @@ export async function publishSignupChange(
         // `toISOString` rather than `String(date)`, which drops milliseconds
         // and would land the bot on an occurrence that matches nothing.
         occurrence: occurrence.toISOString(),
-        signupId
+        sheetId
     }
 
     // Fan-out is best effort. A dropped notification costs a stale embed until

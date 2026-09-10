@@ -49,22 +49,26 @@ async function resolveGroupId(idOrSlug: string): Promise<string | null> {
 }
 
 const encode = (membership: Membership) =>
-    `${membership.permissionLevel}:${membership.robloxRank}:${membership.permissions}`
+    `${membership.permissionLevel}:${membership.robloxRank}:${membership.permissions}:${membership.rankId ?? ''}`
 
 /**
  * Reads an entry back.
  *
- * Entries written before ranks carried granular grants have two fields rather
- * than three. They are a minute from expiring in the worst case, but a missing
- * third field would otherwise decode as `NaN` grants and refuse the holder
- * everything, so the level they *do* carry stands in.
+ * Entries written by an older build are shorter — two fields before ranks
+ * carried granular grants, three before a membership carried the rank row it
+ * came from. They are a minute from expiring in the worst case, but a missing
+ * third field would decode as `NaN` grants and refuse the holder everything,
+ * so the level they *do* carry stands in; a missing fourth reads as no rank,
+ * which costs its holder a sign-up sheet for that minute rather than the
+ * dashboard.
  */
 function decode(value: string): Membership {
-    const [level, rank, permissions] = value.split(':')
+    const [level, rank, permissions, rankId] = value.split(':')
     return {
         permissionLevel: Number(level),
         robloxRank: Number(rank),
-        permissions: permissions === undefined ? permissionsForLevel(Number(level)) : Number(permissions)
+        permissions: permissions === undefined ? permissionsForLevel(Number(level)) : Number(permissions),
+        rankId: rankId ? rankId : null
     }
 }
 
@@ -173,7 +177,11 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
  */
 async function resolveRole(groupID: string, roleId: string, reportedRank: number): Promise<Membership> {
     const [relation] = await db
-        .select({ permissions: rankRelations.permissions, cachedRank: rankRelations.cachedRank })
+        .select({
+            id: rankRelations.id,
+            permissions: rankRelations.permissions,
+            cachedRank: rankRelations.cachedRank
+        })
         .from(rankRelations)
         .where(and(eq(rankRelations.groupId, groupID), eq(rankRelations.robloxId, roleId)))
         .limit(1)

@@ -176,6 +176,7 @@ export abstract class Group_ {
         const rows = await db
             .select({
                 group: groups,
+                id: rankRelations.id,
                 permissions: rankRelations.permissions,
                 cachedRank: rankRelations.cachedRank
             })
@@ -230,6 +231,7 @@ export abstract class Group_ {
         const relations = await db
             .select({
                 groupId: rankRelations.groupId,
+                id: rankRelations.id,
                 permissions: rankRelations.permissions,
                 cachedRank: rankRelations.cachedRank
             })

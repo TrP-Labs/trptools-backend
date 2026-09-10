@@ -19,8 +19,10 @@ import {
     events,
     groups,
     rankRelations,
-    rankSignups,
-    rankSignupSlots,
+    signupSheetRanks,
+    signupSheets,
+    signupSlotRanks,
+    signupSlots,
     routeDepots,
     routes,
     sessions,
@@ -126,48 +128,83 @@ async function seed() {
         ])
         .returning({ id: rankRelations.id, cachedRank: rankRelations.cachedRank })
 
-    // Two sheets at different ranks, so the gating is visible immediately:
-    // a member sees only the driver sheet, an admin sees both.
+    // Two sheets with different rank lists, so the gating is visible
+    // immediately: a member sees only the driver sheet, an admin sees both.
+    const ownerRank = seededRanks.find((rank) => rank.cachedRank === 255)
     const adminRank = seededRanks.find((rank) => rank.cachedRank === 254)
     const memberRank = seededRanks.find((rank) => rank.cachedRank === 1)
 
     if (adminRank) {
         const [sheet] = await db
-            .insert(rankSignups)
+            .insert(signupSheets)
             .values({
-                rankId: adminRank.id,
+                groupId: group.id,
                 enabled: true,
                 name: 'Shift team',
                 description: 'Runs the shift from the dispatch room.',
-                color: '#4287f5'
+                color: '#4287f5',
+                order: 0
             })
-            .returning({ id: rankSignups.id })
+            .returning({ id: signupSheets.id })
 
         if (sheet) {
-            await db.insert(rankSignupSlots).values([
-                { signupId: sheet.id, name: 'Host', description: 'Opens the room and the server', capacity: 1, order: 0 },
-                { signupId: sheet.id, name: 'Dispatcher', description: 'Assigns routes', capacity: 2, order: 1 }
+            // The rank list is what a sheet is gated on now, and it is
+            // explicit: the owner is listed beside the admin rather than
+            // arriving through a "and everything above" rule that no longer
+            // exists.
+            await db.insert(signupSheetRanks).values(
+                [adminRank.id, ownerRank?.id]
+                    .filter((id): id is string => Boolean(id))
+                    .map((rankId) => ({ sheetId: sheet.id, rankId }))
+            )
+
+            await db.insert(signupSlots).values([
+                { sheetId: sheet.id, name: 'Host', description: 'Opens the room and the server', capacity: 1, order: 0 },
+                { sheetId: sheet.id, name: 'Dispatcher', description: 'Assigns routes', capacity: 2, order: 1 }
             ])
         }
     }
 
     if (memberRank) {
         const [sheet] = await db
-            .insert(rankSignups)
+            .insert(signupSheets)
             .values({
-                rankId: memberRank.id,
+                groupId: group.id,
                 enabled: true,
                 name: 'Drivers',
                 description: 'Drives an assigned route.',
-                color: '#3fb950'
+                color: '#3fb950',
+                // Per-slot lists, so the seeded group demonstrates both halves
+                // of the toggle rather than only the uniform one.
+                uniformRanks: false,
+                order: 1
             })
-            .returning({ id: rankSignups.id })
+            .returning({ id: signupSheets.id })
 
         if (sheet) {
-            await db.insert(rankSignupSlots).values([
-                { signupId: sheet.id, name: 'Driver', description: 'Drives an assigned route', capacity: 12, order: 0 },
-                { signupId: sheet.id, name: 'Reserve', description: 'Fills in as needed', capacity: 4, order: 1 }
-            ])
+            const slots = await db
+                .insert(signupSlots)
+                .values([
+                    { sheetId: sheet.id, name: 'Driver', description: 'Drives an assigned route', capacity: 12, order: 0 },
+                    { sheetId: sheet.id, name: 'Reserve', description: 'Fills in as needed', capacity: 4, order: 1 }
+                ])
+                .returning({ id: signupSlots.id, name: signupSlots.name })
+
+            const everyRank = seededRanks.map((rank) => rank.id)
+            const driver = slots.find((slot) => slot.name === 'Driver')
+            const reserve = slots.find((slot) => slot.name === 'Reserve')
+
+            if (driver) {
+                await db
+                    .insert(signupSlotRanks)
+                    .values(everyRank.map((rankId) => ({ slotId: driver.id, rankId })))
+            }
+
+            // Left open on purpose: an empty list is every member of the
+            // group, which is the state a new sheet starts in.
+            if (reserve && adminRank) {
+                await db.insert(signupSlotRanks).values({ slotId: reserve.id, rankId: adminRank.id })
+            }
         }
     }
 

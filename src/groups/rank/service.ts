@@ -1,7 +1,7 @@
 import { status } from 'elysia'
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq } from 'drizzle-orm'
 import db from '../../db'
-import { rankRelations, rankSignups, rankSignupSlots } from '../../db/schema'
+import { rankRelations } from '../../db/schema'
 import { globalModel, PERMISSION } from '../../utils/globalModel'
 import UserHasRank, {
     assertGroupPermission,
@@ -19,89 +19,9 @@ import {
 import { Roblox } from '../../utils/roblox'
 import { resolveCredentials } from '../../utils/robloxCredentials'
 import { isSiteAdmin, type session } from '../../utils/sessionVerifier'
-import { presentTranslations, translationUpdate } from '../../utils/translations'
 import { findGroup, recordAudit } from '../service'
 import { GroupModel } from '../model'
 import { RankModel } from './model'
-
-/** A rank's sheet with its slots, or null where the rank has never had one. */
-async function presentSignup(rankId: string): Promise<RankModel.signupOrNull> {
-    const [sheet] = await db.select().from(rankSignups).where(eq(rankSignups.rankId, rankId)).limit(1)
-    if (!sheet) return null
-
-    const slots = await db
-        .select()
-        .from(rankSignupSlots)
-        .where(eq(rankSignupSlots.signupId, sheet.id))
-        .orderBy(asc(rankSignupSlots.order))
-
-    return {
-        id: sheet.id,
-        rankId: sheet.rankId,
-        enabled: sheet.enabled,
-        name: sheet.name,
-        description: sheet.description,
-        translations: presentTranslations('SHEET', sheet.translations),
-        color: sheet.color,
-        discordChannel: sheet.discordChannel,
-        discordPingRole: sheet.discordPingRole,
-        slots: slots.map((slot) => ({
-            id: slot.id,
-            name: slot.name,
-            description: slot.description,
-            translations: presentTranslations('SLOT', slot.translations),
-            capacity: slot.capacity,
-            order: slot.order
-        }))
-    }
-}
-
-/**
- * Replaces a sheet's slots wholesale, reusing rows whose name is unchanged.
- *
- * Reuse is what keeps existing sign-ups attached: dropping and recreating the
- * slots would cascade every signup on every future occurrence away because
- * someone renamed the sheet's colour.
- */
-async function replaceSignupSlots(signupId: string, slots: RankModel.signupSlotInput[]) {
-    const existing = await db.select().from(rankSignupSlots).where(eq(rankSignupSlots.signupId, signupId))
-    const byName = new Map(existing.map((slot) => [slot.name, slot]))
-    const keep = new Set<string>()
-
-    for (const [index, slot] of slots.entries()) {
-        const match = byName.get(slot.name)
-        const values = {
-            name: slot.name,
-            description: slot.description ?? '',
-            // Reuse is by name, so a row that survives keeps whatever it had
-            // for any field this save does not mention.
-            ...translationUpdate('SLOT', match?.translations, slot.translations),
-            capacity: slot.capacity ?? 1,
-            order: slot.order ?? index
-        }
-
-        if (match) {
-            keep.add(match.id)
-            await db.update(rankSignupSlots).set(values).where(eq(rankSignupSlots.id, match.id))
-        } else {
-            const [created] = await db
-                .insert(rankSignupSlots)
-                .values({ signupId, ...values })
-                .returning({ id: rankSignupSlots.id })
-            if (created) keep.add(created.id)
-        }
-    }
-
-    const removed = existing.filter((slot) => !keep.has(slot.id))
-    if (removed.length > 0) {
-        await db.delete(rankSignupSlots).where(
-            inArray(
-                rankSignupSlots.id,
-                removed.map((slot) => slot.id)
-            )
-        )
-    }
-}
 
 /**
  * What the person doing the editing holds, for the escalation check below.
@@ -328,89 +248,6 @@ export abstract class Rank {
         )
 
         return rosters
-    }
-
-    // ------------------------------------------------------- sign-up sheets
-
-    static async getSignup(rankId: string, session: session): Promise<RankModel.signupOrNull> {
-        const rank = await Rank.getRank(rankId, session)
-        return presentSignup(rank.id)
-    }
-
-    /**
-     * Creates or updates a rank's sign-up sheet.
-     *
-     * Upsert rather than separate create and update routes: a rank either has
-     * a sheet or does not, and the dashboard edits one form either way.
-     */
-    static async putSignup(
-        rankId: string,
-        body: RankModel.signupBody,
-        session: session
-    ): Promise<RankModel.signupResponse> {
-        const [rank] = await db.select().from(rankRelations).where(eq(rankRelations.id, rankId)).limit(1)
-        if (!rank) throw status(404, 'rank does not exist' satisfies RankModel.rankInvalid)
-
-        await assertGroupPermission(session, rank.groupId, PERM.MANAGE_RANKS)
-
-        const { slots, translations, ...patch } = body
-
-        const [existing] = await db.select().from(rankSignups).where(eq(rankSignups.rankId, rankId)).limit(1)
-
-        const sheet =
-            existing ??
-            (
-                await db
-                    .insert(rankSignups)
-                    .values({
-                        rankId,
-                        name: patch.name ?? rank.cachedName,
-                        color: patch.color ?? rank.color,
-                        ...translationUpdate('SHEET', null, translations)
-                    })
-                    .returning()
-            )[0]
-
-        if (!sheet) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
-
-        if (existing && (Object.keys(patch).length > 0 || translations !== undefined)) {
-            await db
-                .update(rankSignups)
-                .set({ ...patch, ...translationUpdate('SHEET', sheet.translations, translations) })
-                .where(eq(rankSignups.id, sheet.id))
-        }
-
-        if (slots) await replaceSignupSlots(sheet.id, slots)
-
-        await recordAudit(
-            rank.groupId,
-            session.user?.userId ?? null,
-            'rank.signup',
-            `Updated the ${rank.cachedName} sign-up sheet`
-        )
-
-        const result = await presentSignup(rankId)
-        if (!result) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
-
-        return result
-    }
-
-    static async deleteSignup(rankId: string, session: session) {
-        const [rank] = await db.select().from(rankRelations).where(eq(rankRelations.id, rankId)).limit(1)
-        if (!rank) throw status(404, 'rank does not exist' satisfies RankModel.rankInvalid)
-
-        await assertGroupPermission(session, rank.groupId, PERM.MANAGE_RANKS)
-
-        await db.delete(rankSignups).where(eq(rankSignups.rankId, rankId))
-
-        await recordAudit(
-            rank.groupId,
-            session.user?.userId ?? null,
-            'rank.signup',
-            `Removed the ${rank.cachedName} sign-up sheet`
-        )
-
-        return 'Success' as globalModel.genericSuccess
     }
 
     /** Roblox roles in the group that are not bound on TrPTools yet. */

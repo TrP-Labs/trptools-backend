@@ -1,7 +1,7 @@
 import { status } from 'elysia'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import db from '../db'
-import { botConfigs, rankRelations, rankSignups } from '../db/schema'
+import { botConfigs, signupSheets } from '../db/schema'
 import { env, FRONTEND_URL } from '../utils/env'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission } from '../utils/groupPermission'
@@ -257,26 +257,14 @@ export abstract class Bot {
 
         await db.delete(botConfigs).where(eq(botConfigs.id, config.id))
 
-        // Per-rank Discord bindings name channels in the guild that just went
+        // Per-sheet Discord bindings name channels in the guild that just went
         // away. Left in place they would point at another server's ids after a
         // reinstall elsewhere, so they are cleared with the rest of the
         // configuration rather than left to fail quietly.
-        const ranks = await db
-            .select({ id: rankRelations.id })
-            .from(rankRelations)
-            .where(eq(rankRelations.groupId, group.id))
-
-        if (ranks.length > 0) {
-            await db
-                .update(rankSignups)
-                .set({ discordChannel: null, discordPingRole: null })
-                .where(
-                    inArray(
-                        rankSignups.rankId,
-                        ranks.map((rank) => rank.id)
-                    )
-                )
-        }
+        await db
+            .update(signupSheets)
+            .set({ discordChannel: null, discordPingRole: null })
+            .where(eq(signupSheets.groupId, group.id))
 
         await recordAudit(group.id, session.user?.userId ?? null, 'bot.remove', 'Disconnected the Discord server')
 
@@ -359,10 +347,9 @@ export abstract class Bot {
             Discord.getRoles(config.guildId),
             Discord.getSelfMember(config.guildId),
             db
-                .select({ name: rankSignups.name, channel: rankSignups.discordChannel })
-                .from(rankSignups)
-                .innerJoin(rankRelations, eq(rankSignups.rankId, rankRelations.id))
-                .where(eq(rankRelations.groupId, group.id))
+                .select({ name: signupSheets.name, channel: signupSheets.discordChannel })
+                .from(signupSheets)
+                .where(eq(signupSheets.groupId, group.id))
         ])
 
         // One channel can serve several purposes, and reporting it three times

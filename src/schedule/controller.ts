@@ -68,6 +68,45 @@ export const schedule = new Elysia({ prefix: '/schedule', tags: ['Schedule'] })
         detail: { summary: 'Give up a slot you took' }
     })
 
+    .delete('/signup/:signupId', async ({ params: { signupId }, session }) => Schedule.removeSignup(signupId, session), {
+        params: t.Object({ signupId: t.String({ format: 'uuid' }) }),
+        response: {
+            200: globalModel.genericSuccess,
+            401: globalModel.unauthorized,
+            403: globalModel.forbidden,
+            404: globalModel.notFound
+        },
+        detail: {
+            summary: 'Take somebody off a slot',
+            description:
+                'Needs the edit sign-ups grant. Giving up your own slot is POST /schedule/withdraw, ' +
+                'which asks for no permission at all.'
+        }
+    })
+
+    .patch(
+        '/signup/:signupId',
+        async ({ params: { signupId }, body, session }) => Schedule.moveSignup(signupId, body, session),
+        {
+            params: t.Object({ signupId: t.String({ format: 'uuid' }) }),
+            body: ScheduleModel.moveSignupBody,
+            response: {
+                200: globalModel.genericSuccess,
+                400: ScheduleModel.notSameShift,
+                401: globalModel.unauthorized,
+                403: globalModel.forbidden,
+                404: globalModel.notFound,
+                409: ScheduleModel.slotFull
+            },
+            detail: {
+                summary: 'Move somebody to another slot',
+                description:
+                    'Within the same group and occurrence. The target slot\'s rank list is not consulted \u2014 ' +
+                    'it says who may sign themselves up, not where a host may put somebody.'
+            }
+        }
+    )
+
     .group('/:eventId', (app) =>
         app
             .get('/', async ({ params: { eventId }, session }) => Schedule.getScheduleObject(eventId, session), {

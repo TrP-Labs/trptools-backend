@@ -1,52 +1,76 @@
 import { relations, sql } from 'drizzle-orm'
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
-import { rankRelations } from './groups'
+import { boolean, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { groups, rankRelations } from './groups'
 import { events } from './events'
 import { users } from './users'
 import { translations } from './translations'
 
 /**
- * A sign-up sheet attached to a Roblox rank.
+ * A sign-up sheet, belonging to the group rather than to a rank.
  *
- * Sign-ups are a staff feature, not a public one, so they hang off the rank
- * that is allowed to fill them rather than off an individual shift. One sheet
- * per rank applies to every shift the group runs, which is how the Discord bot
- * has always worked and saves re-declaring the same roles on each shift.
+ * Sheets used to hang off `rank_relations`, one per rank, and who could fill
+ * one followed from Roblox's 0-255 ordering: the bound rank and everything
+ * above it. That made a rank binding two decisions at once — what somebody may
+ * *do* in the dashboard, and what they may sign up for on a Saturday — and a
+ * group that wanted one sheet for two unrelated ranks had no way to say so.
  *
- * Visibility follows from the rank: someone sees a sheet when their own Roblox
- * rank is at least the bound rank's, so a driver never sees the dispatcher
- * sheet while a manager sees both.
+ * A sheet is now its own object with its own page, and eligibility is an
+ * explicit list of ranks (`signup_sheet_ranks` / `signup_slot_ranks`) rather
+ * than a threshold. `uniform_ranks` says which of the two lists is in force:
+ * on, the sheet's own list applies to every slot, which is what almost every
+ * group wants and so is the default.
  *
  * The Discord columns are optional. A group with no bot still gets working
  * sign-ups on the web.
  */
-export const rankSignups = pgTable('rank_signups', {
-    id: uuid('id').primaryKey().defaultRandom(),
-    rankId: uuid('rank_id')
-        .notNull()
-        .unique()
-        .references(() => rankRelations.id, { onDelete: 'cascade' }),
-
-    enabled: boolean('enabled').notNull().default(false),
-    name: text('name').notNull().default('Staff'),
-    description: text('description').notNull().default(''),
-    /** Per-language versions of the text above. See `./translations.ts`. */
-    translations: translations(),
-    color: text('color').notNull().default('#4287f5'),
-
-    /** Where the bot posts this sheet. Falls back to nothing, not to a default. */
-    discordChannel: text('discord_channel'),
-    /** Pinged when the sheet is posted. */
-    discordPingRole: text('discord_ping_role')
-})
-
-export const rankSignupSlots = pgTable(
-    'rank_signup_slots',
+export const signupSheets = pgTable(
+    'signup_sheets',
     {
         id: uuid('id').primaryKey().defaultRandom(),
-        signupId: uuid('signup_id')
+        groupId: uuid('group_id')
             .notNull()
-            .references(() => rankSignups.id, { onDelete: 'cascade' }),
+            .references(() => groups.id, { onDelete: 'cascade' }),
+
+        enabled: boolean('enabled').notNull().default(false),
+        name: text('name').notNull().default('Staff'),
+        description: text('description').notNull().default(''),
+        /** Per-language versions of the text above. See `./translations.ts`. */
+        translations: translations(),
+        color: text('color').notNull().default('#4287f5'),
+
+        /**
+         * Whether every slot shares the sheet's rank list.
+         *
+         * Both lists are stored either way, so turning this off and back on
+         * does not throw away whichever one is not currently in force.
+         */
+        uniformRanks: boolean('uniform_ranks').notNull().default(true),
+
+        /**
+         * Where the sheet sits in the group's list.
+         *
+         * Sheets used to order themselves by the rank they hung off, highest
+         * first. With no rank to sort by, the order is the group's to choose.
+         */
+        order: integer('order').notNull().default(0),
+
+        /** Where the bot posts this sheet. Falls back to nothing, not to a default. */
+        discordChannel: text('discord_channel'),
+        /** Pinged when the sheet is posted. */
+        discordPingRole: text('discord_ping_role'),
+
+        createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+    },
+    (table) => [index('signup_sheets_group_idx').on(table.groupId, table.order)]
+)
+
+export const signupSlots = pgTable(
+    'signup_slots',
+    {
+        id: uuid('id').primaryKey().defaultRandom(),
+        sheetId: uuid('sheet_id')
+            .notNull()
+            .references(() => signupSheets.id, { onDelete: 'cascade' }),
 
         name: text('name').notNull(),
         description: text('description').notNull().default(''),
@@ -55,14 +79,54 @@ export const rankSignupSlots = pgTable(
         capacity: integer('capacity').notNull().default(1),
         order: integer('order').notNull().default(0)
     },
-    (table) => [index('rank_signup_slots_order_idx').on(table.signupId, table.order)]
+    (table) => [index('signup_slots_order_idx').on(table.sheetId, table.order)]
+)
+
+/**
+ * Which ranks may fill a sheet, when every slot shares one list.
+ *
+ * A join table rather than an array column because these are foreign keys: a
+ * rank unbound from the group has to take its entries with it, or a sheet
+ * would keep admitting a row nothing backs.
+ *
+ * **An empty list means every member of the group**, not nobody. A sheet is
+ * created empty, and "nobody" would make a new sheet quietly unusable while
+ * looking finished; a group that wants open sign-ups would otherwise have to
+ * list every rank it has and remember to revisit the list on every binding.
+ * The editor says so on the sheet rather than leaving it to be discovered.
+ */
+export const signupSheetRanks = pgTable(
+    'signup_sheet_ranks',
+    {
+        sheetId: uuid('sheet_id')
+            .notNull()
+            .references(() => signupSheets.id, { onDelete: 'cascade' }),
+        rankId: uuid('rank_id')
+            .notNull()
+            .references(() => rankRelations.id, { onDelete: 'cascade' })
+    },
+    (table) => [primaryKey({ columns: [table.sheetId, table.rankId] })]
+)
+
+/** The same list per slot, in force when a sheet's `uniformRanks` is off. */
+export const signupSlotRanks = pgTable(
+    'signup_slot_ranks',
+    {
+        slotId: uuid('slot_id')
+            .notNull()
+            .references(() => signupSlots.id, { onDelete: 'cascade' }),
+        rankId: uuid('rank_id')
+            .notNull()
+            .references(() => rankRelations.id, { onDelete: 'cascade' })
+    },
+    (table) => [primaryKey({ columns: [table.slotId, table.rankId] })]
 )
 
 /**
  * One person taking one slot on one concrete occurrence of one shift.
  *
  * `eventId` is carried alongside the occurrence timestamp because slots are
- * shared across every shift now — without it, two shifts starting at the same
+ * shared across every shift — without it, two shifts starting at the same
  * moment would collide on the same slot.
  *
  * A signup identifies its taker one of two ways, and exactly one is set. Web
@@ -79,7 +143,7 @@ export const shiftSignups = pgTable(
         id: uuid('id').primaryKey().defaultRandom(),
         slotId: uuid('slot_id')
             .notNull()
-            .references(() => rankSignupSlots.id, { onDelete: 'cascade' }),
+            .references(() => signupSlots.id, { onDelete: 'cascade' }),
         eventId: uuid('event_id')
             .notNull()
             .references(() => events.eventId, { onDelete: 'cascade' }),
@@ -107,22 +171,34 @@ export const shiftSignups = pgTable(
     ]
 )
 
-export const rankSignupsRelations = relations(rankSignups, ({ one, many }) => ({
-    rank: one(rankRelations, { fields: [rankSignups.rankId], references: [rankRelations.id] }),
-    slots: many(rankSignupSlots)
+export const signupSheetsRelations = relations(signupSheets, ({ one, many }) => ({
+    group: one(groups, { fields: [signupSheets.groupId], references: [groups.id] }),
+    slots: many(signupSlots),
+    ranks: many(signupSheetRanks)
 }))
 
-export const rankSignupSlotsRelations = relations(rankSignupSlots, ({ one, many }) => ({
-    signup: one(rankSignups, { fields: [rankSignupSlots.signupId], references: [rankSignups.id] }),
+export const signupSlotsRelations = relations(signupSlots, ({ one, many }) => ({
+    sheet: one(signupSheets, { fields: [signupSlots.sheetId], references: [signupSheets.id] }),
+    ranks: many(signupSlotRanks),
     signups: many(shiftSignups)
 }))
 
+export const signupSheetRanksRelations = relations(signupSheetRanks, ({ one }) => ({
+    sheet: one(signupSheets, { fields: [signupSheetRanks.sheetId], references: [signupSheets.id] }),
+    rank: one(rankRelations, { fields: [signupSheetRanks.rankId], references: [rankRelations.id] })
+}))
+
+export const signupSlotRanksRelations = relations(signupSlotRanks, ({ one }) => ({
+    slot: one(signupSlots, { fields: [signupSlotRanks.slotId], references: [signupSlots.id] }),
+    rank: one(rankRelations, { fields: [signupSlotRanks.rankId], references: [rankRelations.id] })
+}))
+
 export const shiftSignupsRelations = relations(shiftSignups, ({ one }) => ({
-    slot: one(rankSignupSlots, { fields: [shiftSignups.slotId], references: [rankSignupSlots.id] }),
+    slot: one(signupSlots, { fields: [shiftSignups.slotId], references: [signupSlots.id] }),
     event: one(events, { fields: [shiftSignups.eventId], references: [events.eventId] }),
     user: one(users, { fields: [shiftSignups.userId], references: [users.id] })
 }))
 
-export type RankSignup = typeof rankSignups.$inferSelect
-export type RankSignupSlot = typeof rankSignupSlots.$inferSelect
+export type SignupSheet = typeof signupSheets.$inferSelect
+export type SignupSlot = typeof signupSlots.$inferSelect
 export type ShiftSignup = typeof shiftSignups.$inferSelect

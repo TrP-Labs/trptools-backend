@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { and, asc, eq } from 'drizzle-orm'
 import db from '../db'
-import { events, rankSignupSlots, shiftSignups, type Event } from '../db/schema'
+import { events, shiftSignups, signupSheets, signupSlots, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
@@ -13,7 +13,8 @@ import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../groups/service'
 import { GroupModel } from '../groups/model'
 import { publishSignupChange } from './events'
-import { canUseSheet, loadSheets, loadSignups, presentSheets, sheetsVisibleTo, signupsOpen } from './sheets'
+import { loadSheets, loadSignups, presentSheets, sheetsVisibleTo, signupsOpen, viewerFor } from './sheets'
+import { canEditSignups, canFillSlot } from './eligibility'
 import { actorForUser, ownedBy, ownsSignup } from './identity'
 import { ScheduleModel } from './model'
 
@@ -130,9 +131,11 @@ export abstract class Schedule {
         const window = expanded.slice(0, limit)
         if (window.length === 0) return []
 
-        // Sheets are per rank, so they are loaded once for the whole window
-        // rather than per occurrence.
+        // Sheets belong to the group, so they are loaded once for the whole
+        // window rather than per occurrence.
+        const viewer = viewerFor(membership, session)
         const sheets = isMember ? sheetsVisibleTo(await loadSheets(group.id), membership, session) : []
+        const mayEdit = isMember && canEditSignups(viewer)
 
         const signups =
             sheets.length > 0
@@ -162,8 +165,9 @@ export abstract class Schedule {
                 signupsOpen: open,
                 signupsOpenAt: new Date(occurrence.start.getTime() - group.signupLeadMinutes * 60_000),
                 sheetsAvailable: sheets.length > 0,
+                canEditSignups: mayEdit,
                 discordRequired: group.requireDiscordForSignups,
-                sheets: open ? presentSheets(sheets, event.eventId, occurrence.start, signups) : []
+                sheets: open ? presentSheets(sheets, event.eventId, occurrence.start, signups, viewer) : []
             }
         })
     }
@@ -261,10 +265,10 @@ export abstract class Schedule {
 
         // Signing up is a member action, so membership is the floor — being a
         // member of the Roblox group, not holding a permission level in it.
-        // `canUseSheet` below is the check that actually decides, on Roblox
-        // rank; a level gate here was both coarser and stricter than the sheet
-        // it was guarding, so an ordinary driver could be shown a sheet their
-        // rank reaches and then refused when they took a slot on it.
+        // `canFillSlot` below is the check that actually decides, on the
+        // slot's rank list; a level gate here was both coarser and stricter
+        // than the sheet it was guarding, so an ordinary driver could be shown
+        // a sheet their rank reaches and then refused when they took a slot.
         if (!isGroupMember(membership) && !isSiteAdmin(session)) {
             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
         }
@@ -273,11 +277,15 @@ export abstract class Schedule {
         const sheet = sheets.find((candidate) => candidate.slots.some((slot) => slot.id === body.slotId))
         if (!sheet) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        if (!canUseSheet(sheet, membership, session)) {
+        const slot = sheet.slots.find((candidate) => candidate.id === body.slotId)!
+
+        // The slot's own rank list, asked through the same rule that decided
+        // whether to send it in the first place — so a slot somebody was shown
+        // is never one they are refused, and one they were not shown cannot be
+        // taken with a stale id.
+        if (!canFillSlot(slot.rankIds, viewerFor(membership, session))) {
             throw status(403, 'your rank cannot take that slot' satisfies ScheduleModel.wrongRank)
         }
-
-        const slot = sheet.slots.find((candidate) => candidate.id === body.slotId)!
 
         // Signing up for a time the shift does not actually run would create
         // orphan rows the scheduler never shows again.
@@ -367,7 +375,131 @@ export abstract class Schedule {
             occurrence: body.occurrence
         })
 
-        await publishSignupChange(event.groupId, body.eventId, body.occurrence, sheet.signupId)
+        await publishSignupChange(event.groupId, body.eventId, body.occurrence, sheet.sheetId)
+
+        return 'Success' as globalModel.genericSuccess
+    }
+
+    /**
+     * The sign-up row a host is acting on, and the group it belongs to.
+     *
+     * Resolved from the row rather than from anything the caller sent: a
+     * signup names its slot, the slot names its sheet and the sheet names the
+     * group, so the grant is always checked against the group that actually
+     * owns the row.
+     */
+    private static async resolveManagedSignup(signupId: string, session: session) {
+        const [row] = await db
+            .select({
+                id: shiftSignups.id,
+                slotId: shiftSignups.slotId,
+                eventId: shiftSignups.eventId,
+                occurrence: shiftSignups.occurrence,
+                userId: shiftSignups.userId,
+                discordUserId: shiftSignups.discordUserId,
+                sheetId: signupSlots.sheetId,
+                groupId: signupSheets.groupId
+            })
+            .from(shiftSignups)
+            .innerJoin(signupSlots, eq(shiftSignups.slotId, signupSlots.id))
+            .innerJoin(signupSheets, eq(signupSlots.sheetId, signupSheets.id))
+            .where(eq(shiftSignups.id, signupId))
+            .limit(1)
+
+        if (!row) throw status(404, 'Not Found' satisfies globalModel.notFound)
+
+        await assertGroupPermission(session, row.groupId, PERM.EDIT_SIGNUPS)
+
+        return row
+    }
+
+    /**
+     * Takes somebody off a slot.
+     *
+     * Separate from `withdraw`, which is somebody giving up their own and asks
+     * no permission at all. This one is a host clearing a name off a sheet —
+     * a no-show, or somebody who asked in Discord — and it is deliberately the
+     * only direction the grant runs in: `EDIT_SIGNUPS` moves and removes rows
+     * that already exist, and never puts anybody on a shift who did not put
+     * themselves there.
+     */
+    static async removeSignup(signupId: string, session: session) {
+        const row = await Schedule.resolveManagedSignup(signupId, session)
+
+        await db.delete(shiftSignups).where(eq(shiftSignups.id, row.id))
+        await publishSignupChange(row.groupId, row.eventId, row.occurrence, row.sheetId)
+
+        await recordAudit(
+            row.groupId,
+            session.user?.userId ?? null,
+            'signup.remove',
+            'Removed a sign-up from a shift'
+        )
+
+        return 'Success' as globalModel.genericSuccess
+    }
+
+    /**
+     * Moves somebody to another slot on the same occurrence.
+     *
+     * The target's own rank list is **not** consulted. A host moving a driver
+     * into the dispatcher slot for one evening is the case this exists for,
+     * and refusing it would leave them removing the row and asking the driver
+     * to sign up again — which the rank list would refuse too. The list says
+     * who may put themselves down, not who a host may put where.
+     */
+    static async moveSignup(signupId: string, body: ScheduleModel.moveSignupBody, session: session) {
+        const row = await Schedule.resolveManagedSignup(signupId, session)
+        if (row.slotId === body.slotId) return 'Success' as globalModel.genericSuccess
+
+        // The target is read straight from the group's own slots rather than
+        // through `loadSheets`, which only returns enabled sheets: a host
+        // tidying up a sheet that has been turned off still has rows on it.
+        const [target] = await db
+            .select({
+                id: signupSlots.id,
+                name: signupSlots.name,
+                capacity: signupSlots.capacity,
+                sheetId: signupSlots.sheetId,
+                groupId: signupSheets.groupId
+            })
+            .from(signupSlots)
+            .innerJoin(signupSheets, eq(signupSlots.sheetId, signupSheets.id))
+            .where(eq(signupSlots.id, body.slotId))
+            .limit(1)
+
+        if (!target) throw status(404, 'Not Found' satisfies globalModel.notFound)
+
+        // A slot in another group is not a move, it is a different sheet
+        // entirely — and the grant was checked against this group.
+        if (target.groupId !== row.groupId) {
+            throw status(400, 'that slot is on a different shift' satisfies ScheduleModel.notSameShift)
+        }
+
+        const onOccurrence = await db
+            .select({ id: shiftSignups.id, slotId: shiftSignups.slotId })
+            .from(shiftSignups)
+            .where(and(eq(shiftSignups.eventId, row.eventId), eq(shiftSignups.occurrence, row.occurrence)))
+
+        if (onOccurrence.filter((entry) => entry.slotId === target.id).length >= target.capacity) {
+            throw status(409, 'that slot is full' satisfies ScheduleModel.slotFull)
+        }
+
+        await db.update(shiftSignups).set({ slotId: target.id }).where(eq(shiftSignups.id, row.id))
+
+        await publishSignupChange(row.groupId, row.eventId, row.occurrence, row.sheetId)
+        // Both sheets are redrawn when the move crosses one, or the sheet
+        // being left keeps showing somebody who is no longer on it.
+        if (target.sheetId !== row.sheetId) {
+            await publishSignupChange(row.groupId, row.eventId, row.occurrence, target.sheetId)
+        }
+
+        await recordAudit(
+            row.groupId,
+            session.user?.userId ?? null,
+            'signup.move',
+            `Moved a sign-up to ${target.name}`
+        )
 
         return 'Success' as globalModel.genericSuccess
     }
@@ -401,13 +533,13 @@ export abstract class Schedule {
                 .limit(1)
 
             const [slot] = await db
-                .select({ signupId: rankSignupSlots.signupId })
-                .from(rankSignupSlots)
-                .where(eq(rankSignupSlots.id, body.slotId))
+                .select({ sheetId: signupSlots.sheetId })
+                .from(signupSlots)
+                .where(eq(signupSlots.id, body.slotId))
                 .limit(1)
 
             if (event && slot) {
-                await publishSignupChange(event.groupId, body.eventId, body.occurrence, slot.signupId)
+                await publishSignupChange(event.groupId, body.eventId, body.occurrence, slot.sheetId)
             }
         }
 

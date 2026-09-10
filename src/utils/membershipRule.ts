@@ -19,9 +19,25 @@ export type Membership = {
     robloxRank: number
     /** The rank's granular grants. See `utils/permissions`. */
     permissions: number
+    /**
+     * The `rank_relations` row backing this membership, or null where the
+     * group has never bound the Roblox role the person holds.
+     *
+     * Sign-up sheets name the ranks that may fill them by row id, so this is
+     * what that list is matched against. The rank *number* would nearly do —
+     * Roblox keeps them unique within a group — but it is a cached copy that
+     * can be stale, and a sheet must not admit somebody because a refresh has
+     * not run yet.
+     */
+    rankId: string | null
 }
 
-export const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, robloxRank: -1, permissions: 0 }
+export const NON_MEMBER: Membership = {
+    permissionLevel: PERMISSION.NONE,
+    robloxRank: -1,
+    permissions: 0,
+    rankId: null
+}
 
 /**
  * What a site admin running with admin mode on holds in every group (§5.1).
@@ -33,7 +49,10 @@ export const NON_MEMBER: Membership = { permissionLevel: PERMISSION.NONE, roblox
 export const ELEVATED: Membership = {
     permissionLevel: PERMISSION.MANAGE,
     robloxRank: 255,
-    permissions: ALL_PERMISSIONS
+    permissions: ALL_PERMISSIONS,
+    // No rank backs it — the standing is the instance's, not a group's — and
+    // every check this reaches answers yes on the grants above in any case.
+    rankId: null
 }
 
 /**
@@ -56,14 +75,19 @@ export const ELEVATED: Membership = {
  * back.
  */
 export function resolveMembership(
-    relation: { permissions: number; cachedRank: number } | undefined,
+    relation: { id?: string; permissions: number; cachedRank: number } | undefined,
     reportedRank: number | undefined
 ): Membership {
     const robloxRank = relation?.cachedRank ?? reportedRank ?? -1
 
     const permissions = robloxRank >= 255 ? ALL_PERMISSIONS : (relation?.permissions ?? 0)
 
-    return { permissionLevel: levelForPermissions(permissions), robloxRank, permissions }
+    return {
+        permissionLevel: levelForPermissions(permissions),
+        robloxRank,
+        permissions,
+        rankId: relation?.id ?? null
+    }
 }
 
 /**
