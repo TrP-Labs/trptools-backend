@@ -151,6 +151,25 @@ route is furthest below its target share, breaking ties randomly.
 Uploads go to S3-compatible object storage through Bun's built-in S3 client, so
 MinIO, Garage, R2 and AWS all work unchanged. The compose file runs MinIO.
 
+`S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_REGION`
+configure authenticated uploads and deletes. `S3_PUBLIC_URL` is the **full
+public bucket URL**: `http://localhost:9000/trptools` for local MinIO, or
+`https://assets.example.com` for an R2 custom domain. Only the object key
+(`groups/...`) is appended. Leaving it blank falls back to
+`S3_ENDPOINT/S3_BUCKET`; in Docker, supply a URL the browser can reach.
+
+For R2, set `S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`,
+`S3_REGION=auto`, the bucket name and R2 credentials, and the bucket's public
+domain as `S3_PUBLIC_URL`. Configure public reads through the bucket policy
+or public domain; uploads do not send object ACLs, which R2 does not support.
+Docker's MinIO initialization already configures public reads.
+
+**Upgrading:** older versions appended the bucket to `S3_PUBLIC_URL`. Add
+`/<bucket-name>` to an existing MinIO public URL when upgrading (for example,
+`http://localhost:9000` becomes `http://localhost:9000/trptools`). R2 public
+domains need no bucket suffix. Existing media needs no database migration
+when objects retain their original keys.
+
 Files are validated by their magic number rather than the declared content
 type, capped at 6MB, and limited to 12 per route or depot. Uploads are rate
 limited per account.

@@ -66,7 +66,7 @@ export const env = {
 
     // --- S3-compatible object storage for uploaded images -------------------
     S3_ENDPOINT: stripTrailingSlash(optional('S3_ENDPOINT', 'http://localhost:9000')),
-    /** Browser-facing base URL, when it differs from the internal endpoint. */
+    /** Full public bucket URL (including its path, if any); blank uses endpoint/bucket. */
     S3_PUBLIC_URL: stripTrailingSlash(optional('S3_PUBLIC_URL', '')),
     S3_BUCKET: optional('S3_BUCKET', 'trptools'),
     S3_ACCESS_KEY: optional('S3_ACCESS_KEY', ''),

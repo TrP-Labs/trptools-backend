@@ -64,7 +64,8 @@ export function buildKey(groupId: string, contentType: string): string {
 
 export async function putObject(key: string, bytes: Uint8Array, contentType: string) {
     if (!client) throw new Error('Object storage is not configured')
-    await client.write(key, bytes, { type: contentType, acl: 'public-read' })
+    // Public access belongs to the bucket policy/domain; R2 does not support ACLs.
+    await client.write(key, bytes, { type: contentType })
 }
 
 export async function deleteObject(key: string) {
@@ -74,6 +75,6 @@ export async function deleteObject(key: string) {
 
 /** The browser-facing URL for an object. */
 export function publicUrl(key: string): string {
-    const base = (env.S3_PUBLIC_URL || env.S3_ENDPOINT).replace(/\/$/, '')
-    return `${base}/${env.S3_BUCKET}/${key}`
+    const base = env.S3_PUBLIC_URL || `${env.S3_ENDPOINT}/${env.S3_BUCKET}`
+    return `${base.replace(/\/+$/, '')}/${key}`
 }
