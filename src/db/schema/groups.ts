@@ -45,9 +45,9 @@ export const groups = pgTable(
          */
         sourceLocale: text('source_locale').notNull().default('en'),
         accentColor: text('accent_color').notNull().default('#4287f5'),
-        /** Public URL of the current banner, denormalised so page reads stay one query. */
+        /** Legacy saved URL, retained for schema compatibility; reads resolve bannerMediaId instead. */
         bannerImage: text('banner_image'),
-        /** The media row behind `bannerImage`, so replacing one cleans up the object. */
+        /** The banner's media row; its key determines the current public URL. */
         bannerMediaId: uuid('banner_media_id'),
 
         /**

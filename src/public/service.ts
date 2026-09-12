@@ -213,6 +213,7 @@ export abstract class PublicPages {
         }
 
         const icons = await mediaUrls([
+            group.bannerMediaId,
             ...publicRoutes.map((route) => route.iconMediaId),
             ...publicDepots.map((depot) => depot.iconMediaId)
         ])
@@ -222,7 +223,7 @@ export abstract class PublicPages {
             slug: group.slug,
             name: groupName(group),
             icon: group.cachedIcon,
-            bannerImage: group.bannerImage,
+            bannerImage: group.bannerMediaId ? (icons.get(group.bannerMediaId) ?? null) : null,
             description: group.cachedDescription ?? '',
             tagline: group.tagline,
             about: group.about,
