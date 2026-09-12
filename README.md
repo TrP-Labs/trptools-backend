@@ -170,6 +170,11 @@ Docker's MinIO initialization already configures public reads.
 domains need no bucket suffix. Existing media needs no database migration
 when objects retain their original keys.
 
+Banners, badges and galleries resolve their public URLs from media keys on
+read. Banners uploaded by older versions may still have a saved URL in the
+database; it is ignored in favor of their media reference, so changing storage
+settings also fixes their appearance in settings, public pages and social previews.
+
 Files are validated by their magic number rather than the declared content
 type, capped at 6MB, and limited to 12 per route or depot. Uploads are rate
 limited per account.

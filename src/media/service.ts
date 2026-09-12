@@ -20,6 +20,8 @@ import { findGroup, recordAudit } from '../groups/service'
 import { MediaModel } from './model'
 import { presentTranslations, translationUpdate } from '../utils/translations'
 
+export { mediaUrls } from './urls'
+
 const MAX_PER_OWNER = 12
 
 export function present(row: Media): MediaModel.item {
@@ -65,28 +67,6 @@ export async function mediaForOwners(
 }
 
 /**
- * Public URLs for a handful of media rows, keyed by id.
- *
- * Icons and banners are referenced by id from the row that uses them rather
- * than listed with the galleries, so they need a lookup of their own. A
- * withheld image resolves to nothing, which drops the caller back to its
- * built-in presentation instead of showing reported content.
- */
-export async function mediaUrls(ids: Array<string | null>): Promise<Map<string, string>> {
-    const wanted = [...new Set(ids.filter((id): id is string => Boolean(id)))]
-    if (wanted.length === 0) return new Map()
-
-    const rows = await db
-        .select({ id: media.id, key: media.key, moderation: media.moderation })
-        .from(media)
-        .where(inArray(media.id, wanted))
-
-    return new Map(
-        rows.filter((row) => row.moderation !== 'HIDDEN').map((row) => [row.id, publicUrl(row.key)])
-    )
-}
-
-/**
  * The row that owns a badge or banner, and how to repoint it.
  *
  * Groups, routes and depots each store their image on a different column, so
@@ -111,12 +91,11 @@ async function resolveIconOwner(groupId: string, ownerType: MediaModel.ownerType
             ownerId: null,
             label: 'banner',
             currentMediaId: group.mediaId,
-            // The URL is denormalised onto the group so reading a public page
-            // stays a single query.
-            link: async (mediaId: string | null, url: string | null) => {
+            // Keep only the reference; a saved URL would outlive storage configuration changes.
+            link: async (mediaId: string | null) => {
                 await db
                     .update(groups)
-                    .set({ bannerMediaId: mediaId, bannerImage: url })
+                    .set({ bannerMediaId: mediaId, bannerImage: null })
                     .where(eq(groups.id, groupId))
             }
         }
@@ -137,7 +116,7 @@ async function resolveIconOwner(groupId: string, ownerType: MediaModel.ownerType
             ownerId,
             label: 'route badge',
             currentMediaId: route.mediaId,
-            link: async (mediaId: string | null, _url: string | null) => {
+            link: async (mediaId: string | null) => {
                 await db
                     .update(routes)
                     .set({ iconMediaId: mediaId, updatedAt: new Date() })
@@ -158,7 +137,7 @@ async function resolveIconOwner(groupId: string, ownerType: MediaModel.ownerType
         ownerId,
         label: 'depot icon',
         currentMediaId: depot.mediaId,
-        link: async (mediaId: string | null, _url: string | null) => {
+        link: async (mediaId: string | null) => {
             await db
                 .update(depots)
                 .set({ iconMediaId: mediaId, updatedAt: new Date() })
@@ -357,7 +336,7 @@ export abstract class MediaService {
         }
 
         const url = publicUrl(row.key)
-        await owner.link(row.id, url)
+        await owner.link(row.id)
         await dropIcon(owner.currentMediaId)
 
         await recordAudit(group.id, session.user?.userId ?? null, 'media.icon', `Updated the ${owner.label} image`)
@@ -373,7 +352,7 @@ export abstract class MediaService {
 
         const owner = await resolveIconOwner(group.id, query.ownerType, query.ownerId)
 
-        await owner.link(null, null)
+        await owner.link(null)
         await dropIcon(owner.currentMediaId)
 
         await recordAudit(group.id, session.user?.userId ?? null, 'media.icon', `Removed the ${owner.label} image`)

@@ -19,6 +19,7 @@ import { presentTranslations, translationUpdate } from '../utils/translations'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { seedGroupDefaults, seedVehicleTypes } from './defaults'
 import { GroupModel } from './model'
+import { mediaUrls } from '../media/urls'
 
 /** Refreshes the cached Roblox facts on a group if they have gone stale. */
 async function withFreshCache(group: Group, credentials: RobloxCredentials): Promise<Group> {
@@ -65,7 +66,7 @@ export function groupName(group: Group): string {
  * what to draw from the grants, and a level alone cannot answer "may this
  * person edit depots but not ranks".
  */
-function present(group: Group, membership: Membership): GroupModel.groupResponse {
+function present(group: Group, membership: Membership, images: Map<string, string>): GroupModel.groupResponse {
     return {
         id: group.id,
         slug: group.slug,
@@ -85,7 +86,7 @@ function present(group: Group, membership: Membership): GroupModel.groupResponse
         sourceLocale: group.sourceLocale,
         translations: presentTranslations('GROUP', group.translations),
         accentColor: group.accentColor,
-        bannerImage: group.bannerImage,
+        bannerImage: group.bannerMediaId ? (images.get(group.bannerMediaId) ?? null) : null,
         bannerMediaId: group.bannerMediaId,
 
         showRoutes: group.showRoutes,
@@ -369,7 +370,8 @@ export abstract class Group_ {
         const credentials = await resolveCredentials(group.id, session.user?.userId)
         const fresh = await withFreshCache(group, credentials)
 
-        return present(fresh, membership)
+        const images = await mediaUrls([fresh.bannerMediaId])
+        return present(fresh, membership, images)
     }
 
     /**
