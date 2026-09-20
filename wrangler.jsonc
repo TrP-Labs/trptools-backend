@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trptools-backend",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "minify": true,
+  "keep_vars": true,
+  "observability": {
+    "enabled": true
+  },
+  "rules": [
+    {
+      "type": "Data",
+      "globs": ["**/*.ttf"],
+      "fallthrough": true
+    }
+  ],
+  "vars": {
+    "CF_WORKER": "true",
+    "NODE_ENV": "production"
+  }
+}

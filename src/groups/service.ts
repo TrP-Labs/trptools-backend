@@ -1,7 +1,9 @@
 import { status } from 'elysia'
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm'
+import type { NeonHttpDatabase } from 'drizzle-orm/neon-http'
 import db from '../db'
 import { auditMessages, groups, rankRelations, users, vehicleRules, type Group } from '../db/schema'
+import * as databaseSchema from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { Roblox, type RobloxCredentials } from '../utils/roblox'
 import { resolveCredentials, userCredentials } from '../utils/robloxCredentials'
@@ -20,6 +22,7 @@ import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { seedGroupDefaults, seedVehicleTypes } from './defaults'
 import { GroupModel } from './model'
 import { mediaUrls } from '../media/urls'
+import { env } from '../utils/env'
 
 /** Refreshes the cached Roblox facts on a group if they have gone stale. */
 async function withFreshCache(group: Group, credentials: RobloxCredentials): Promise<Group> {
@@ -496,10 +499,20 @@ export abstract class Group_ {
             return { groupId: group.id, pattern: name, category: type.category, fixedRoute: null, order: index }
         })
 
-        await db.transaction(async (tx) => {
-            await tx.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
-            if (values.length > 0) await tx.insert(vehicleRules).values(values)
-        })
+        if (env.isCloudflareWorker) {
+            const edge = db as unknown as NeonHttpDatabase<typeof databaseSchema>
+            const remove = edge.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
+            if (values.length > 0) {
+                await edge.batch([remove, edge.insert(vehicleRules).values(values)])
+            } else {
+                await remove
+            }
+        } else {
+            await db.transaction(async (tx) => {
+                await tx.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
+                if (values.length > 0) await tx.insert(vehicleRules).values(values)
+            })
+        }
 
         await recordAudit(
             group.id,

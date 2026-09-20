@@ -1,0 +1,29 @@
+# Copy to .dev.vars for `bun run worker:dev`. Never commit the populated file.
+
+DATABASE_URL=postgresql://user:password@example.neon.tech/trptools?sslmode=require
+UPSTASH_REDIS_REST_URL=https://example.upstash.io
+UPSTASH_REDIS_REST_TOKEN=
+
+BASE_URL=http://localhost:8787
+FRONTEND_URL=http://localhost:5173
+ENCRYPTION_KEY=
+
+ROBLOX_CLIENT_ID=
+ROBLOX_CLIENT_SECRET=
+ROBLOX_API_KEY=
+
+DISCORD_APP_ID=
+DISCORD_CLIENT_SECRET=
+DISCORD_BOT_TOKEN=
+BOT_SERVICE_TOKEN=
+
+S3_ENDPOINT=https://account-id.r2.cloudflarestorage.com
+S3_PUBLIC_URL=https://assets.example.com
+S3_BUCKET=trptools
+S3_ACCESS_KEY=
+S3_SECRET_KEY=
+S3_REGION=auto
+
+SITE_ADMINS=
+SESSION_TTL_DAYS=30
+# COOKIE_DOMAIN=.example.com

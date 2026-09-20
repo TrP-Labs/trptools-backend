@@ -1,9 +1,9 @@
-import { resolve } from 'node:path'
 import { eq } from 'drizzle-orm'
-import { Resvg } from '@resvg/resvg-js'
+import { initWasm, Resvg } from '@resvg/resvg-wasm'
+import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm'
 import satori, { type SatoriOptions } from 'satori'
-import interRegular from './assets/Inter-Regular.ttf' with { type: 'file' }
-import interSemiBold from './assets/Inter-SemiBold.ttf' with { type: 'file' }
+import interRegular from './assets/Inter-Regular.ttf'
+import interSemiBold from './assets/Inter-SemiBold.ttf'
 import db from '../db'
 import { botConfigs, groups, users } from '../db/schema'
 import { dataRedis } from '../utils/redis'
@@ -25,9 +25,9 @@ import type { Vehicles } from '../rooms/dispatch/model'
  * colours in this process's database. Sending that down as JSON would mean
  * two copies of the same presentation logic drifting apart.
  *
- * satori draws to SVG and resvg rasterises it. Both are pure library code with
- * a bundled font, so this works in a container with no browser, no system
- * fonts and no filesystem to speak of — which is the deployment target.
+ * satori draws to SVG and the WebAssembly build of resvg rasterises it. Both
+ * are bundled with the fonts, so the renderer has no filesystem dependency
+ * in a Worker and still runs unchanged in the Bun container.
  */
 
 /**
@@ -39,18 +39,29 @@ import type { Vehicles } from '../rooms/dispatch/model'
  * the bundler understands — it emits the file next to the bundle and rewrites
  * the value.
  *
- * That value is absolute when running from `src` but bundle-relative when
- * built, and `Bun.file` would resolve the relative form against the process
- * working directory rather than against the bundle. Resolving it against
- * `import.meta.dir` is what makes both forms land on the real file.
+ * Bun represents imported binary assets as emitted file paths; Wrangler
+ * represents them as ArrayBuffers or precompiled WebAssembly modules. This
+ * small loader accepts both shapes so one renderer serves both targets.
  *
  * Loaded once; reading two fonts per render would dominate the render cost.
  */
-const asset = (value: string) => resolve(import.meta.dir, value)
+type BunAssetReader = { file(path: string): { arrayBuffer(): Promise<ArrayBuffer> } }
+
+const bun = (globalThis as typeof globalThis & { Bun?: BunAssetReader }).Bun
+
+async function assetBytes(value: string | ArrayBuffer): Promise<ArrayBuffer> {
+    if (value instanceof ArrayBuffer) return value
+    if (!bun) throw new Error('A binary asset was emitted as a path outside Bun')
+    return bun.file(value).arrayBuffer()
+}
+
+const rendererReady = initWasm(
+    resvgWasm instanceof WebAssembly.Module ? resvgWasm : assetBytes(resvgWasm as unknown as string | ArrayBuffer)
+)
 
 const fonts: Promise<SatoriOptions['fonts']> = Promise.all([
-    Bun.file(asset(interRegular)).arrayBuffer(),
-    Bun.file(asset(interSemiBold)).arrayBuffer()
+    assetBytes(interRegular as unknown as string | ArrayBuffer),
+    assetBytes(interSemiBold as unknown as string | ArrayBuffer)
 ]).then(([regular, semibold]) => [
     { name: 'Inter', data: regular, weight: 400 as const, style: 'normal' as const },
     { name: 'Inter', data: semibold, weight: 600 as const, style: 'normal' as const }
@@ -373,6 +384,7 @@ export async function renderManifest(data: ManifestData): Promise<Buffer> {
         fonts: await fonts
     })
 
+    await rendererReady
     return Buffer.from(new Resvg(svg).render().asPng())
 }
 
