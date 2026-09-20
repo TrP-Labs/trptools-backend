@@ -13,11 +13,16 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
+      # This is the same gate used by `worker:deploy`: unit tests, TypeScript,
+      # the Bun bundle, the Worker bundle, and a real workerd health probe.
+      # No Docker package or Worker version is published unless all of it is
+      # green on the exact commit being released.
+      - run: bun run check
 
   publish:
     needs: check

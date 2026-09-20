@@ -72,9 +72,13 @@ deploy:
 
 ```bash
 DATABASE_URL='<neon-connection-string>' bun run db:migrate
-bun run check
 bun run worker:deploy
 ```
+
+`worker:deploy` runs the complete release gate before invoking Wrangler: unit
+tests, TypeScript, both production bundles and a real local workerd health
+probe. Arguments still pass through to Wrangler, so a secrets file can be
+supplied with `bun run worker:deploy -- --secrets-file .env.production`.
 
 ### Working without Roblox credentials
 
@@ -263,7 +267,8 @@ the clear/uphold actions.
 | `bun run build`          | Bundle the Bun server to `dist/`             |
 | `bun run worker:dev`     | Run the API in the local Workers runtime     |
 | `bun run worker:build`   | Build and validate the Worker without deploy |
-| `bun run worker:deploy`  | Deploy the Worker                            |
+| `bun run worker:smoke`   | Boot workerd and probe the packaged API       |
+| `bun run worker:deploy`  | Pass the full gate, then deploy the Worker    |
 | `bun run worker:types`   | Regenerate Cloudflare binding types          |
 | `bun run check`          | Run tests, typecheck and both builds         |
 | `bun run typecheck`      | Type check without emitting                  |
