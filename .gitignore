@@ -2,6 +2,8 @@ node_modules
 
 # Build output
 dist
+dist-worker
+.wrangler
 *.tsbuildinfo
 
 # Secrets — .env holds the Roblox client secret and the encryption key

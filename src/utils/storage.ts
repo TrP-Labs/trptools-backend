@@ -1,24 +1,29 @@
-import { S3Client } from 'bun'
+import { AwsClient } from 'aws4fetch'
 import { env } from './env'
 
 /**
  * S3-compatible object storage.
  *
- * Bun ships an S3 client, so this needs no dependency and talks to MinIO,
- * Garage, Ceph, Cloudflare R2 or AWS unchanged — whatever the deployment has.
- * The compose file runs MinIO.
+ * Signing plain Fetch requests keeps this client usable in both Bun and
+ * Workers while still talking to MinIO, Garage, Cloudflare R2 or AWS.
  */
 export const storageConfigured = Boolean(env.S3_BUCKET && env.S3_ACCESS_KEY && env.S3_SECRET_KEY)
 
 const client = storageConfigured
-    ? new S3Client({
+    ? new AwsClient({
           accessKeyId: env.S3_ACCESS_KEY,
           secretAccessKey: env.S3_SECRET_KEY,
-          bucket: env.S3_BUCKET,
-          endpoint: env.S3_ENDPOINT,
-          region: env.S3_REGION
+          service: 's3',
+          region: env.S3_REGION,
+          retries: 3
       })
     : null
+
+const objectUrl = (key: string) =>
+    `${env.S3_ENDPOINT}/${encodeURIComponent(env.S3_BUCKET)}/${key
+        .split('/')
+        .map((part) => encodeURIComponent(part))
+        .join('/')}`
 
 /** Image types we accept. Anything else is rejected before it reaches storage. */
 export const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -65,12 +70,25 @@ export function buildKey(groupId: string, contentType: string): string {
 export async function putObject(key: string, bytes: Uint8Array, contentType: string) {
     if (!client) throw new Error('Object storage is not configured')
     // Public access belongs to the bucket policy/domain; R2 does not support ACLs.
-    await client.write(key, bytes, { type: contentType })
+    const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    const response = await client.fetch(objectUrl(key), {
+        method: 'PUT',
+        headers: { 'content-type': contentType },
+        body
+    })
+    if (!response.ok) throw new Error(`Object storage PUT failed with ${response.status}`)
 }
 
 export async function deleteObject(key: string) {
     if (!client) return
-    await client.delete(key).catch(() => undefined)
+    await client
+        .fetch(objectUrl(key), { method: 'DELETE' })
+        .then((response) => {
+            if (!response.ok && response.status !== 404) {
+                throw new Error(`Object storage DELETE failed with ${response.status}`)
+            }
+        })
+        .catch(() => undefined)
 }
 
 /** The browser-facing URL for an object. */
