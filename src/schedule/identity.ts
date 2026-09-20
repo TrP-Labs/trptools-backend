@@ -1,4 +1,4 @@
-import { eq, inArray, or, type SQL } from 'drizzle-orm'
+import { eq, or, sql, type SQL } from 'drizzle-orm'
 import db from '../db'
 import { shiftSignups, users } from '../db/schema'
 
@@ -114,46 +114,42 @@ export async function actorForDiscord(discordUserId: string): Promise<SignupActo
  * from this point on, which it could not do before.
  */
 export async function adoptDiscordSignups(userId: string, discordUserId: string): Promise<number> {
-    return db.transaction(async (tx) => {
-        const mine = await tx
-            .select({
-                id: shiftSignups.id,
-                slotId: shiftSignups.slotId,
-                eventId: shiftSignups.eventId,
-                occurrence: shiftSignups.occurrence,
-                userId: shiftSignups.userId,
-                discordUserId: shiftSignups.discordUserId
-            })
-            .from(shiftSignups)
-            .where(or(eq(shiftSignups.userId, userId), eq(shiftSignups.discordUserId, discordUserId))!)
+    // One statement keeps adoption atomic on Neon's HTTP transport. The first
+    // CTE snapshots slots already held by the account; duplicates are deleted
+    // and every remaining Discord row is adopted before a concurrent request
+    // can observe the identity half-moved.
+    const result = await db.execute<{ adopted: number }>(sql`
+        with account_slots as (
+            select event_id, occurrence, slot_id
+            from ${shiftSignups}
+            where user_id = ${userId}
+        ), deleted as (
+            delete from ${shiftSignups} as signup
+            using account_slots as held
+            where signup.discord_user_id = ${discordUserId}
+              and signup.event_id = held.event_id
+              and signup.occurrence = held.occurrence
+              and signup.slot_id = held.slot_id
+            returning signup.id
+        ), adopted as (
+            update ${shiftSignups} as signup
+            set user_id = ${userId}, discord_user_id = null, discord_username = null
+            where signup.discord_user_id = ${discordUserId}
+              and not exists (
+                  select 1 from account_slots as held
+                  where signup.event_id = held.event_id
+                    and signup.occurrence = held.occurrence
+                    and signup.slot_id = held.slot_id
+              )
+            returning signup.id
+        )
+        select
+            (select count(*)::int from adopted) as adopted,
+            (select count(*)::int from deleted) as collapsed
+    `)
 
-        const key = (row: { slotId: string; eventId: string; occurrence: Date }) =>
-            `${row.eventId}:${row.occurrence.getTime()}:${row.slotId}`
-
-        const alreadyHeld = new Set(mine.filter((row) => row.userId === userId).map(key))
-
-        // Signed up on both halves for the same slot: two rows, and the
-        // partial unique index would refuse the update. The Discord one goes —
-        // the account row is the identity being kept.
-        const collided = mine
-            .filter((row) => row.discordUserId === discordUserId && alreadyHeld.has(key(row)))
-            .map((row) => row.id)
-
-        if (collided.length > 0) {
-            await tx.delete(shiftSignups).where(inArray(shiftSignups.id, collided))
-        }
-
-        const adopted = mine
-            .filter((row) => row.discordUserId === discordUserId && !alreadyHeld.has(key(row)))
-            .map((row) => row.id)
-
-        if (adopted.length === 0) return 0
-
-        await tx
-            .update(shiftSignups)
-            .set({ userId, discordUserId: null, discordUsername: null })
-            .where(inArray(shiftSignups.id, adopted))
-
-        return adopted.length
-    })
+    const rows = Array.isArray(result)
+        ? result
+        : (result as unknown as { rows: Array<{ adopted: number }> }).rows
+    return Number(rows[0]?.adopted ?? 0)
 }

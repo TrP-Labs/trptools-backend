@@ -13,16 +13,20 @@ function stripTrailingSlash(value: string) {
 }
 
 const NODE_ENV = optional('NODE_ENV', 'development')
+const CF_WORKER = optional('CF_WORKER', '') === 'true'
 
 export const env = {
     NODE_ENV,
     isProduction: NODE_ENV === 'production',
+    isCloudflareWorker: CF_WORKER,
 
     PORT: Number(optional('PORT', '3001')),
     HOST: optional('HOST', '0.0.0.0'),
 
     DATABASE_URL: required('DATABASE_URL'),
     REDIS_URL: optional('REDIS_URL', 'redis://localhost:6379'),
+    UPSTASH_REDIS_REST_URL: optional('UPSTASH_REDIS_REST_URL', ''),
+    UPSTASH_REDIS_REST_TOKEN: optional('UPSTASH_REDIS_REST_TOKEN', ''),
 
     /** Public origin of this API, used to build the OAuth redirect URI. */
     BASE_URL: stripTrailingSlash(optional('BASE_URL', 'http://localhost:3001')),

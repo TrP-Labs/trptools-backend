@@ -1,7 +1,8 @@
 # TrP Tools API
 
-The backend for TrP Tools 2.0. ElysiaJS on Bun, Postgres via Drizzle, and
-Valkey/Redis for caching, dispatch room state and realtime fan-out.
+The backend for TrP Tools 2.0. ElysiaJS on Bun or Cloudflare Workers, Postgres
+via Drizzle, and Valkey/Redis for caching, dispatch room state and realtime
+fan-out.
 
 ## Running locally
 
@@ -20,6 +21,64 @@ Postgres, Valkey and MinIO come from the compose file one directory up:
 ```bash
 docker compose up -d postgres valkey minio minio-init
 ```
+
+## Cloudflare Workers
+
+The Worker entry point exposes the same route tree as the Bun server. The Bun
+target remains available for local development and Docker; the Worker target
+selects edge-safe adapters for the services that cannot use persistent TCP
+connections:
+
+- Neon HTTP for Drizzle/Postgres queries
+- Upstash REST for Redis commands and its SSE API for pub/sub subscriptions
+- signed Fetch requests for S3-compatible storage, including R2
+- the WebAssembly build of Resvg for generated dispatch manifests
+
+For local Worker development, copy the example bindings and fill in the
+credentials:
+
+```bash
+cp .dev.vars.example .dev.vars
+bun run worker:dev
+```
+
+Use a pooled or direct Neon connection string for `DATABASE_URL`. Set
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` explicitly in
+production. The adapter can derive them from an Upstash `rediss://` URL for
+compatibility, but the explicit REST bindings make the deployed configuration
+unambiguous.
+
+Store credentials as Worker secrets rather than committing them. At minimum,
+set the database, Redis, encryption and OAuth values used by the installation:
+
+```bash
+bunx wrangler secret put DATABASE_URL
+bunx wrangler secret put UPSTASH_REDIS_REST_URL
+bunx wrangler secret put UPSTASH_REDIS_REST_TOKEN
+bunx wrangler secret put ENCRYPTION_KEY
+bunx wrangler secret put ROBLOX_CLIENT_ID
+bunx wrangler secret put ROBLOX_CLIENT_SECRET
+```
+
+Add the Discord, Roblox API-key and S3/R2 secrets from `.dev.vars.example` when
+those integrations are enabled. `BASE_URL` must be the public Worker origin so
+OAuth redirects return to the API. `FRONTEND_URL` is the comma-separated list
+of allowed browser origins. For R2, use its S3 API endpoint for `S3_ENDPOINT`
+and a public bucket/custom-domain URL for `S3_PUBLIC_URL`.
+
+Database migrations are an operator or CI step; they do not run inside a
+request or during Worker startup. Migrate first, run both target builds, then
+deploy:
+
+```bash
+DATABASE_URL='<neon-connection-string>' bun run db:migrate
+bun run worker:deploy
+```
+
+`worker:deploy` runs the complete release gate before invoking Wrangler: unit
+tests, TypeScript, both production bundles and a real local workerd health
+probe. Arguments still pass through to Wrangler, so a secrets file can be
+supplied with `bun run worker:deploy -- --secrets-file .env.production`.
 
 ### Working without Roblox credentials
 
@@ -148,8 +207,9 @@ route is furthest below its target share, breaking ties randomly.
 
 ## Images
 
-Uploads go to S3-compatible object storage through Bun's built-in S3 client, so
-MinIO, Garage, R2 and AWS all work unchanged. The compose file runs MinIO.
+Uploads go to S3-compatible object storage through signed Fetch requests, so
+MinIO, Garage, R2 and AWS work from both Bun and Workers. The compose file runs
+MinIO.
 
 `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_REGION`
 configure authenticated uploads and deletes. `S3_PUBLIC_URL` is the **full
@@ -200,14 +260,20 @@ the clear/uphold actions.
 
 ## Scripts
 
-| Script            | Purpose                                |
-| ----------------- | -------------------------------------- |
-| `bun run dev`     | Watch mode                             |
-| `bun run start`   | Run once                               |
-| `bun run build`   | Bundle to `dist/`                      |
-| `bun run typecheck` | Type check without emitting          |
-| `bun run db:generate` | Generate a migration from the schema |
-| `bun run db:migrate`  | Apply migrations                   |
-| `bun run db:push` | Push the schema without a migration    |
-| `bun run db:seed` | Seed development data                  |
-| `bun run db:studio` | Browse the database                  |
+| Script                   | Purpose                                      |
+| ------------------------ | -------------------------------------------- |
+| `bun run dev`            | Run the Bun server in watch mode             |
+| `bun run start`          | Run the Bun server once                      |
+| `bun run build`          | Bundle the Bun server to `dist/`             |
+| `bun run worker:dev`     | Run the API in the local Workers runtime     |
+| `bun run worker:build`   | Build and validate the Worker without deploy |
+| `bun run worker:smoke`   | Boot workerd and probe the packaged API       |
+| `bun run worker:deploy`  | Pass the full gate, then deploy the Worker    |
+| `bun run worker:types`   | Regenerate Cloudflare binding types          |
+| `bun run check`          | Run tests, typecheck and both builds         |
+| `bun run typecheck`      | Type check without emitting                  |
+| `bun run db:generate`    | Generate a migration from the schema         |
+| `bun run db:migrate`     | Apply migrations                             |
+| `bun run db:push`        | Push the schema without a migration          |
+| `bun run db:seed`        | Seed development data                        |
+| `bun run db:studio`      | Browse the database                          |

@@ -322,11 +322,11 @@ async function seed() {
 
 seed()
     .then(async () => {
-        await client.end()
+        await client?.end()
         process.exit(0)
     })
     .catch(async (error) => {
         console.error(error)
-        await client.end()
+        await client?.end()
         process.exit(1)
     })
