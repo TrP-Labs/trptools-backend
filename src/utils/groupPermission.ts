@@ -4,7 +4,7 @@ import db from '../db'
 import { groups, rankRelations, users } from '../db/schema'
 import { Roblox } from './roblox'
 import { resolveCredentials } from './robloxCredentials'
-import { dataRedis } from './redis'
+import { dataRedis, deleteByPattern } from './redis'
 import { NON_MEMBER, resolveMembership, type Membership } from './membershipRule'
 import { has, permissionsForLevel } from './permissions'
 import { isUuid } from './slug'
@@ -270,16 +270,10 @@ export async function assertGroupPermission(
  * signed in to their own dashboard.
  */
 export async function invalidateGroupPermissions(groupID: string) {
-    const stream = dataRedis.scanStream({ match: `perm:${groupID}:*`, count: 500 })
-    for await (const keys of stream) {
-        if (keys.length) await dataRedis.unlink(...keys)
-    }
+    await deleteByPattern(`perm:${groupID}:*`)
 }
 
 /** Clears one user's cached permission level everywhere. */
 export async function invalidateUserPermissions(userID: string) {
-    const stream = dataRedis.scanStream({ match: `perm:*:${userID}`, count: 500 })
-    for await (const keys of stream) {
-        if (keys.length) await dataRedis.unlink(...keys)
-    }
+    await deleteByPattern(`perm:*:${userID}`)
 }

@@ -1,4 +1,4 @@
-import { dataRedis } from './redis'
+import { dataRedis, deleteByPattern } from './redis'
 import { env } from './env'
 
 /**
@@ -590,9 +590,6 @@ export abstract class Roblox {
             .del(`roblox:group:${groupId}`, `roblox:roles:${groupId}`, `roblox:groupicon:${groupId}`)
             .catch(() => undefined)
 
-        const stream = dataRedis.scanStream({ match: `roblox:membership:${groupId}:*`, count: 500 })
-        for await (const keys of stream) {
-            if (keys.length) await dataRedis.unlink(...keys)
-        }
+        await deleteByPattern(`roblox:membership:${groupId}:*`)
     }
 }
