@@ -12,10 +12,10 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       # This is the same gate used by `worker:deploy`: unit tests, TypeScript,
@@ -27,7 +27,7 @@ jobs:
   publish:
     needs: check
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     # A release pushes `main` and the tag together, so two runs of this job
     # start on the same commit seconds apart. Both write the same
@@ -45,7 +45,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
