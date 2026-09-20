@@ -16,6 +16,7 @@
     "worker:build": "wrangler deploy --dry-run --outdir dist-worker",
     "worker:deploy": "wrangler deploy",
     "worker:types": "wrangler types worker-configuration.d.ts",
+    "check": "bun run typecheck && bun run test && bun run build && bun run worker:build",
     "typecheck": "tsc --noEmit",
     "test": "bun test src",
     "db:generate": "drizzle-kit generate",
