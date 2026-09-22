@@ -4,7 +4,7 @@ import { globalModel } from '../utils/globalModel'
 import { BotInternal } from './internalModel'
 import { BotService } from './internalService'
 import { manifestFor } from './manifest'
-import { dueActions, releaseClaim } from './scheduler'
+import { claimCompleted, completeClaim, dueActions, releaseClaim } from './scheduler'
 
 /**
  * Routes for the trptools-bot process only.
@@ -49,6 +49,22 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
         }
     })
 
+    .get('/due/lease', async () => dueActions(new Date(), 'leased'), {
+        response: { 200: BotInternal.dueActions, 401: globalModel.unauthorized },
+        detail: { summary: 'Lease due actions for a retried bot worker' }
+    })
+
+    .get('/due/completed', async ({ query }) =>
+        claimCompleted(query.action, query.eventId, query.occurrence), {
+        query: t.Object({
+            action: BotInternal.dueAction.properties.action,
+            eventId: t.String({ format: 'uuid' }),
+            occurrence: t.String()
+        }),
+        response: { 200: t.Boolean(), 401: globalModel.unauthorized },
+        detail: { summary: 'Whether a leased bot action was already completed' }
+    })
+
     .post(
         '/due/release',
         async ({ body }) => {
@@ -66,6 +82,40 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
                 summary: 'Hand an action back after a failure',
                 description: 'Lets the next poll retry it, instead of the shift silently losing its announcement.'
             }
+        }
+    )
+
+    .post(
+        '/due/lease/release',
+        async ({ body }) => {
+            await releaseClaim(body.action, body.eventId, body.occurrence, 'leased')
+            return 'Success' as globalModel.genericSuccess
+        },
+        {
+            body: t.Object({
+                action: BotInternal.dueAction.properties.action,
+                eventId: t.String({ format: 'uuid' }),
+                occurrence: t.String()
+            }),
+            response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized },
+            detail: { summary: 'Release a leased bot action for retry' }
+        }
+    )
+
+    .post(
+        '/due/complete',
+        async ({ body }) => {
+            await completeClaim(body.action, body.eventId, body.occurrence)
+            return 'Success' as globalModel.genericSuccess
+        },
+        {
+            body: t.Object({
+                action: BotInternal.dueAction.properties.action,
+                eventId: t.String({ format: 'uuid' }),
+                occurrence: t.String()
+            }),
+            response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized },
+            detail: { summary: 'Mark a due bot action complete' }
         }
     )
 
