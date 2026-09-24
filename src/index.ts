@@ -24,6 +24,16 @@ import { bot } from './bot/controller'
 import { botInternal } from './bot/internalController'
 import { DiscordError } from './bot/discordCache'
 
+function limitedResponse(error: RateLimitError) {
+    return new Response('Too Many Requests', {
+        status: 429,
+        headers: {
+            'retry-after': String(error.retryAfterSeconds),
+            'x-ratelimit-source': 'trptools'
+        }
+    })
+}
+
 export const app = new Elysia()
     .use(
         cors({
@@ -37,10 +47,18 @@ export const app = new Elysia()
         // A broad safety net so no single client can saturate the API. Routes
         // that are individually expensive apply their own tighter limits on
         // top of this.
-        if (isBotServiceRequest(request, env.BOT_SERVICE_TOKEN)) {
-            await rateLimit('bot-service', 'authenticated', 1200, 60)
-        } else {
-            await rateLimit('global', clientKey(request), 600, 60)
+        try {
+            if (isBotServiceRequest(request, env.BOT_SERVICE_TOKEN)) {
+                await rateLimit('bot-service', 'authenticated', 1200, 60)
+            } else {
+                await rateLimit('global', clientKey(request), 600, 60)
+            }
+        } catch (error) {
+            // In a Worker, a nested Elysia onRequest error handler loses the
+            // Response status when this app is mounted through CloudflareAdapter.
+            // Returning the response from the hook keeps 429 and Retry-After.
+            if (error instanceof RateLimitError) return limitedResponse(error)
+            throw error
         }
     })
     .onAfterHandle(({ set }) => {
@@ -51,12 +69,7 @@ export const app = new Elysia()
         set.headers['referrer-policy'] = 'strict-origin-when-cross-origin'
     })
     .onError(({ code, error, set }) => {
-        if (error instanceof RateLimitError) {
-            set.status = 429
-            set.headers['retry-after'] = String(error.retryAfterSeconds)
-            set.headers['x-ratelimit-source'] = 'trptools'
-            return 'Too Many Requests'
-        }
+        if (error instanceof RateLimitError) return limitedResponse(error)
 
         if (error instanceof DiscordError) {
             set.status = 503

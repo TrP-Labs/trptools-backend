@@ -14,11 +14,12 @@ const port = Number(process.env.WORKER_SMOKE_PORT ?? 20_000 + Math.floor(Math.ra
 const inspectorPort = port + 10_000
 const redisPort = port + 1_000
 const origin = `http://127.0.0.1:${port}`
+let rateLimited = false
 
 const redis = Bun.serve({
     hostname: '127.0.0.1',
     port: redisPort,
-    fetch: () => Response.json({ result: 1 })
+    fetch: () => Response.json([{ result: [rateLimited ? 601 : 1, rateLimited ? 17 : 60] }])
 })
 
 const worker = Bun.spawn({
@@ -80,6 +81,13 @@ try {
     if (!ready) {
         throw new Error(`Worker did not become healthy within 30 seconds: ${String(lastError)}`)
     }
+
+    rateLimited = true
+    const limited = await fetch(`${origin}/health`)
+    if (limited.status !== 429 || limited.headers.get('retry-after') !== '17') {
+        throw new Error(`unexpected rate-limit response: ${limited.status}, Retry-After ${limited.headers.get('retry-after')}, body ${await limited.text()}`)
+    }
+    console.log('Worker rate-limit smoke test passed (429, Retry-After 17)')
 } finally {
     worker.kill()
     await worker.exited
