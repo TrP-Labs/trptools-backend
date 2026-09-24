@@ -1,5 +1,6 @@
 import { Elysia, status, t } from 'elysia'
 import { env } from '../utils/env'
+import { isBotServiceRequest } from '../utils/requestIdentity'
 import { globalModel } from '../utils/globalModel'
 import { BotInternal } from './internalModel'
 import { BotService } from './internalService'
@@ -19,12 +20,7 @@ const serviceAuth = new Elysia({ name: 'trptools/bot-service' }).onBeforeHandle(
     ({ request }) => {
         // An unset token must not mean "let everyone in". With no token
         // configured the internal surface is closed rather than open.
-        if (!env.BOT_SERVICE_TOKEN) throw status(401, 'Unauthorized')
-
-        const header = request.headers.get('authorization') ?? ''
-        const match = /^Bearer\s+(.+)$/i.exec(header.trim())
-
-        if (!match?.[1] || match[1] !== env.BOT_SERVICE_TOKEN) throw status(401, 'Unauthorized')
+        if (!isBotServiceRequest(request, env.BOT_SERVICE_TOKEN)) throw status(401, 'Unauthorized')
     }
 )
 

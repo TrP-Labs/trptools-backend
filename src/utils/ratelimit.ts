@@ -1,5 +1,7 @@
 import { status } from 'elysia'
 import { dataRedis } from './redis'
+import { env } from './env'
+import { clientKey as identifyClient } from './requestIdentity'
 
 /** Increment and repair an old counter with no expiry in one Redis operation. */
 const INCREMENT_WINDOW = `
@@ -30,11 +32,5 @@ export async function rateLimit(bucket: string, identifier: string, limit: numbe
 
 /** Best-effort client identity for rate limiting. */
 export function clientKey(request: Request): string {
-    const forwarded = request.headers.get('x-forwarded-for')
-    if (forwarded) return forwarded.split(',')[0]!.trim()
-
-    const real = request.headers.get('cf-connecting-ip') ?? request.headers.get('x-real-ip')
-    if (real) return real
-
-    return 'unknown'
+    return identifyClient(request, env.isCloudflareWorker)
 }

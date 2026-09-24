@@ -3,6 +3,7 @@ import { cors } from '@elysiajs/cors'
 import openapi from '@elysiajs/openapi'
 import { env } from './utils/env'
 import { clientKey, rateLimit } from './utils/ratelimit'
+import { isBotServiceRequest } from './utils/requestIdentity'
 
 import { auth } from './auth/controller'
 import { adminUsers, users } from './users/controller'
@@ -35,7 +36,11 @@ export const app = new Elysia()
         // A broad safety net so no single client can saturate the API. Routes
         // that are individually expensive apply their own tighter limits on
         // top of this.
-        await rateLimit('global', clientKey(request), 600, 60)
+        if (isBotServiceRequest(request, env.BOT_SERVICE_TOKEN)) {
+            await rateLimit('bot-service', 'authenticated', 1200, 60)
+        } else {
+            await rateLimit('global', clientKey(request), 600, 60)
+        }
     })
     .onAfterHandle(({ set }) => {
         // The API only ever answers JSON, so nothing here should be sniffed,
