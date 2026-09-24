@@ -6,24 +6,29 @@ import { upcomingOccurrences } from '../utils/recurrence'
 import type { BotInternal } from './internalModel'
 
 /**
- * Works out which automated actions are due, and hands each out exactly once.
+ * Works out which automated actions are due and claims them for delivery.
  *
  * This lives in the API rather than in the bot because recurrence expansion
  * and the group's configuration are both here — the bot would otherwise need
  * the whole schedule and a copy of the rules to decide anything.
  *
- * Handing an action out claims it. `SET NX` against a key naming the exact
- * action, shift and occurrence is what stops a restarted bot, or two bots,
- * announcing the same shift twice. The claim outlives the occurrence by a day
- * so a late poll cannot resurrect one.
+ * The legacy bot uses a one-day claim. The Worker uses a short lease followed
+ * by an explicit completion record, so a crashed delivery can be retried.
  */
 
 type ActionName = BotInternal.dueAction['action']
 
 const claimKey = (action: ActionName, eventId: string, occurrence: Date) =>
+    `bot:lease:${action}:${eventId}:${occurrence.getTime()}`
+
+const legacyClaimKey = (action: ActionName, eventId: string, occurrence: Date) =>
     `bot:fired:${action}:${eventId}:${occurrence.getTime()}`
 
-const CLAIM_TTL = 60 * 60 * 24
+const doneKey = (action: ActionName, eventId: string, occurrence: Date) =>
+    `bot:done:${action}:${eventId}:${occurrence.getTime()}`
+
+const CLAIM_TTL = 2 * 60
+const DONE_TTL = 60 * 60 * 24
 
 /**
  * How late an action may still fire after its moment passed.
@@ -89,7 +94,10 @@ function triggersFor(
     ]
 }
 
-export async function dueActions(now = new Date()): Promise<BotInternal.dueActions> {
+export async function dueActions(
+    now = new Date(),
+    mode: 'legacy' | 'leased' = 'legacy'
+): Promise<BotInternal.dueActions> {
     const rows = await db
         .select({ config: botConfigs, group: groups })
         .from(botConfigs)
@@ -128,11 +136,17 @@ export async function dueActions(now = new Date()): Promise<BotInternal.dueActio
 
                     if (age < 0 || age > GRACE_MS) continue
 
+                    if (await dataRedis.exists(doneKey(trigger.action, shift.eventId, occurrence.start))) continue
+                    if (mode === 'leased' && await dataRedis.exists(legacyClaimKey(trigger.action, shift.eventId, occurrence.start))) continue
+                    if (mode === 'legacy' && await dataRedis.exists(claimKey(trigger.action, shift.eventId, occurrence.start))) continue
+
                     const claimed = await dataRedis.set(
-                        claimKey(trigger.action, shift.eventId, occurrence.start),
+                        mode === 'leased'
+                            ? claimKey(trigger.action, shift.eventId, occurrence.start)
+                            : legacyClaimKey(trigger.action, shift.eventId, occurrence.start),
                         '1',
                         'EX',
-                        CLAIM_TTL,
+                        mode === 'leased' ? CLAIM_TTL : DONE_TTL,
                         'NX'
                     )
 
@@ -143,7 +157,8 @@ export async function dueActions(now = new Date()): Promise<BotInternal.dueActio
                         groupId: group.id,
                         action: trigger.action,
                         eventId: shift.eventId,
-                        occurrence: occurrence.start.toISOString()
+                        occurrence: occurrence.start.toISOString(),
+                        expiresAt: new Date(fireAt + GRACE_MS).toISOString()
                     })
                 }
             }
@@ -159,9 +174,27 @@ export async function dueActions(now = new Date()): Promise<BotInternal.dueActio
  * Without this a transient Discord failure would silently consume the shift's
  * only chance to be announced, and nothing would ever say so.
  */
-export async function releaseClaim(action: ActionName, eventId: string, occurrence: string) {
+export async function releaseClaim(
+    action: ActionName, eventId: string, occurrence: string, mode: 'legacy' | 'leased' = 'legacy'
+) {
     const when = new Date(occurrence)
     if (Number.isNaN(when.getTime())) return
 
-    await dataRedis.del(claimKey(action, eventId, when)).catch(() => undefined)
+    await dataRedis.del(mode === 'leased' ? claimKey(action, eventId, when) : legacyClaimKey(action, eventId, when))
+        .catch(() => undefined)
+}
+
+/** Finish a claimed action; a crashed worker's short lease otherwise expires for retry. */
+export async function completeClaim(action: ActionName, eventId: string, occurrence: string) {
+    const when = new Date(occurrence)
+    if (Number.isNaN(when.getTime())) return
+
+    await dataRedis.set(doneKey(action, eventId, when), '1', 'EX', DONE_TTL)
+    await dataRedis.del(claimKey(action, eventId, when))
+}
+
+export async function claimCompleted(action: ActionName, eventId: string, occurrence: string) {
+    const when = new Date(occurrence)
+    if (Number.isNaN(when.getTime())) return false
+    return Boolean(await dataRedis.exists(doneKey(action, eventId, when)))
 }

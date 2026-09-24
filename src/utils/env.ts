@@ -67,6 +67,9 @@ export const env = {
      * routes refuse every caller without it.
      */
     BOT_SERVICE_TOKEN: optional('BOT_SERVICE_TOKEN', ''),
+    /** Optional signed push endpoint for the serverless Discord bot. */
+    BOT_WORKER_URL: optional('BOT_WORKER_URL', ''),
+    BOT_WORKER_SYNC_TOKEN: optional('BOT_WORKER_SYNC_TOKEN', ''),
 
     // --- S3-compatible object storage for uploaded images -------------------
     S3_ENDPOINT: stripTrailingSlash(optional('S3_ENDPOINT', 'http://localhost:9000')),

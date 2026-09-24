@@ -1,12 +1,10 @@
 import { dataRedis } from '../utils/redis'
+import { env } from '../utils/env'
 
 /**
- * The channel the Discord bot listens on for sign-up changes made on the web.
- *
- * Redis pub/sub is already how dispatch fans out, and reusing it here means
- * the API never has to know whether a bot process exists, let alone reach it.
- * A message sent with nobody subscribed is simply dropped, which is the right
- * behaviour when a group has no bot connected.
+ * Delivery paths for sign-up changes made on the web. The Docker bot listens
+ * on Redis pub/sub; a configured Worker receives the same change over HTTPS.
+ * A message sent with nobody listening is simply dropped when no bot is connected.
  */
 export const SIGNUP_CHANNEL = 'bot.signup'
 
@@ -36,5 +34,23 @@ export async function publishSignupChange(
 
     // Fan-out is best effort. A dropped notification costs a stale embed until
     // the next edit, never a lost signup — the database already has the row.
-    await dataRedis.publish(SIGNUP_CHANNEL, JSON.stringify(payload)).catch(() => undefined)
+    const serialized = JSON.stringify(payload)
+    const notifications: Promise<unknown>[] = [
+        dataRedis.publish(SIGNUP_CHANNEL, serialized)
+    ]
+
+    if (env.BOT_WORKER_URL && env.BOT_WORKER_SYNC_TOKEN) {
+        notifications.push(fetch(`${env.BOT_WORKER_URL.replace(/\/$/, '')}/signup-change`, {
+            method: 'POST',
+            headers: {
+                authorization: `Bearer ${env.BOT_WORKER_SYNC_TOKEN}`,
+                'content-type': 'application/json'
+            },
+            body: serialized
+        }).then((response) => {
+            if (!response.ok) throw new Error(`Bot sync returned ${response.status}`)
+        }))
+    }
+
+    await Promise.allSettled(notifications)
 }

@@ -38,6 +38,15 @@ export const bot = new Elysia({ prefix: '/bot', tags: ['Bot'] })
 
     .group('/:groupId', (app) =>
         app
+            .get('/page', async ({ params: { groupId }, session }) => Bot.pageData(groupId, session), {
+                response: {
+                    200: BotModel.pageData,
+                    401: globalModel.unauthorized,
+                    403: globalModel.forbidden,
+                    404: GroupModel.groupInvalid
+                },
+                detail: { summary: 'Initial bot page data in one read' }
+            })
             .get('/', async ({ params: { groupId }, session }) => Bot.overview(groupId, session), {
                 response: {
                     200: BotModel.overview,

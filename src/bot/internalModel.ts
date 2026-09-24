@@ -162,7 +162,8 @@ export namespace BotInternal {
             t.Literal('COMPLETE')
         ]),
         eventId: t.String(),
-        occurrence: t.String()
+        occurrence: t.String(),
+        expiresAt: t.Optional(t.String())
     })
     export type dueAction = typeof dueAction.static
 

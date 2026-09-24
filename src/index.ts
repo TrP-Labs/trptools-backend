@@ -2,7 +2,8 @@ import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import openapi from '@elysiajs/openapi'
 import { env } from './utils/env'
-import { clientKey, rateLimit } from './utils/ratelimit'
+import { clientKey, rateLimit, RateLimitError } from './utils/ratelimit'
+import { isBotServiceRequest } from './utils/requestIdentity'
 
 import { auth } from './auth/controller'
 import { adminUsers, users } from './users/controller'
@@ -21,6 +22,17 @@ import { adminRoutes, reportRoutes } from './reports/controller'
 import { tools } from './tools/controller'
 import { bot } from './bot/controller'
 import { botInternal } from './bot/internalController'
+import { DiscordError } from './bot/discordCache'
+
+function limitedResponse(error: RateLimitError) {
+    return new Response('Too Many Requests', {
+        status: 429,
+        headers: {
+            'retry-after': String(error.retryAfterSeconds),
+            'x-ratelimit-source': 'trptools'
+        }
+    })
+}
 
 export const app = new Elysia()
     .use(
@@ -35,7 +47,19 @@ export const app = new Elysia()
         // A broad safety net so no single client can saturate the API. Routes
         // that are individually expensive apply their own tighter limits on
         // top of this.
-        await rateLimit('global', clientKey(request), 600, 60)
+        try {
+            if (isBotServiceRequest(request, env.BOT_SERVICE_TOKEN)) {
+                await rateLimit('bot-service', 'authenticated', 1200, 60)
+            } else {
+                await rateLimit('global', clientKey(request), 600, 60)
+            }
+        } catch (error) {
+            // In a Worker, a nested Elysia onRequest error handler loses the
+            // Response status when this app is mounted through CloudflareAdapter.
+            // Returning the response from the hook keeps 429 and Retry-After.
+            if (error instanceof RateLimitError) return limitedResponse(error)
+            throw error
+        }
     })
     .onAfterHandle(({ set }) => {
         // The API only ever answers JSON, so nothing here should be sniffed,
@@ -45,6 +69,15 @@ export const app = new Elysia()
         set.headers['referrer-policy'] = 'strict-origin-when-cross-origin'
     })
     .onError(({ code, error, set }) => {
+        if (error instanceof RateLimitError) return limitedResponse(error)
+
+        if (error instanceof DiscordError) {
+            set.status = 503
+            if (error.retryAfterSeconds) set.headers['retry-after'] = String(error.retryAfterSeconds)
+            console.warn('[discord]', error.message)
+            return 'Discord is temporarily unavailable'
+        }
+
         // A thrown `status(...)` surfaces here with a numeric code. Those are
         // deliberate answers, not failures, so pass them straight through.
         if (typeof code === 'number') {

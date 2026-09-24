@@ -1,5 +1,6 @@
 import { env } from '../utils/env'
 import { dataRedis } from '../utils/redis'
+import { cachedDiscordRead, DiscordError } from './discordCache'
 import {
     channelPermissions,
     has,
@@ -31,15 +32,6 @@ const API = 'https://discord.com/api/v10'
 /** Discord permission bits, as the flags we actually depend on. */
 export const discordConfigured = Boolean(env.DISCORD_APP_ID && env.DISCORD_BOT_TOKEN)
 
-class DiscordError extends Error {
-    constructor(
-        readonly status: number,
-        message: string
-    ) {
-        super(message)
-    }
-}
-
 async function botRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(`${API}${path}`, {
         ...init,
@@ -51,7 +43,13 @@ async function botRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
     })
 
     if (!response.ok) {
-        throw new DiscordError(response.status, `Discord ${init.method ?? 'GET'} ${path} → ${response.status}`)
+        const retryAfter = Number(response.headers.get('retry-after'))
+        throw new DiscordError(
+            response.status,
+            `Discord ${init.method ?? 'GET'} ${path} → ${response.status}`,
+            response.status === 429 && Number.isFinite(retryAfter) && retryAfter > 0
+                ? Math.ceil(retryAfter) : null
+        )
     }
 
     if (response.status === 204) return undefined as T
@@ -66,21 +64,6 @@ async function botRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
  * refresh button in each picker deletes these keys, so "fetch newly created
  * channels" stays instant and deliberate rather than a matter of waiting.
  */
-const CACHE_TTL = 60
-
-async function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
-    try {
-        const hit = await dataRedis.get(key)
-        if (hit) return JSON.parse(hit) as T
-    } catch {
-        // A cache miss and a broken cache are the same thing here.
-    }
-
-    const value = await load()
-    await dataRedis.set(key, JSON.stringify(value), 'EX', CACHE_TTL).catch(() => undefined)
-    return value
-}
-
 const guildKey = (guildId: string) => `discord:guild:${guildId}`
 const rolesKey = (guildId: string) => `discord:roles:${guildId}`
 const channelsKey = (guildId: string) => `discord:channels:${guildId}`
@@ -89,35 +72,30 @@ const memberKey = (guildId: string) => `discord:member:${guildId}`
 /** Drops every cached read for a guild, behind the pickers' refresh button. */
 export async function invalidateGuild(guildId: string) {
     await dataRedis
-        .del(guildKey(guildId), rolesKey(guildId), channelsKey(guildId), memberKey(guildId))
+        .del(guildKey(guildId), rolesKey(guildId), channelsKey(guildId), memberKey(guildId),
+            `stale:${guildKey(guildId)}`, `stale:${rolesKey(guildId)}`,
+            `stale:${channelsKey(guildId)}`, `stale:${memberKey(guildId)}`)
         .catch(() => undefined)
 }
 
 export const Discord = {
     /** Null when the bot is not in the guild, or was removed from it. */
     async getGuild(guildId: string): Promise<DiscordGuild | null> {
-        return cached(guildKey(guildId), () =>
-            botRequest<DiscordGuild>(`/guilds/${guildId}`).catch(() => null)
-        )
+        return cachedDiscordRead(guildKey(guildId), () => botRequest<DiscordGuild>(`/guilds/${guildId}`), () => null)
     },
 
     async getRoles(guildId: string): Promise<DiscordRole[]> {
-        return cached(rolesKey(guildId), () =>
-            botRequest<DiscordRole[]>(`/guilds/${guildId}/roles`).catch(() => [])
-        )
+        return cachedDiscordRead(rolesKey(guildId), () => botRequest<DiscordRole[]>(`/guilds/${guildId}/roles`), () => [])
     },
 
     async getChannels(guildId: string): Promise<DiscordChannel[]> {
-        return cached(channelsKey(guildId), () =>
-            botRequest<DiscordChannel[]>(`/guilds/${guildId}/channels`).catch(() => [])
-        )
+        return cachedDiscordRead(channelsKey(guildId), () => botRequest<DiscordChannel[]>(`/guilds/${guildId}/channels`), () => [])
     },
 
     /** The bot's own member record, for the roles its permissions come from. */
     async getSelfMember(guildId: string): Promise<DiscordMember | null> {
-        return cached(memberKey(guildId), () =>
-            botRequest<DiscordMember>(`/guilds/${guildId}/members/${env.DISCORD_APP_ID}`).catch(() => null)
-        )
+        return cachedDiscordRead(memberKey(guildId),
+            () => botRequest<DiscordMember>(`/guilds/${guildId}/members/${env.DISCORD_APP_ID}`), () => null)
     },
 
     async leaveGuild(guildId: string): Promise<boolean> {
