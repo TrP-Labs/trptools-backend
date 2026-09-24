@@ -22,6 +22,7 @@ import { adminRoutes, reportRoutes } from './reports/controller'
 import { tools } from './tools/controller'
 import { bot } from './bot/controller'
 import { botInternal } from './bot/internalController'
+import { DiscordError } from './bot/discordCache'
 
 export const app = new Elysia()
     .use(
@@ -55,6 +56,13 @@ export const app = new Elysia()
             set.headers['retry-after'] = String(error.retryAfterSeconds)
             set.headers['x-ratelimit-source'] = 'trptools'
             return 'Too Many Requests'
+        }
+
+        if (error instanceof DiscordError) {
+            set.status = 503
+            if (error.retryAfterSeconds) set.headers['retry-after'] = String(error.retryAfterSeconds)
+            console.warn('[discord]', error.message)
+            return 'Discord is temporarily unavailable'
         }
 
         // A thrown `status(...)` surfaces here with a numeric code. Those are
