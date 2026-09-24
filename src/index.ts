@@ -2,7 +2,7 @@ import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import openapi from '@elysiajs/openapi'
 import { env } from './utils/env'
-import { clientKey, rateLimit } from './utils/ratelimit'
+import { clientKey, rateLimit, RateLimitError } from './utils/ratelimit'
 import { isBotServiceRequest } from './utils/requestIdentity'
 
 import { auth } from './auth/controller'
@@ -50,6 +50,13 @@ export const app = new Elysia()
         set.headers['referrer-policy'] = 'strict-origin-when-cross-origin'
     })
     .onError(({ code, error, set }) => {
+        if (error instanceof RateLimitError) {
+            set.status = 429
+            set.headers['retry-after'] = String(error.retryAfterSeconds)
+            set.headers['x-ratelimit-source'] = 'trptools'
+            return 'Too Many Requests'
+        }
+
         // A thrown `status(...)` surfaces here with a numeric code. Those are
         // deliberate answers, not failures, so pass them straight through.
         if (typeof code === 'number') {
