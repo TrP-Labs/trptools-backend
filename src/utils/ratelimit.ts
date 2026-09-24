@@ -1,6 +1,15 @@
 import { status } from 'elysia'
 import { dataRedis } from './redis'
 
+/** Increment and repair an old counter with no expiry in one Redis operation. */
+const INCREMENT_WINDOW = `
+local count = redis.call('INCR', KEYS[1])
+if redis.call('TTL', KEYS[1]) < 0 then
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return count
+`
+
 /**
  * Fixed-window limiter backed by Redis so limits hold across replicas.
  * Fails open: if Redis is unreachable the request is still served.
@@ -10,8 +19,7 @@ export async function rateLimit(bucket: string, identifier: string, limit: numbe
     let count = 0
 
     try {
-        count = await dataRedis.incr(key)
-        if (count === 1) await dataRedis.expire(key, windowSeconds)
+        count = await dataRedis.eval<number>(INCREMENT_WINDOW, [key], [String(windowSeconds)])
     } catch {
         // Redis problems must not lock users out.
         return

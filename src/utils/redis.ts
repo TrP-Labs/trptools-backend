@@ -57,6 +57,12 @@ class Pipeline {
  * local to infrastructure rather than leaking through every service.
  */
 export const dataRedis = {
+    eval<T>(script: string, keys: string[], args: string[]): Promise<T> {
+        return localRedis
+            ? localRedis.eval(script, keys.length, ...keys, ...args) as Promise<T>
+            : edgeRedis!.eval<string[], T>(script, keys, args)
+    },
+
     get(key: string): Promise<string | null> {
         return localRedis ? localRedis.get(key) : edgeRedis!.get<string>(key)
     },
