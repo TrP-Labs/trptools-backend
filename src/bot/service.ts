@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { eq } from 'drizzle-orm'
 import db from '../db'
-import { botConfigs, signupSheets } from '../db/schema'
+import { botConfigs, signupSheets, type BotConfig } from '../db/schema'
 import { env, FRONTEND_URL } from '../utils/env'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission } from '../utils/groupPermission'
@@ -22,7 +22,11 @@ import {
     INVITE_PERMISSIONS,
     POSTABLE_CHANNEL_TYPES,
     REQUIRED_PERMISSIONS,
-    type PermissionName
+    type PermissionName,
+    type DiscordGuild,
+    type DiscordRole,
+    type DiscordMember,
+    type DiscordChannel
 } from './discord'
 import { BotModel } from './model'
 import { presentConfig } from './present'
@@ -68,8 +72,11 @@ function assertAvailable() {
 }
 
 /** The bot's live standing in a guild, as the dashboard header reports it. */
-async function guildStatus(guildId: string): Promise<BotModel.guildStatus> {
-    const [guild, roles, member] = await Promise.all([
+type GuildReads = { guild: DiscordGuild | null; roles: DiscordRole[]; member: DiscordMember | null }
+type ChannelReads = GuildReads & { channels: DiscordChannel[] }
+
+async function guildStatus(guildId: string, reads?: GuildReads): Promise<BotModel.guildStatus> {
+    const [guild, roles, member] = reads ? [reads.guild, reads.roles, reads.member] : await Promise.all([
         Discord.getGuild(guildId),
         Discord.getRoles(guildId),
         Discord.getSelfMember(guildId)
@@ -223,6 +230,41 @@ export abstract class Bot {
         }
     }
 
+    /** One authenticated read and one concurrent Discord round for the initial page. */
+    static async pageData(groupIdOrSlug: string, session: session): Promise<BotModel.pageData> {
+        const group = await findGroup(groupIdOrSlug)
+        if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_BOT)
+
+        const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, group.id)).limit(1)
+        if (!config) return {
+            overview: { connected: false, available: discordConfigured, config: null, guild: null },
+            channelNames: {}, roleNames: {}, cleanup: null
+        }
+
+        const [guild, roles, member, channels, sheets] = await Promise.all([
+            Discord.getGuild(config.guildId),
+            Discord.getRoles(config.guildId),
+            Discord.getSelfMember(config.guildId),
+            Discord.getChannels(config.guildId),
+            db.select({ name: signupSheets.name, channel: signupSheets.discordChannel })
+                .from(signupSheets).where(eq(signupSheets.groupId, group.id))
+        ])
+        const reads: ChannelReads = { guild, roles, member, channels }
+        const [guildState, channelList, roleList, cleanup] = await Promise.all([
+            guildStatus(config.guildId, reads),
+            Bot.channels(groupIdOrSlug, session, false, { config, ...reads }),
+            Bot.roles(groupIdOrSlug, session, false, { config, ...reads }),
+            Bot.cleanup(groupIdOrSlug, session, false, { groupId: group.id, config, sheets, ...reads })
+        ])
+        return {
+            overview: { connected: true, available: discordConfigured, config: presentConfig(config), guild: guildState },
+            channelNames: Object.fromEntries(channelList.map(({ id, name }) => [id, name])),
+            roleNames: Object.fromEntries(roleList.map(({ id, name }) => [id, name])),
+            cleanup
+        }
+    }
+
     static async update(
         groupIdOrSlug: string,
         body: BotModel.updateBody,
@@ -282,12 +324,14 @@ export abstract class Bot {
     static async channels(
         groupIdOrSlug: string,
         session: session,
-        refresh = false
+        refresh = false,
+        prepared?: ChannelReads & { config: BotConfig }
     ): Promise<BotModel.channelList> {
-        const { config } = await requireConfig(groupIdOrSlug, session)
+        const { config } = prepared ?? await requireConfig(groupIdOrSlug, session)
         if (refresh) await invalidateGuild(config.guildId)
 
-        const [channels, roles, member] = await Promise.all([
+        const [channels, roles, member] = prepared
+            ? [prepared.channels, prepared.roles, prepared.member] : await Promise.all([
             Discord.getChannels(config.guildId),
             Discord.getRoles(config.guildId),
             Discord.getSelfMember(config.guildId)
@@ -337,12 +381,16 @@ export abstract class Bot {
     static async cleanup(
         groupIdOrSlug: string,
         session: session,
-        refresh = false
+        refresh = false,
+        prepared?: ChannelReads & { groupId: string; config: BotConfig; sheets: Array<{ name: string; channel: string | null }> }
     ): Promise<BotModel.cleanupStatus> {
-        const { group, config } = await requireConfig(groupIdOrSlug, session)
+        const { group, config } = prepared
+            ? { group: { id: prepared.groupId }, config: prepared.config }
+            : await requireConfig(groupIdOrSlug, session)
         if (refresh) await invalidateGuild(config.guildId)
 
-        const [channels, roles, member, sheets] = await Promise.all([
+        const [channels, roles, member, sheets] = prepared
+            ? [prepared.channels, prepared.roles, prepared.member, prepared.sheets] : await Promise.all([
             Discord.getChannels(config.guildId),
             Discord.getRoles(config.guildId),
             Discord.getSelfMember(config.guildId),
@@ -394,11 +442,12 @@ export abstract class Bot {
         }
     }
 
-    static async roles(groupIdOrSlug: string, session: session, refresh = false): Promise<BotModel.roleList> {
-        const { config } = await requireConfig(groupIdOrSlug, session)
+    static async roles(groupIdOrSlug: string, session: session, refresh = false,
+        prepared?: GuildReads & { config: BotConfig }): Promise<BotModel.roleList> {
+        const { config } = prepared ?? await requireConfig(groupIdOrSlug, session)
         if (refresh) await invalidateGuild(config.guildId)
 
-        const [roles, member] = await Promise.all([
+        const [roles, member] = prepared ? [prepared.roles, prepared.member] : await Promise.all([
             Discord.getRoles(config.guildId),
             Discord.getSelfMember(config.guildId)
         ])

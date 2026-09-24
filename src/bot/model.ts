@@ -252,6 +252,14 @@ export namespace BotModel {
     })
     export type cleanupStatus = typeof cleanupStatus.static
 
+    export const pageData = t.Object({
+        overview,
+        channelNames: t.Record(t.String(), t.String()),
+        roleNames: t.Record(t.String(), t.String()),
+        cleanup: t.Union([cleanupStatus, t.Null()])
+    })
+    export type pageData = typeof pageData.static
+
     export const refreshQuery = t.Object({
         /** Drops the cached guild reads before answering. */
         refresh: t.Optional(t.String())
