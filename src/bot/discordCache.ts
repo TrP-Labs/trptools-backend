@@ -1,5 +1,3 @@
-import { dataRedis } from '../utils/redis'
-
 export class DiscordError extends Error {
     constructor(
         readonly status: number,
@@ -14,10 +12,16 @@ const inFlight = new Map<string, Promise<unknown>>()
 const CACHE_TTL = 60
 const STALE_TTL = 900
 
+type Cache = {
+    get(key: string): Promise<string | null>
+    set(key: string, value: string, mode: 'EX', seconds: number): Promise<unknown>
+    del(...keys: string[]): Promise<unknown>
+}
+
 /** Keep a known good response through brief Discord outages, without caching an outage as "absent". */
 export async function cachedDiscordRead<T>(
     key: string, load: () => Promise<T>, missing: () => T,
-    cache: Pick<typeof dataRedis, 'get' | 'set' | 'del'> = dataRedis
+    cache: Cache
 ): Promise<T> {
     try {
         const hit = await cache.get(key)

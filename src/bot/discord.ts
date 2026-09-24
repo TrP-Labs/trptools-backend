@@ -81,21 +81,21 @@ export async function invalidateGuild(guildId: string) {
 export const Discord = {
     /** Null when the bot is not in the guild, or was removed from it. */
     async getGuild(guildId: string): Promise<DiscordGuild | null> {
-        return cachedDiscordRead(guildKey(guildId), () => botRequest<DiscordGuild>(`/guilds/${guildId}`), () => null)
+        return cachedDiscordRead(guildKey(guildId), () => botRequest<DiscordGuild>(`/guilds/${guildId}`), () => null, dataRedis)
     },
 
     async getRoles(guildId: string): Promise<DiscordRole[]> {
-        return cachedDiscordRead(rolesKey(guildId), () => botRequest<DiscordRole[]>(`/guilds/${guildId}/roles`), () => [])
+        return cachedDiscordRead(rolesKey(guildId), () => botRequest<DiscordRole[]>(`/guilds/${guildId}/roles`), () => [], dataRedis)
     },
 
     async getChannels(guildId: string): Promise<DiscordChannel[]> {
-        return cachedDiscordRead(channelsKey(guildId), () => botRequest<DiscordChannel[]>(`/guilds/${guildId}/channels`), () => [])
+        return cachedDiscordRead(channelsKey(guildId), () => botRequest<DiscordChannel[]>(`/guilds/${guildId}/channels`), () => [], dataRedis)
     },
 
     /** The bot's own member record, for the roles its permissions come from. */
     async getSelfMember(guildId: string): Promise<DiscordMember | null> {
         return cachedDiscordRead(memberKey(guildId),
-            () => botRequest<DiscordMember>(`/guilds/${guildId}/members/${env.DISCORD_APP_ID}`), () => null)
+            () => botRequest<DiscordMember>(`/guilds/${guildId}/members/${env.DISCORD_APP_ID}`), () => null, dataRedis)
     },
 
     async leaveGuild(guildId: string): Promise<boolean> {
