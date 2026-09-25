@@ -1,6 +1,7 @@
 import { Elysia } from 'elysia'
 import { CloudflareAdapter } from 'elysia/adapter/cloudflare-worker'
 import { app } from './index'
+import { env } from './utils/env'
 import { checkWorkerRateLimit, type WorkerRateLimitBindings } from './utils/workerRateLimit'
 
 /**
@@ -12,7 +13,7 @@ const workerApp = new Elysia({ adapter: CloudflareAdapter }).use(app).compile()
 
 export default {
     async fetch(request: Request, bindings: WorkerRateLimitBindings) {
-        const limited = await checkWorkerRateLimit(request, bindings)
+        const limited = await checkWorkerRateLimit(request, bindings, env.BOT_SERVICE_TOKEN)
         return limited ?? workerApp.fetch(request)
     }
 }

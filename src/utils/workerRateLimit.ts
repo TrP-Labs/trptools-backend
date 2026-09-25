@@ -1,4 +1,3 @@
-import { env } from './env'
 import { clientKey, isBotServiceRequest } from './requestIdentity'
 
 export type WorkerRateLimit = {
@@ -11,8 +10,10 @@ export type WorkerRateLimitBindings = {
 }
 
 /** Broad abuse protection at the edge, without a billed Redis command per request. */
-export async function checkWorkerRateLimit(request: Request, bindings: WorkerRateLimitBindings): Promise<Response | null> {
-    const bot = isBotServiceRequest(request, env.BOT_SERVICE_TOKEN)
+export async function checkWorkerRateLimit(
+    request: Request, bindings: WorkerRateLimitBindings, botServiceToken: string
+): Promise<Response | null> {
+    const bot = isBotServiceRequest(request, botServiceToken)
     const limiter = bot ? bindings.BOT_RATE_LIMIT : bindings.GLOBAL_RATE_LIMIT
     const key = bot ? 'authenticated' : clientKey(request, true)
 
