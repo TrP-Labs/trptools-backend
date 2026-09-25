@@ -33,6 +33,32 @@ export const applicationRoutes = new Elysia({ prefix: '/applications', tags: ['A
         detail: { summary: 'Create an application form' }
     })
 
+    .post('/import/google', async ({ body, session }) => Applications.importGoogle(body, session), {
+        body: ApplicationModel.importGoogleBody,
+        response: {
+            200: ApplicationModel.importGoogleResponse,
+            400: t.String(),
+            401: globalModel.unauthorized,
+            403: globalModel.forbidden,
+            404: t.Union([GroupModel.groupInvalid, ApplicationModel.applicationInvalid])
+        },
+        detail: {
+            summary: 'Import Google Forms API JSON as a closed application draft',
+            description: 'Supported questions are copied; unsupported items are listed in the response.'
+        }
+    })
+
+    .get('/ranks', async ({ query, session }) => Applications.ranks(query.groupId, session), {
+        query: ApplicationModel.listQuery,
+        response: {
+            200: ApplicationModel.applicationRanks,
+            401: globalModel.unauthorized,
+            403: globalModel.forbidden,
+            404: GroupModel.groupInvalid
+        },
+        detail: { summary: 'Bound ranks available to an application form manager' }
+    })
+
     .get('/pending', async ({ query, session }) => Applications.pending(query, session), {
         query: ApplicationModel.pendingQuery,
         response: {

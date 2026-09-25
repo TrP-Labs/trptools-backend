@@ -23,7 +23,7 @@ export const group = new Elysia({ prefix: '/groups', tags: ['Groups'] })
                 403: globalModel.forbidden,
                 409: GroupModel.groupExists
             },
-            detail: { summary: 'Add a Roblox group you own to TrPTools' }
+            detail: { summary: 'Add a Roblox group you own, or any group while in site admin mode' }
         }
     )
 

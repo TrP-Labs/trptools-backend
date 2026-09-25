@@ -24,6 +24,7 @@ import { GroupModel } from './model'
 import { mediaUrls } from '../media/urls'
 import { env } from '../utils/env'
 import { databaseLimitReached } from '../utils/databaseLimit'
+import { canRegisterGroup } from './registration'
 
 /** Refreshes the cached Roblox facts on a group if they have gone stale. */
 async function withFreshCache(group: Group, credentials: RobloxCredentials): Promise<Group> {
@@ -275,21 +276,19 @@ export abstract class Group_ {
             throw status(409, 'group already exists' satisfies GroupModel.groupExists)
         }
 
-        // Ownership is checked twice: against the user's membership list, and
-        // against the group's own owner field. Both have to agree.
+        // Admin mode permits registering a group by Roblox ID even when the
+        // operator does not own it. Ordinary users still need Roblox ownership.
+        const elevated = isSiteAdmin(session)
         const credentials = await userCredentials(session.user.userId)
         const [memberships, robloxGroup] = await Promise.all([
-            Roblox.getUserGroups(session.user.robloxId),
+            elevated ? Promise.resolve([]) : Roblox.getUserGroups(session.user.robloxId),
             Roblox.getGroup(robloxId, credentials)
         ])
 
         if (!robloxGroup) throw status(400, 'group does not exist' satisfies GroupModel.groupInvalid)
 
         const membership = memberships.find((entry) => entry.groupId.toString() === robloxId)
-        const ownsByRank = membership !== undefined && membership.role.rank >= 255
-        const ownsByOwnerField = robloxGroup.ownerId === session.user.robloxId
-
-        if (!ownsByRank && !ownsByOwnerField) {
+        if (!canRegisterGroup(elevated, session.user.robloxId, robloxGroup.ownerId, membership?.role.rank)) {
             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
         }
 

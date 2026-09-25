@@ -25,6 +25,7 @@ import { collectAnswers, isChoice, isStatic } from './answers'
 import { blockedBy, cooldownEndsAt, type FormState } from './eligibility'
 import { ApplicationModel } from './model'
 import { presentTranslations, translationUpdate } from '../utils/translations'
+import { parseGoogleForm } from './googleImport'
 
 /** Slugs already used by a group's other forms, for `uniqueWithin`. */
 async function takenSlugs(groupId: string, exceptId?: string): Promise<Set<string>> {
@@ -347,6 +348,17 @@ export async function openApplicationsFor(groupId: string): Promise<ApplicationM
 }
 
 export abstract class Applications {
+    static async ranks(groupId: string, session: session): Promise<ApplicationModel.applicationRanks> {
+        const group = await findGroup(groupId)
+        if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_APPLICATIONS)
+
+        return db.select({ id: rankRelations.id, cachedName: rankRelations.cachedName })
+            .from(rankRelations)
+            .where(eq(rankRelations.groupId, group.id))
+            .orderBy(desc(rankRelations.cachedRank))
+    }
+
     static async list(groupId: string, session: session): Promise<ApplicationModel.applicationList> {
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
@@ -474,6 +486,54 @@ export abstract class Applications {
         await recordAudit(group.id, session.user?.userId ?? null, 'application.create', `Created the ${body.name} application`)
 
         return created
+    }
+
+    static async importGoogle(
+        body: ApplicationModel.importGoogleBody,
+        session: session
+    ): Promise<ApplicationModel.importGoogleResponse> {
+        const group = await findGroup(body.groupId)
+        if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_APPLICATIONS)
+        if (body.rankId) await assertOwnRank(group.id, body.rankId)
+
+        let imported: ReturnType<typeof parseGoogleForm>
+        try {
+            imported = parseGoogleForm(body.formJson)
+        } catch (error) {
+            throw status(400, error instanceof Error ? error.message : 'Invalid Google Form')
+        }
+
+        const slug = uniqueWithin(childSlug('application', imported.name, Date.now()), await takenSlugs(group.id))
+        const [created] = await db.insert(applications).values({
+            groupId: group.id,
+            rankId: body.rankId ?? null,
+            name: imported.name,
+            description: imported.description,
+            slug,
+            open: false
+        }).returning({ id: applications.id, slug: applications.slug })
+        if (!created) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
+
+        try {
+            await db.insert(applicationQuestions).values(imported.questions.map((question, order) => ({
+                applicationId: created.id,
+                type: question.type,
+                prompt: question.prompt,
+                description: question.description ?? '',
+                required: question.required ?? false,
+                order,
+                options: question.options ?? []
+            })))
+        } catch (error) {
+            await db.delete(applications).where(eq(applications.id, created.id)).catch(() => undefined)
+            throw error
+        }
+
+        await recordAudit(group.id, session.user?.userId ?? null, 'application.import',
+            `Imported the ${imported.name} application from Google Forms`)
+
+        return { ...created, imported: imported.questions.length, skipped: imported.skipped }
     }
 
     static async patch(applicationId: string, body: ApplicationModel.patchBody, session: session) {
