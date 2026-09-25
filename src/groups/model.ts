@@ -172,6 +172,8 @@ export namespace GroupModel {
                 name: t.String({ minLength: 1, maxLength: 120 }),
                 category: vehicleType.properties.category
             }),
+            // The service applies the 100-row group limit with a translated
+            // 409; this larger validation bound only rejects oversized input.
             { maxItems: 200 }
         )
     })
@@ -179,6 +181,9 @@ export namespace GroupModel {
 
     export const duplicateVehicleType = t.Literal('two vehicles share a name')
     export type duplicateVehicleType = typeof duplicateVehicleType.static
+
+    export const tooManyVehicleTypes = t.Literal('a group can classify at most 100 vehicle models')
+    export type tooManyVehicleTypes = typeof tooManyVehicleTypes.static
 
     export const openCloudKeyBody = t.Object({
         apiKey: t.Union([t.String({ minLength: 20, maxLength: 4000 }), t.Null()])

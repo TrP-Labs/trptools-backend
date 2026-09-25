@@ -23,6 +23,7 @@ import { seedGroupDefaults, seedVehicleTypes } from './defaults'
 import { GroupModel } from './model'
 import { mediaUrls } from '../media/urls'
 import { env } from '../utils/env'
+import { databaseLimitReached } from '../utils/databaseLimit'
 
 /** Refreshes the cached Roblox facts on a group if they have gone stale. */
 async function withFreshCache(group: Group, credentials: RobloxCredentials): Promise<Group> {
@@ -486,6 +487,10 @@ export abstract class Group_ {
         const group = await findGroup(groupId)
         if (!group) throw status(404, 'group does not exist' satisfies GroupModel.groupInvalid)
 
+        if (body.types.length > 100) {
+            throw status(409, 'a group can classify at most 100 vehicle models' satisfies GroupModel.tooManyVehicleTypes)
+        }
+
         const seen = new Set<string>()
         const values = body.types.map((type, index) => {
             const name = type.name.trim()
@@ -499,19 +504,26 @@ export abstract class Group_ {
             return { groupId: group.id, pattern: name, category: type.category, fixedRoute: null, order: index }
         })
 
-        if (env.isCloudflareWorker) {
-            const edge = db as unknown as NeonHttpDatabase<typeof databaseSchema>
-            const remove = edge.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
-            if (values.length > 0) {
-                await edge.batch([remove, edge.insert(vehicleRules).values(values)])
+        try {
+            if (env.isCloudflareWorker) {
+                const edge = db as unknown as NeonHttpDatabase<typeof databaseSchema>
+                const remove = edge.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
+                if (values.length > 0) {
+                    await edge.batch([remove, edge.insert(vehicleRules).values(values)])
+                } else {
+                    await remove
+                }
             } else {
-                await remove
+                await db.transaction(async (tx) => {
+                    await tx.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
+                    if (values.length > 0) await tx.insert(vehicleRules).values(values)
+                })
             }
-        } else {
-            await db.transaction(async (tx) => {
-                await tx.delete(vehicleRules).where(eq(vehicleRules.groupId, group.id))
-                if (values.length > 0) await tx.insert(vehicleRules).values(values)
-            })
+        } catch (error) {
+            if (databaseLimitReached(error, 'a group can classify at most 100 vehicle models')) {
+                throw status(409, 'a group can classify at most 100 vehicle models' satisfies GroupModel.tooManyVehicleTypes)
+            }
+            throw error
         }
 
         await recordAudit(

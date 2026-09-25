@@ -48,6 +48,15 @@ production. The adapter can derive them from an Upstash `rediss://` URL for
 compatibility, but the explicit REST bindings make the deployed configuration
 unambiguous.
 
+The Worker applies the broad 600 requests/minute client limit and 1,200
+requests/minute bot-service limit through Cloudflare rate-limit bindings in
+`wrangler.jsonc`. These checks do not send a Redis command for every API
+request. Cloudflare counts by edge location and updates counters eventually,
+so the limits are abuse protection rather than exact global quotas. The tighter
+limits on login, uploads, form submissions, and other costly routes still use
+Redis for shared enforcement. The standalone Bun server keeps its Redis-backed
+broad limit.
+
 Store credentials as Worker secrets rather than committing them. At minimum,
 set the database, Redis, encryption and OAuth values used by the installation:
 

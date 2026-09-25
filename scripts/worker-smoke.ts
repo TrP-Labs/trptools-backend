@@ -3,9 +3,8 @@
  * or deployment may proceed. A Wrangler dry-run proves that the bundle can be
  * produced; this catches failures during module initialization and routing.
  *
- * The health route does not query Postgres. A tiny local Upstash stand-in
- * answers its global rate-limit commands, keeping the test deterministic and
- * preventing it from touching production services.
+ * The health route does not query Postgres or Redis. A tiny local Upstash
+ * stand-in catches accidental Redis calls without touching production.
  */
 
 import { fileURLToPath } from 'node:url'
@@ -14,12 +13,15 @@ const port = Number(process.env.WORKER_SMOKE_PORT ?? 20_000 + Math.floor(Math.ra
 const inspectorPort = port + 10_000
 const redisPort = port + 1_000
 const origin = `http://127.0.0.1:${port}`
-let rateLimited = false
+let redisRequests = 0
 
 const redis = Bun.serve({
     hostname: '127.0.0.1',
     port: redisPort,
-    fetch: () => Response.json([{ result: [rateLimited ? 601 : 1, rateLimited ? 17 : 60] }])
+    fetch: () => {
+        redisRequests++
+        return Response.json([{ result: [1, 60] }])
+    }
 })
 
 const worker = Bun.spawn({
@@ -82,12 +84,8 @@ try {
         throw new Error(`Worker did not become healthy within 30 seconds: ${String(lastError)}`)
     }
 
-    rateLimited = true
-    const limited = await fetch(`${origin}/health`)
-    if (limited.status !== 429 || limited.headers.get('retry-after') !== '17') {
-        throw new Error(`unexpected rate-limit response: ${limited.status}, Retry-After ${limited.headers.get('retry-after')}, body ${await limited.text()}`)
-    }
-    console.log('Worker rate-limit smoke test passed (429, Retry-After 17)')
+    if (redisRequests !== 0) throw new Error(`health used ${redisRequests} Redis request(s)`)
+    console.log('Worker rate-limit binding smoke test passed (no Redis requests)')
 } finally {
     worker.kill()
     await worker.exited
