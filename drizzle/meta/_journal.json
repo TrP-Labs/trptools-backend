@@ -169,6 +169,13 @@
       "when": 1788996408976,
       "tag": "0023_standalone_signups",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790297916939,
+      "tag": "0024_cap_group_collections",
+      "breakpoints": true
     }
   ]
 }

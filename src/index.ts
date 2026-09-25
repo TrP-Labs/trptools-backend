@@ -44,6 +44,9 @@ export const app = new Elysia()
         })
     )
     .onRequest(async ({ request }) => {
+        // The Worker uses Cloudflare's native rate-limit bindings before this
+        // route tree runs. Keep Redis here for the standalone Bun deployment.
+        if (env.isCloudflareWorker) return
         // A broad safety net so no single client can saturate the API. Routes
         // that are individually expensive apply their own tighter limits on
         // top of this.

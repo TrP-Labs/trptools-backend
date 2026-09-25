@@ -21,6 +21,7 @@ export const schedule = new Elysia({ prefix: '/schedule', tags: ['Schedule'] })
         response: {
             200: ScheduleModel.createResponse,
             400: ScheduleModel.invalidRRule,
+            409: ScheduleModel.tooManyShifts,
             401: globalModel.unauthorized,
             403: globalModel.forbidden,
             404: globalModel.notFound

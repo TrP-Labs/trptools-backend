@@ -207,6 +207,9 @@ export namespace ScheduleModel {
     export const invalidRRule = t.Literal('invalid recurrence rule')
     export type invalidRRule = typeof invalidRRule.static
 
+    export const tooManyShifts = t.Literal('a group can have at most 100 shifts')
+    export type tooManyShifts = typeof tooManyShifts.static
+
     export const slotFull = t.Literal('that slot is full')
     export type slotFull = typeof slotFull.static
 

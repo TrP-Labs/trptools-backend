@@ -148,7 +148,7 @@ export const group = new Elysia({ prefix: '/groups', tags: ['Groups'] })
                         401: globalModel.unauthorized,
                         403: globalModel.forbidden,
                         404: GroupModel.groupInvalid,
-                        409: GroupModel.duplicateVehicleType
+                        409: t.Union([GroupModel.duplicateVehicleType, GroupModel.tooManyVehicleTypes])
                     },
                     detail: { summary: 'Replace the group vehicle type table' }
                 }

@@ -1,5 +1,5 @@
 import type { botConfigs } from '../db/schema'
-import { parseRule } from '../utils/recurrence'
+import { occurrenceStartsBetween } from '../utils/recurrence'
 import type { BotInternal } from './internalModel'
 
 type ActionName = BotInternal.dueAction['action']
@@ -77,24 +77,22 @@ export function dueCandidates(
     const triggers = triggersFor(config, durationMinutes, signupLeadMinutes).filter((trigger) => trigger.enabled)
     if (triggers.length === 0) return []
 
-    const parsed = parseRule(rule, startTime)
-    if (!parsed) return []
-
     const candidates: DueCandidate[] = []
-    try {
-        for (const trigger of triggers) {
-            const from = new Date(now.getTime() - GRACE_MS - trigger.offsetMs)
-            const to = new Date(now.getTime() - trigger.offsetMs)
-            for (const occurrence of parsed.between(from, to, true)) {
-                candidates.push({
-                    action: trigger.action,
-                    occurrence,
-                    expiresAt: new Date(occurrence.getTime() + trigger.offsetMs + GRACE_MS)
-                })
-            }
+    const earliest = Math.min(...triggers.map((trigger) => now.getTime() - GRACE_MS - trigger.offsetMs))
+    const latest = Math.max(...triggers.map((trigger) => now.getTime() - trigger.offsetMs))
+    const occurrences = occurrenceStartsBetween(rule, startTime, new Date(earliest), new Date(latest))
+
+    for (const trigger of triggers) {
+        const from = now.getTime() - GRACE_MS - trigger.offsetMs
+        const to = now.getTime() - trigger.offsetMs
+        for (const occurrence of occurrences) {
+            if (occurrence.getTime() < from || occurrence.getTime() > to) continue
+            candidates.push({
+                action: trigger.action,
+                occurrence,
+                expiresAt: new Date(occurrence.getTime() + trigger.offsetMs + GRACE_MS)
+            })
         }
-    } catch {
-        return []
     }
     return candidates
 }

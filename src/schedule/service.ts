@@ -1,5 +1,5 @@
 import { status } from 'elysia'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, count, eq } from 'drizzle-orm'
 import db from '../db'
 import { events, shiftSignups, signupSheets, signupSlots, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
@@ -10,6 +10,7 @@ import { describeRule, isValidRule, occurrencesBetween } from '../utils/recurren
 import { childSlug, uniqueWithin } from '../utils/slug'
 import { presentTranslations, translationUpdate } from '../utils/translations'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
+import { databaseLimitReached } from '../utils/databaseLimit'
 import { findGroup, recordAudit } from '../groups/service'
 import { GroupModel } from '../groups/model'
 import { publishSignupChange } from './events'
@@ -19,6 +20,7 @@ import { actorForUser, ownedBy, ownsSignup } from './identity'
 import { ScheduleModel } from './model'
 
 const MAX_HORIZON_DAYS = 120
+const MAX_SHIFTS_PER_GROUP = 100
 
 function presentEvent(event: Event): ScheduleModel.eventResponse {
     return {
@@ -185,6 +187,14 @@ export abstract class Schedule {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         }
 
+        const [{ total }] = await db
+            .select({ total: count() })
+            .from(events)
+            .where(eq(events.groupId, group.id))
+        if (total >= MAX_SHIFTS_PER_GROUP) {
+            throw status(409, 'a group can have at most 100 shifts' satisfies ScheduleModel.tooManyShifts)
+        }
+
         const { groupId, translations, ...values } = body
 
         const [event] = await db
@@ -196,6 +206,12 @@ export abstract class Schedule {
                 slug: await freeShiftSlug(group.id, body.name)
             })
             .returning({ eventId: events.eventId })
+            .catch((error: unknown) => {
+                if (databaseLimitReached(error, 'a group can have at most 100 shifts')) {
+                    throw status(409, 'a group can have at most 100 shifts' satisfies ScheduleModel.tooManyShifts)
+                }
+                throw error
+            })
 
         if (!event) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
 
