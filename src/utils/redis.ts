@@ -2,6 +2,7 @@ import { Redis as IoRedis } from 'ioredis'
 import { Redis as UpstashRedis } from '@upstash/redis/cloudflare'
 import { env } from './env'
 import { resolveUpstashCredentials } from './redisCredentials'
+import { redisHash } from './redisHash'
 
 const localOptions = {
     maxRetriesPerRequest: null,
@@ -47,7 +48,9 @@ class Pipeline {
         if (!this.edge) return null
 
         const results = await this.edge.exec({ keepErrors: true })
-        return results.map(({ result, error }) => [error ? new Error(error) : null, result])
+        // This pipeline only queues HGETALL. With deserialization disabled,
+        // Upstash returns [field, value, ...], not the ioredis hash object.
+        return results.map(({ result, error }) => [error ? new Error(error) : null, redisHash(result)])
     }
 }
 
@@ -109,7 +112,7 @@ export const dataRedis = {
     hgetall(key: string): Promise<Record<string, string>> {
         return localRedis
             ? localRedis.hgetall(key)
-            : edgeRedis!.hgetall<Record<string, string>>(key).then((value) => value ?? {})
+            : edgeRedis!.hgetall(key).then(redisHash)
     },
 
     hset(key: string, values: Record<string, string>) {
