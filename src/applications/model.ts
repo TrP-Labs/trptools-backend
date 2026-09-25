@@ -119,6 +119,24 @@ export namespace ApplicationModel {
     export const createResponse = t.Object({ id: t.String(), slug: t.String() })
     export type createResponse = typeof createResponse.static
 
+    export const importGoogleBody = t.Object({
+        groupId: t.String(),
+        rankId: t.Optional(t.String({ format: 'uuid' })),
+        formJson: t.String({ minLength: 1, maxLength: 262144 })
+    })
+    export type importGoogleBody = typeof importGoogleBody.static
+
+    export const importGoogleResponse = t.Object({
+        id: t.String(),
+        slug: t.String(),
+        imported: t.Number(),
+        skipped: t.Array(t.String())
+    })
+    export type importGoogleResponse = typeof importGoogleResponse.static
+
+    export const applicationRanks = t.Array(t.Object({ id: t.String(), cachedName: t.String() }))
+    export type applicationRanks = typeof applicationRanks.static
+
     export const patchBody = t.Object({
         name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
         description: t.Optional(t.String({ maxLength: 2000 })),
