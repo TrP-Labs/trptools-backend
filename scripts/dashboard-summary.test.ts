@@ -7,6 +7,11 @@ import type { session } from '../src/utils/sessionVerifier'
 
 // Run this isolated suite separately from src tests: only the external I/O is
 // replaced, so the actual membership, visibility and summary rules are exercised.
+// Transitive imports still initialize env.ts even though storage is mocked.
+// Workers Builds does not inherit runtime secrets, and this suite needs none.
+process.env.DATABASE_URL = 'postgres://unused:unused@127.0.0.1:9/unused'
+process.env.NODE_ENV = 'test'
+
 const group = {
     id: '00000000-0000-4000-8000-000000000002', robloxId: '123', slug: 'test-group',
     name: null, cachedName: 'Test Group', cachedAt: new Date(), cachedIcon: null,

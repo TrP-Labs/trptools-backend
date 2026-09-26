@@ -89,6 +89,14 @@ tests, TypeScript, both production bundles and a real local workerd health
 probe. Arguments still pass through to Wrangler, so a secrets file can be
 supplied with `bun run worker:deploy -- --secrets-file .env.production`.
 
+For Cloudflare Workers Builds, use `bun run check` as the build command and
+`bunx wrangler deploy` as the deploy command. Runtime credentials belong in
+Settings → Variables and Secrets; Settings → Build → Build Variables and
+Secrets configures a separate build environment. The release checks use mocked
+storage and local smoke-test bindings, so they do not need production secrets.
+Any CI step that runs database migrations needs its own `DATABASE_URL` build
+secret.
+
 ### Working without Roblox credentials
 
 Roblox OAuth needs a registered app and a browser round trip, which is awkward
