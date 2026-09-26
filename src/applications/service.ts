@@ -27,6 +27,49 @@ import { ApplicationModel } from './model'
 import { presentTranslations, translationUpdate } from '../utils/translations'
 import { parseGoogleForm } from './googleImport'
 
+/** Read the queue after its caller has checked REVIEW_APPLICATIONS. */
+export async function loadPendingApplications(groupId: string, limit: number): Promise<ApplicationModel.pendingList> {
+    const rows = await db
+        .select({
+            id: applicationSubmissions.id,
+            applicationId: applications.id,
+            applicationName: applications.name,
+            applicationTranslations: applications.translations,
+            color: applications.color,
+            rankName: rankRelations.cachedName,
+            submittedAt: applicationSubmissions.submittedAt,
+            ...applicantColumns
+        })
+        .from(applicationSubmissions)
+        .innerJoin(applications, eq(applicationSubmissions.applicationId, applications.id))
+        .innerJoin(users, eq(applicationSubmissions.userId, users.id))
+        .leftJoin(rankRelations, eq(applications.rankId, rankRelations.id))
+        .where(and(eq(applications.groupId, groupId), eq(applicationSubmissions.status, 'PENDING')))
+        // Whoever has been waiting longest is who a reviewer should reach
+        // next, which is the same order the queue itself uses.
+        .orderBy(asc(applicationSubmissions.submittedAt))
+        .limit(limit)
+
+    return rows.map((row) => ({
+        id: row.id,
+        application: {
+            id: row.applicationId,
+            name: row.applicationName,
+            translations: presentTranslations('APPLICATION', row.applicationTranslations),
+            color: row.color,
+            rankName: row.rankName
+        },
+        submittedAt: row.submittedAt,
+        applicant: {
+            userId: row.userId,
+            robloxId: row.robloxId,
+            username: row.username,
+            displayName: row.displayName,
+            avatar: row.avatar
+        }
+    }))
+}
+
 /** Slugs already used by a group's other forms, for `uniqueWithin`. */
 async function takenSlugs(groupId: string, exceptId?: string): Promise<Set<string>> {
     const rows = await db
@@ -408,45 +451,7 @@ export abstract class Applications {
 
         const limit = Math.min(Math.max(Number(query.limit ?? 8) || 8, 1), 50)
 
-        const rows = await db
-            .select({
-                id: applicationSubmissions.id,
-                applicationId: applications.id,
-                applicationName: applications.name,
-                applicationTranslations: applications.translations,
-                color: applications.color,
-                rankName: rankRelations.cachedName,
-                submittedAt: applicationSubmissions.submittedAt,
-                ...applicantColumns
-            })
-            .from(applicationSubmissions)
-            .innerJoin(applications, eq(applicationSubmissions.applicationId, applications.id))
-            .innerJoin(users, eq(applicationSubmissions.userId, users.id))
-            .leftJoin(rankRelations, eq(applications.rankId, rankRelations.id))
-            .where(and(eq(applications.groupId, group.id), eq(applicationSubmissions.status, 'PENDING')))
-            // Whoever has been waiting longest is who a reviewer should reach
-            // next, which is the same order the queue itself uses.
-            .orderBy(asc(applicationSubmissions.submittedAt))
-            .limit(limit)
-
-        return rows.map((row) => ({
-            id: row.id,
-            application: {
-                id: row.applicationId,
-                name: row.applicationName,
-                translations: presentTranslations('APPLICATION', row.applicationTranslations),
-                color: row.color,
-                rankName: row.rankName
-            },
-            submittedAt: row.submittedAt,
-            applicant: {
-                userId: row.userId,
-                robloxId: row.robloxId,
-                username: row.username,
-                displayName: row.displayName,
-                avatar: row.avatar
-            }
-        }))
+        return loadPendingApplications(group.id, limit)
     }
 
     static async get(applicationId: string, session: session): Promise<ApplicationModel.applicationDetail> {

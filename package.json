@@ -19,7 +19,7 @@
     "worker:types": "wrangler types worker-configuration.d.ts",
     "check": "bun run typecheck && bun run test && bun run build && bun run worker:build && bun run worker:smoke",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src",
+    "test": "bun test src && bun test scripts/dashboard-summary.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

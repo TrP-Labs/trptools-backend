@@ -1,9 +1,10 @@
 import { status } from 'elysia'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import db from '../db'
 import { groups, rankRelations, users } from '../db/schema'
 import { Roblox } from './roblox'
-import { resolveCredentials } from './robloxCredentials'
+import { resolveCredentials, userCredentials } from './robloxCredentials'
+import { decryptSecret } from './crypto'
 import { dataRedis, deleteByPattern } from './redis'
 import { NON_MEMBER, resolveMembership, type Membership } from './membershipRule'
 import { has, permissionsForLevel } from './permissions'
@@ -72,6 +73,8 @@ function decode(value: string): Membership {
     }
 }
 
+export const permissionCacheKey = (groupID: string, userID: string) => `perm:${groupID}:${userID}`
+
 /**
  * How long a last-known-good *Roblox role* stands in when Roblox cannot be
  * reached at all.
@@ -108,8 +111,7 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
     const groupID = await resolveGroupId(groupIdOrSlug)
     if (!groupID) return NON_MEMBER
 
-    const cacheKey = `perm:${groupID}:${userID}`
-    const graceKey = `perm:last:${groupID}:${userID}`
+    const cacheKey = permissionCacheKey(groupID, userID)
 
     try {
         const hit = await dataRedis.get(cacheKey)
@@ -118,6 +120,62 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
         // fall through
     }
 
+    return resolveMembershipMiss(userID, groupID)
+}
+
+/** One Redis command for a page that needs several fresh group memberships. */
+export async function GetMemberships(
+    userID: string,
+    groupIDs: string[],
+    preloadedHits?: Array<string | null>
+): Promise<Map<string, Membership>> {
+    const result = new Map<string, Membership>()
+    if (groupIDs.length === 0) return result
+
+    const hits = preloadedHits ?? await dataRedis.mget(groupIDs.map((id) => permissionCacheKey(id, userID))).catch(() => [])
+    const misses: string[] = []
+    groupIDs.forEach((groupID, index) => {
+        const hit = hits[index]
+        if (hit != null) result.set(groupID, decode(hit))
+        else misses.push(groupID)
+    })
+    if (misses.length === 0) return result
+
+    // A cold page previously repeated the user, group and OAuth-token reads
+    // for every card. Share them without trusting group discovery as proof of
+    // membership: each miss still asks Roblox about that exact group.
+    const [userRows, groupRows, oauth] = await Promise.all([
+        db.select({ robloxId: users.robloxId }).from(users).where(eq(users.id, userID)).limit(1).catch(() => []),
+        db.select({ id: groups.id, robloxId: groups.robloxId, openCloudKey: groups.openCloudKey })
+            .from(groups).where(inArray(groups.id, misses)).catch(() => []),
+        userCredentials(userID).catch(() => ({ accessToken: undefined }))
+    ])
+    const user = userRows[0]
+    const byId = new Map(groupRows.map((group) => [group.id, group]))
+    await Promise.all(misses.map(async (groupID) => {
+        const group = byId.get(groupID)
+        if (!group || !user) {
+            result.set(groupID, NON_MEMBER)
+            return
+        }
+        const apiKey = group.openCloudKey
+            ? await decryptSecret(group.openCloudKey).catch(() => undefined)
+            : undefined
+        try {
+            result.set(groupID, await resolveMembershipLookup(
+                userID, groupID, user.robloxId, group.robloxId,
+                { apiKey, accessToken: oauth.accessToken }
+            ))
+        } catch (error) {
+            // One bad group must not blank every other group's home schedule.
+            console.error(`[dashboard] membership lookup failed for group ${groupID}`, error)
+            result.set(groupID, NON_MEMBER)
+        }
+    }))
+    return result
+}
+
+async function resolveMembershipMiss(userID: string, groupID: string): Promise<Membership> {
     const [group] = await db
         .select({ id: groups.id, robloxId: groups.robloxId })
         .from(groups)
@@ -135,12 +193,24 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
     if (!group || !user) return NON_MEMBER
 
     const credentials = await resolveCredentials(group.id, userID)
-    const lookup = await Roblox.lookupMembership(user.robloxId, group.robloxId, credentials)
+    return resolveMembershipLookup(userID, groupID, user.robloxId, group.robloxId, credentials)
+}
+
+async function resolveMembershipLookup(
+    userID: string,
+    groupID: string,
+    robloxUserId: number,
+    robloxGroupId: string,
+    credentials: Awaited<ReturnType<typeof resolveCredentials>>
+): Promise<Membership> {
+    const cacheKey = permissionCacheKey(groupID, userID)
+    const graceKey = `perm:last:${groupID}:${userID}`
+    const lookup = await Roblox.lookupMembership(robloxUserId, robloxGroupId, credentials)
 
     if (lookup.status === 'UNKNOWN') {
         const remembered = await dataRedis.get(graceKey).catch(() => null)
         console.warn(
-            `[roblox] membership lookup for user ${user.robloxId} in group ${group.robloxId} was inconclusive` +
+            `[roblox] membership lookup for user ${robloxUserId} in group ${robloxGroupId} was inconclusive` +
                 (remembered ? ' — standing in their last known role' : ' — no previous role to stand in')
         )
 
@@ -149,7 +219,7 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
         // Nothing is written to `cacheKey`: the next request should ask Roblox
         // again rather than inherit a minute of guesswork.
         const [roleId, rank] = remembered.split(':')
-        return resolveRole(group.id, roleId ?? '', Number(rank))
+        return resolveRole(groupID, roleId ?? '', Number(rank))
     }
 
     if (lookup.status === 'NOT_MEMBER') {
@@ -161,7 +231,7 @@ export async function GetMembership(userID: string, groupIdOrSlug: string): Prom
     }
 
     const { role } = lookup.membership
-    const resolved = await resolveRole(group.id, role.id, role.rank)
+    const resolved = await resolveRole(groupID, role.id, role.rank)
 
     await Promise.all([
         dataRedis.set(cacheKey, encode(resolved), 'EX', 60).catch(() => undefined),

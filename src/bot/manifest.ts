@@ -55,17 +55,23 @@ async function assetBytes(value: string | ArrayBuffer): Promise<ArrayBuffer> {
     return bun.file(value).arrayBuffer()
 }
 
-const rendererReady = initWasm(
-    resvgWasm instanceof WebAssembly.Module ? resvgWasm : assetBytes(resvgWasm as unknown as string | ArrayBuffer)
-)
+let renderer: Promise<SatoriOptions['fonts']> | undefined
 
-const fonts: Promise<SatoriOptions['fonts']> = Promise.all([
-    assetBytes(interRegular as unknown as string | ArrayBuffer),
-    assetBytes(interSemiBold as unknown as string | ArrayBuffer)
-]).then(([regular, semibold]) => [
-    { name: 'Inter', data: regular, weight: 400 as const, style: 'normal' as const },
-    { name: 'Inter', data: semibold, weight: 600 as const, style: 'normal' as const }
-])
+function rendererFonts(): Promise<SatoriOptions['fonts']> {
+    // Ordinary API requests never initialize the PNG renderer or read its fonts.
+    return renderer ??= Promise.all([
+        initWasm(resvgWasm instanceof WebAssembly.Module
+            ? resvgWasm : assetBytes(resvgWasm as unknown as string | ArrayBuffer)),
+        assetBytes(interRegular as unknown as string | ArrayBuffer),
+        assetBytes(interSemiBold as unknown as string | ArrayBuffer)
+    ]).then(([, regular, semibold]) => [
+        { name: 'Inter', data: regular, weight: 400 as const, style: 'normal' as const },
+        { name: 'Inter', data: semibold, weight: 600 as const, style: 'normal' as const }
+    ]).catch((error) => {
+        renderer = undefined
+        throw error
+    })
+}
 
 const THEME = {
     background: '#0d1117',
@@ -381,10 +387,9 @@ export async function renderManifest(data: ManifestData): Promise<Buffer> {
     // out to the size of one with forty.
     const svg = await satori(board(data) as never, {
         width: WIDTH,
-        fonts: await fonts
+        fonts: await rendererFonts()
     })
 
-    await rendererReady
     return Buffer.from(new Resvg(svg).render().asPng())
 }
 

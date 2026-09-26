@@ -5,14 +5,15 @@ import { applications, applicationSubmissions, users } from '../db/schema'
 import { globalModel } from '../utils/globalModel'
 import { has, PERM } from '../utils/permissions'
 import { dataRedis } from '../utils/redis'
-import type { session } from '../utils/sessionVerifier'
+import { GetMemberships, permissionCacheKey } from '../utils/groupPermission'
+import { isSiteAdmin, type session } from '../utils/sessionVerifier'
+import type { Membership } from '../utils/membershipRule'
 import { Group_ } from '../groups/service'
-import { Schedule } from '../schedule/service'
 import { groupIndexKey } from '../rooms/service'
-import type { ScheduleModel } from '../schedule/model'
 import type { GroupModel } from '../groups/model'
 import { DashboardModel } from './model'
 import { presentTranslations } from '../utils/translations'
+import { dashboardSchedules } from './shifts'
 
 /**
  * How far ahead the dashboard looks, and how much of it it keeps.
@@ -37,52 +38,12 @@ const TOTAL_SHIFTS = 12
  */
 const MAX_GROUPS = 12
 
-function withGroup(
-    occurrence: ScheduleModel.occurrenceResponse,
-    group: GroupModel.groupSummary,
-    userId: string
-): DashboardModel.upcomingShift {
-    let filled = 0
-    let capacity = 0
-    let signedUp = false
-
-    for (const sheet of occurrence.sheets) {
-        for (const slot of sheet.slots) {
-            filled += slot.signups.length
-            capacity += slot.capacity
-            if (slot.signups.some((signup) => signup.userId === userId)) signedUp = true
-        }
-    }
-
-    return {
-        eventId: occurrence.eventId,
-        name: occurrence.name,
-        translations: occurrence.translations,
-        slug: occurrence.slug,
-        color: occurrence.color,
-        start: occurrence.start,
-        end: occurrence.end,
-        groupId: group.id,
-        groupSlug: group.slug,
-        groupName: group.name,
-        groupTranslations: group.translations,
-        groupIcon: group.icon,
-        signedUp,
-        signupsOpen: occurrence.signupsOpen,
-        sheetsAvailable: occurrence.sheetsAvailable,
-        filled,
-        capacity
-    }
-}
-
 export abstract class Dashboard {
     /**
      * Everything the signed-in home page draws, in one request.
      *
-     * The shifts page fans out over HTTP because it only needs one thing per
-     * group; the dashboard needs three, and doing that from the browser would
-     * be a request per group per card. Gathering it here costs the same
-     * database work and one round trip.
+     * Gathering the cards here shares membership reads and batches schedules
+     * and review counts across groups, without a request per group per card.
      *
      * Nothing here decides access on its own. The group list, the schedule and
      * the application queue are each read through the service that owns them,
@@ -92,12 +53,15 @@ export abstract class Dashboard {
      */
     static async get(session: session): Promise<DashboardModel.dashboardResponse> {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
-
         const userId = session.user.userId
 
-        const [all, pinned] = await Promise.all([
+        const [all, pin] = await Promise.all([
             Group_.getGroups(session),
-            db.select({ primaryGroupId: users.primaryGroupId }).from(users).where(eq(users.id, userId)).limit(1)
+            session.user.profile
+                ? Promise.resolve(session.user.profile.primaryGroupId)
+                : db.select({ primaryGroupId: users.primaryGroupId })
+                    .from(users).where(eq(users.id, userId)).limit(1)
+                    .then((rows) => rows[0]?.primaryGroupId ?? null)
         ])
 
         if (all.length === 0) {
@@ -107,7 +71,6 @@ export abstract class Dashboard {
         // A pin survives losing access to what it points at — an afternoon
         // without a rank, or a pin made while admin mode was on — but must not
         // render a card the viewer cannot open.
-        const pin = pinned[0]?.primaryGroupId ?? null
         const primaryGroupId = all.some((group) => group.id === pin) ? pin : null
 
         // The pinned group leads, and so is never the one the cap drops.
@@ -122,25 +85,30 @@ export abstract class Dashboard {
         // as whoever manages the group.
         const manageable = groups.filter((group) => has(group.permissions, PERM.REVIEW_APPLICATIONS))
 
-        const [schedules, rooms, reviews] = await Promise.all([
-            Promise.all(
-                groups.map(async (group) => {
-                    // A group whose schedule cannot be read is not an error on
-                    // somebody else's dashboard — it just has no shifts on it.
-                    const occurrences = await Schedule.getOccurrences(
-                        {
-                            groupId: group.id,
-                            from: from.toISOString(),
-                            to: to.toISOString(),
-                            limit: String(PER_GROUP)
-                        },
-                        session
-                    ).catch(() => [] as ScheduleModel.occurrencesResponse)
+        // Permission cache entries and live room ids are both Redis strings.
+        // Read them together so the home page spends one Upstash command on
+        // this whole set rather than one per group plus another for rooms.
+        const permissionKeys = isSiteAdmin(session)
+            ? []
+            : groups.map((group) => permissionCacheKey(group.id, userId))
+        const cache = dataRedis.mget([
+            ...permissionKeys,
+            ...groups.map((group) => groupIndexKey(group.id))
+        ]).catch(() => [] as Array<string | null>)
+        const memberships = permissionKeys.length === 0
+            ? Promise.resolve(new Map<string, Membership>())
+            : cache.then((values) => GetMemberships(
+                userId,
+                groups.map((group) => group.id),
+                values.slice(0, permissionKeys.length)
+            ))
 
-                    return occurrences.map((occurrence) => withGroup(occurrence, group, userId))
-                })
-            ),
-            dataRedis.mget(groups.map((group) => groupIndexKey(group.id))).catch(() => []),
+        const [schedules, rooms, reviews] = await Promise.all([
+            dashboardSchedules(groups, session, memberships, from, to, PER_GROUP).catch((error) => {
+                console.error('[dashboard] batched schedule load failed', error)
+                return groups.map(() => [] as DashboardModel.upcomingShift[])
+            }),
+            cache.then((values) => values.slice(permissionKeys.length)),
             Dashboard.reviewQueue(manageable)
         ])
 
@@ -173,6 +141,22 @@ export abstract class Dashboard {
             })),
             shifts,
             reviews
+        }
+    }
+
+    /** Drivers use membership discovery, then the same fresh per-group checks as the home page. */
+    static async shifts(session: session) {
+        if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
+        const groups = await Group_.getMemberGroups(session)
+        const memberships = isSiteAdmin(session)
+            ? Promise.resolve(new Map<string, Membership>())
+            : GetMemberships(session.user.userId, groups.map((group) => group.id))
+        const from = new Date()
+        const to = new Date(from.getTime() + 30 * 24 * 60 * 60 * 1000)
+        const schedules = await dashboardSchedules(groups, session, memberships, from, to, 20)
+        return {
+            groups,
+            occurrences: schedules.flat().sort((a, b) => a.start.getTime() - b.start.getTime()).slice(0, 60)
         }
     }
 

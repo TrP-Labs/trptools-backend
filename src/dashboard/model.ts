@@ -1,4 +1,8 @@
 import { t } from 'elysia'
+import { ApplicationModel } from '../applications/model'
+import { RouteModel } from '../groups/routes/model'
+import { AuthModel } from '../auth/model'
+import { GroupModel } from '../groups/model'
 import { globalModel } from '../utils/globalModel'
 import { translationsResponse } from '../utils/translations'
 
@@ -125,4 +129,33 @@ export namespace DashboardModel {
         reviews: t.Array(pendingReview)
     })
     export type dashboardResponse = typeof dashboardResponse.static
+
+    /** SSR gets identity and page data through one authenticated backend call. */
+    export const homeResponse = t.Object({
+        user: AuthModel.SessionUser,
+        dashboard: dashboardResponse
+    })
+
+    export const groupsPageResponse = t.Object({
+        user: AuthModel.SessionUser,
+        groups: GroupModel.groupList
+    })
+
+    export const groupOverview = t.Object({
+        routes: t.Array(t.Pick(RouteModel.routeBody, ['id', 'name', 'translations', 'color', 'textColor', 'shape', 'icon'])),
+        depots: t.Array(t.Pick(RouteModel.depotBody, ['id', 'number', 'name', 'translations', 'color', 'icon'])),
+        shiftCount: t.Number(),
+        upcoming: t.Array(upcomingShift),
+        applicants: ApplicationModel.pendingList,
+        openRoomId: t.Union([t.String(), t.Null()])
+    })
+    export const groupPageData = t.Object({ group: GroupModel.groupResponse, overview: groupOverview })
+    export type groupPageData = typeof groupPageData.static
+    export const groupPageResponse = t.Object({ user: AuthModel.SessionUser, ...groupPageData.properties })
+    export const shiftsPageResponse = t.Object({
+        user: AuthModel.SessionUser,
+        groups: GroupModel.groupList,
+        occurrences: t.Array(upcomingShift)
+    })
+
 }

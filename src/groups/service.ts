@@ -27,10 +27,11 @@ import { databaseLimitReached } from '../utils/databaseLimit'
 import { canRegisterGroup } from './registration'
 
 /** Refreshes the cached Roblox facts on a group if they have gone stale. */
-async function withFreshCache(group: Group, credentials: RobloxCredentials): Promise<Group> {
+async function withFreshCache(group: Group, credentialsFor: () => Promise<RobloxCredentials>): Promise<Group> {
     const stale = !group.cachedAt || Date.now() - group.cachedAt.getTime() > 1000 * 60 * 30
     if (!stale) return group
 
+    const credentials = await credentialsFor()
     const [robloxGroup, icon] = await Promise.all([
         Roblox.getGroup(group.robloxId, credentials),
         Roblox.getGroupIcon(group.robloxId)
@@ -370,11 +371,7 @@ export abstract class Group_ {
             }
         }
 
-        const credentials = await resolveCredentials(group.id, session.user?.userId)
-        const fresh = await withFreshCache(group, credentials)
-
-        const images = await mediaUrls([fresh.bannerMediaId])
-        return present(fresh, membership, images)
+        return describeGroup(group, membership, session)
     }
 
     /**
@@ -654,6 +651,18 @@ export abstract class Group_ {
 
         return 'Success' as globalModel.genericSuccess
     }
+}
+
+/** Present an already-authorized group without repeating its lookup or membership check. */
+export async function describeGroup(
+    group: Group,
+    membership: Membership,
+    session: session,
+    images?: Map<string, string>
+): Promise<GroupModel.groupResponse> {
+    // Credentials are needed only when the Roblox presentation cache expires.
+    const fresh = await withFreshCache(group, () => resolveCredentials(group.id, session.user?.userId))
+    return present(fresh, membership, images ?? await mediaUrls([fresh.bannerMediaId]))
 }
 
 /** Groups are addressable by uuid or by public slug. */
