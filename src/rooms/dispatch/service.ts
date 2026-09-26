@@ -6,8 +6,10 @@ import type { VehicleCategory } from '../../db/schema'
 import { dataRedis } from '../../utils/redis'
 import { broker } from '../../utils/events'
 import { globalModel } from '../../utils/globalModel'
-import { roomChannel, roomUsersKey, roomVehiclesKey, requireRoom, type RoomInfo } from '../service'
+import { roomChannel, roomUsersKey, roomVehiclesKey, roomKey, requireRoom, type RoomInfo } from '../service'
 import { Vehicles } from './model'
+import { assertResults, runBatches, type RedisTask } from './batch'
+import { ADD_VEHICLE, PATCH_VEHICLE, MODIFY_VEHICLE, DELETE_VEHICLES, CHANGE_PRESENCE } from './redisScripts'
 import {
     inferCategory,
     loadRoutePreferences,
@@ -20,7 +22,8 @@ import {
 
 const VEHICLE_TTL_SECONDS = 60 * 60 * 8
 
-const vehicleKey = (roomId: string, vehicleId: string) => `dispatchroom:${roomId}:vehicles:${vehicleId}`
+const vehiclePrefix = (roomId: string) => `dispatchroom:${roomId}:vehicles:`
+const vehicleKey = (roomId: string, vehicleId: string) => `${vehiclePrefix(roomId)}${vehicleId}`
 
 type StoredVehicle = {
     id: string
@@ -103,20 +106,51 @@ async function decorate(
     })
 }
 
+type RawVehicle = Omit<Vehicles.vehicle, 'routeName' | 'routeColor'>
+type Change = { task: RedisTask; event: Vehicles.streamEvent }
+
+async function loadVehicles(roomId: string): Promise<{ ids: string[]; vehicles: RawVehicle[] }> {
+    const ids = await dataRedis.lrange(roomVehiclesKey(roomId), 0, -1)
+    const results = await runBatches(dataRedis, ids.map((id) => (pipeline) => pipeline.hgetall(vehicleKey(roomId, id))))
+    assertResults(results)
+    const vehicles = results.map(([, value]) => decode(value as Record<string, string>))
+        .filter((vehicle): vehicle is RawVehicle => vehicle !== null)
+    return { ids, vehicles }
+}
+
+async function publishEvents(roomId: string, events: Vehicles.streamEvent[]) {
+    const results = await runBatches(dataRedis, events.map((event) => (pipeline) =>
+        pipeline.publish(roomChannel(roomId), JSON.stringify(event))))
+    assertResults(results)
+}
+
+async function commitChanges(roomId: string, changes: Change[], refreshList = false) {
+    const tasks = changes.map((change) => change.task)
+    if (refreshList) tasks.push((pipeline) => pipeline.expire(roomVehiclesKey(roomId), VEHICLE_TTL_SECONDS))
+    const results = await runBatches(dataRedis, tasks)
+    const events = changes.flatMap((change, index) => {
+        const [error, value] = results[index]!
+        return !error && value === 1 ? [change.event] : []
+    })
+    // Pipelines can partially succeed. Publish those writes before surfacing
+    // an error, so the other dispatchers still see what Redis actually kept.
+    await publishEvents(roomId, events)
+    assertResults(results)
+    if (results.some(([, value]) => value === -1)) throw status(404, 'Not Found' satisfies globalModel.notFound)
+    return events
+}
+
+function patchChange(roomId: string, id: string, patch: Record<string, string>, event: Vehicles.streamEvent): Change {
+    return {
+        task: (pipeline) => pipeline.eval(PATCH_VEHICLE, [roomKey(roomId), vehicleKey(roomId, id)], Object.entries(patch).flat()),
+        event
+    }
+}
+
 export abstract class DispatchControls {
     static async getAllVehicles(roomId: string, info: RoomInfo): Promise<Vehicles.vehicleList> {
-        const ids = await dataRedis.lrange(roomVehiclesKey(roomId), 0, -1)
-        if (ids.length === 0) return []
-
-        const pipeline = dataRedis.pipeline()
-        for (const id of ids) pipeline.hgetall(vehicleKey(roomId, id))
-        const results = await pipeline.exec()
-
-        const decoded = (results ?? [])
-            .map(([error, value]) => (error ? null : decode(value as Record<string, string>)))
-            .filter((vehicle): vehicle is Omit<Vehicles.vehicle, 'routeName' | 'routeColor'> => vehicle !== null)
-
-        return decorate(info.groupId, decoded)
+        const { vehicles } = await loadVehicles(roomId)
+        return decorate(info.groupId, vehicles)
     }
 
     /**
@@ -131,118 +165,49 @@ export abstract class DispatchControls {
         info: RoomInfo,
         payload: Vehicles.importBody
     ): Promise<Vehicles.importResponse> {
-        const stackKey = roomVehiclesKey(roomId)
-
         const incoming = new Map<string, Vehicles.seedVehicle>()
         for (const vehicle of payload) incoming.set(vehicle.Id.toString(), vehicle)
 
-        const current = await dataRedis.lrange(stackKey, 0, -1)
-        const currentSet = new Set(current)
-
-        const removed = current.filter((id) => !incoming.has(id))
-        for (const id of removed) {
-            await dataRedis.del(vehicleKey(roomId, id))
-            await dataRedis.lrem(stackKey, 1, id)
-            await broker.publish(roomChannel(roomId), { event: 'DELETE', data: id })
-        }
-
-        // A vehicle deleted in game takes its tow with it. Without this the
-        // tow truck keeps pointing at an id nothing resolves, and the board
-        // shows it towing a blank.
-        await DispatchControls.releaseTows(roomId, info, removed)
-
-        const context = await loadSolverContext(
-            info.groupId,
-            payload.map((vehicle) => vehicle.OwnerId.toString())
-        )
-
-        let added = 0
+        const [current, context] = await Promise.all([
+            loadVehicles(roomId),
+            loadSolverContext(info.groupId, payload.map((vehicle) => vehicle.OwnerId.toString()))
+        ])
+        const byId = new Map(current.vehicles.map((vehicle) => [vehicle.id, vehicle]))
+        const gone = current.ids.filter((id) => !incoming.has(id))
+        const removed = gone.length ? await this.removeVehicles(roomId, gone) : 0
+        const changes: Change[] = []
+        const seeds: StoredVehicle[] = []
 
         for (const [id, vehicle] of incoming) {
-            if (currentSet.has(id)) {
-                // A vehicle already here still gets its list re-checked, so a
-                // manager who fixes a misfiled vehicle in settings can put the
-                // board right by pressing Import rather than by closing the
-                // room. Nothing else about the vehicle is touched.
-                const rule = matchRule(vehicle.Name, context)
-                const category: VehicleCategory = rule?.category ?? inferCategory(vehicle.Name)
-                const held = await dataRedis.hget(vehicleKey(roomId, id), 'category')
-
-                if (held !== category) {
-                    await dataRedis.hset(vehicleKey(roomId, id), { category })
-                    await broker.publish(roomChannel(roomId), {
-                        event: 'UPDATE',
-                        data: { id, category }
-                    })
-                }
-
-                continue
-            }
-
             const rule = matchRule(vehicle.Name, context)
             const category: VehicleCategory = rule?.category ?? inferCategory(vehicle.Name)
-
-            const stored: StoredVehicle = {
-                id,
-                ownerId: vehicle.OwnerId.toString(),
-                name: vehicle.Name,
-                depot: vehicle.Depot,
-                // Resolved once here rather than on every solve, so the room
-                // keeps working even if a depot is renamed mid-shift.
-                depotId: resolveDepotId(vehicle.Depot, context) ?? '',
-                route: rule?.fixedRoute ?? '',
-                category,
-                assigned: 'false',
-                towing: '',
-                note: '',
-                location: '',
-                status: 'AWAITING'
+            const held = byId.get(id)
+            if (held) {
+                if (held.category !== category) changes.push(patchChange(roomId, id, { category }, {
+                    event: 'UPDATE', data: { id, category }
+                }))
+                continue
             }
-
-            await dataRedis.hset(vehicleKey(roomId, id), stored)
-            await dataRedis.expire(vehicleKey(roomId, id), VEHICLE_TTL_SECONDS)
-            await dataRedis.rpush(stackKey, id)
-
-            added += 1
-
-            const [decorated] = await decorate(info.groupId, [decode(stored as unknown as Record<string, string>)!])
-            await broker.publish(roomChannel(roomId), { event: 'ADD', data: decorated })
+            seeds.push({
+                id, ownerId: vehicle.OwnerId.toString(), name: vehicle.Name, depot: vehicle.Depot,
+                depotId: resolveDepotId(vehicle.Depot, context) ?? '', route: rule?.fixedRoute ?? '',
+                category, assigned: 'false', towing: '', note: '', location: '', status: 'AWAITING'
+            })
         }
 
-        await dataRedis.expire(stackKey, VEHICLE_TTL_SECONDS)
-
-        const total = await dataRedis.llen(stackKey)
-
-        return { added, removed: removed.length, total }
+        const decorated = await decorate(info.groupId, seeds.map((seed) => decode(seed)!))
+        seeds.forEach((seed, index) => changes.push({
+            task: (pipeline) => pipeline.eval(ADD_VEHICLE,
+                [roomKey(roomId), vehicleKey(roomId, seed.id), roomVehiclesKey(roomId)],
+                [String(VEHICLE_TTL_SECONDS), seed.id, ...Object.entries(seed).flat()]),
+            event: { event: 'ADD', data: decorated[index]! }
+        }))
+        const events = await commitChanges(roomId, changes, true)
+        const total = await dataRedis.llen(roomVehiclesKey(roomId))
+        return { added: events.filter((event) => event.event === 'ADD').length, removed, total }
     }
 
-    static async modifyVehicle(roomId: string, vehicleId: string, info: RoomInfo, body: Vehicles.modifyBody) {
-        const exists = await dataRedis.exists(vehicleKey(roomId, vehicleId))
-        if (!exists) throw status(404, 'Not Found' satisfies globalModel.notFound)
-
-        // A tow is the one field on a vehicle that talks about another one, so
-        // it is the one field that can contradict the rest of the room. Two
-        // trucks claiming the same casualty would leave whichever the board
-        // drew last looking correct, so the second claim is refused outright
-        // rather than silently taking the tow off the first.
-        if (body.towing) {
-            if (body.towing === vehicleId) {
-                throw status(409, 'a vehicle cannot tow itself' satisfies Vehicles.towProblem)
-            }
-
-            const target = await dataRedis.exists(vehicleKey(roomId, body.towing))
-            if (!target) {
-                throw status(409, 'that vehicle is not in this room' satisfies Vehicles.towProblem)
-            }
-
-            const held = (await DispatchControls.getAllVehicles(roomId, info)).some(
-                (vehicle) => vehicle.id !== vehicleId && vehicle.towing === body.towing
-            )
-            if (held) {
-                throw status(409, 'that vehicle is already being towed' satisfies Vehicles.towProblem)
-            }
-        }
-
+    static async modifyVehicle(roomId: string, vehicleId: string, _info: RoomInfo, body: Vehicles.modifyBody) {
         const patch: Record<string, string> = {}
         if (body.route !== undefined) patch.route = body.route ?? ''
         if (body.assigned !== undefined) patch.assigned = body.assigned ? 'true' : 'false'
@@ -252,51 +217,31 @@ export abstract class DispatchControls {
         if (body.status !== undefined) patch.status = body.status
         if (body.category !== undefined) patch.category = body.category
 
-        if (Object.keys(patch).length === 0) return 'Success' as globalModel.genericSuccess
-
-        await dataRedis.hset(vehicleKey(roomId, vehicleId), patch)
-
-        await broker.publish(roomChannel(roomId), {
-            event: 'UPDATE',
-            data: { id: vehicleId, ...body }
-        })
-
+        const result = await dataRedis.eval<number>(MODIFY_VEHICLE,
+            [roomKey(roomId), vehicleKey(roomId, vehicleId), roomVehiclesKey(roomId)],
+            [vehicleId, vehiclePrefix(roomId), JSON.stringify(patch), roomChannel(roomId),
+                JSON.stringify({ event: 'UPDATE', data: { id: vehicleId, ...body } })])
+        if (result === -1) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (result === -2) throw status(409, 'a vehicle cannot tow itself' satisfies Vehicles.towProblem)
+        if (result === -3) throw status(409, 'that vehicle is not in this room' satisfies Vehicles.towProblem)
+        if (result === -4) throw status(409, 'that vehicle is already being towed' satisfies Vehicles.towProblem)
         return 'Success' as globalModel.genericSuccess
     }
 
-    static async deleteVehicle(roomId: string, vehicleId: string, info: RoomInfo) {
-        const removed = await dataRedis.lrem(roomVehiclesKey(roomId), 1, vehicleId)
-        if (removed === 0) throw status(404, 'Not Found' satisfies globalModel.notFound)
-
-        await dataRedis.del(vehicleKey(roomId, vehicleId))
-        await broker.publish(roomChannel(roomId), { event: 'DELETE', data: vehicleId })
-
-        await DispatchControls.releaseTows(roomId, info, [vehicleId])
-
-        return 'Success' as globalModel.genericSuccess
+    private static removeVehicles(roomId: string, ids: string[]) {
+        return dataRedis.eval<number>(DELETE_VEHICLES, [roomKey(roomId), roomVehiclesKey(roomId)],
+            [vehiclePrefix(roomId), JSON.stringify(ids), roomChannel(roomId)])
     }
 
-    /** Drops any tow pointing at a vehicle that has left the room. */
-    private static async releaseTows(roomId: string, info: RoomInfo, goneIds: string[]) {
-        if (goneIds.length === 0) return
-
-        const gone = new Set(goneIds)
-        const vehicles = await DispatchControls.getAllVehicles(roomId, info)
-
-        for (const vehicle of vehicles) {
-            if (!vehicle.towing || !gone.has(vehicle.towing)) continue
-
-            await dataRedis.hset(vehicleKey(roomId, vehicle.id), { towing: '' })
-            await broker.publish(roomChannel(roomId), {
-                event: 'UPDATE',
-                data: { id: vehicle.id, towing: null }
-            })
-        }
+    static async deleteVehicle(roomId: string, vehicleId: string, _info: RoomInfo) {
+        const removed = await this.removeVehicles(roomId, [vehicleId])
+        if (!removed) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        return 'Success' as globalModel.genericSuccess
     }
 
     /** Runs automatic assignment across the room and broadcasts the result. */
     static async solveRoom(roomId: string, info: RoomInfo, body: Vehicles.solveBody): Promise<Vehicles.solveResponse> {
-        const vehicles = await this.getAllVehicles(roomId, info)
+        const { vehicles } = await loadVehicles(roomId)
 
         const context = await loadSolverContext(
             info.groupId,
@@ -323,21 +268,16 @@ export abstract class DispatchControls {
             only: body.vehicleIds?.length ? body.vehicleIds : undefined
         })
 
-        for (const assignment of result.assignments) {
-            await dataRedis.hset(vehicleKey(roomId, assignment.vehicleId), { route: assignment.route ?? '' })
-            await broker.publish(roomChannel(roomId), {
-                event: 'UPDATE',
-                data: { id: assignment.vehicleId, route: assignment.route }
-            })
-        }
-
+        const events = await commitChanges(roomId, result.assignments.map((assignment) =>
+            patchChange(roomId, assignment.vehicleId, { route: assignment.route ?? '' }, {
+                event: 'UPDATE', data: { id: assignment.vehicleId, route: assignment.route }
+            })))
+        const written = new Set(events.flatMap((event) => event.event === 'UPDATE' ? [event.data.id] : []))
+        const assignments = result.assignments.filter((assignment) => written.has(assignment.vehicleId))
         return {
-            solved: result.assignments.length,
+            solved: assignments.length,
             skipped: result.skipped,
-            assignments: result.assignments.map((assignment) => ({
-                vehicleId: assignment.vehicleId,
-                route: assignment.route
-            }))
+            assignments: assignments.map((assignment) => ({ vehicleId: assignment.vehicleId, route: assignment.route }))
         }
     }
 
@@ -351,7 +291,7 @@ export abstract class DispatchControls {
      * about this room and not about the group's whole membership.
      */
     static async ownerPreferences(roomId: string, info: RoomInfo): Promise<Vehicles.ownerPreferenceList> {
-        const vehicles = await this.getAllVehicles(roomId, info)
+        const { vehicles } = await loadVehicles(roomId)
         const owners = [...new Set(vehicles.map((vehicle) => vehicle.ownerId))]
         if (owners.length === 0) return []
 
@@ -387,23 +327,14 @@ export abstract class DispatchControls {
             .map(([userId]) => userId)
     }
 
-    static async join(roomId: string, userId: string) {
-        await dataRedis.hincrby(roomUsersKey(roomId), userId, 1)
-        await dataRedis.expire(roomUsersKey(roomId), VEHICLE_TTL_SECONDS)
-        await broker.publish(roomChannel(roomId), {
-            event: 'PRESENCE',
-            data: await DispatchControls.present(roomId)
-        })
+    static async join(roomId: string, userId: string): Promise<string[]> {
+        return dataRedis.eval<string[]>(CHANGE_PRESENCE, [roomKey(roomId), roomUsersKey(roomId)],
+            [userId, '1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId)])
     }
 
-    static async leave(roomId: string, userId: string) {
-        const remaining = await dataRedis.hincrby(roomUsersKey(roomId), userId, -1)
-        if (remaining <= 0) await dataRedis.hdel(roomUsersKey(roomId), userId)
-
-        await broker.publish(roomChannel(roomId), {
-            event: 'PRESENCE',
-            data: await DispatchControls.present(roomId)
-        })
+    static async leave(roomId: string, userId: string): Promise<string[]> {
+        return dataRedis.eval<string[]>(CHANGE_PRESENCE, [roomKey(roomId), roomUsersKey(roomId)],
+            [userId, '-1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId)])
     }
 
     /** The same list, resolved to profiles for the room's presence dialog. */
@@ -432,8 +363,8 @@ export abstract class DispatchControls {
      * client cannot block the broker, and it is bounded so a stalled reader
      * gets dropped instead of growing memory without limit.
      */
-    static async *stream(roomId: string, userId: string): AsyncGenerator<Vehicles.streamEvent> {
-        const info = await requireRoom(roomId)
+    static async *stream(roomId: string, userId: string, room?: RoomInfo): AsyncGenerator<Vehicles.streamEvent> {
+        const info = room ?? await requireRoom(roomId)
 
         const queue: Vehicles.streamEvent[] = []
         let notify: (() => void) | null = null
@@ -456,17 +387,33 @@ export abstract class DispatchControls {
             }
         })
 
-        await DispatchControls.join(roomId, userId)
-
-        const heartbeat = setInterval(() => push({ event: 'HEARTBEAT' }), 15_000)
-
+        let joined = false
+        let heartbeat: ReturnType<typeof setInterval> | undefined
+        let checking = false
         try {
-            // Open with the full picture so a reconnecting client is correct
-            // immediately rather than after the next change. Presence goes out
-            // the same way: a client must not have to wait for somebody else
-            // to come or go before it knows who is here.
-            yield { event: 'SYNC', data: await DispatchControls.getAllVehicles(roomId, info) }
-            yield { event: 'PRESENCE', data: await DispatchControls.present(roomId) }
+            // Subscribe before loading the snapshot so changes in flight are
+            // queued. Joining and reading can share their network wait.
+            const [presenceResult, vehiclesResult] = await Promise.allSettled([
+                DispatchControls.join(roomId, userId).then((present) => {
+                    joined = true
+                    return present
+                }),
+                DispatchControls.getAllVehicles(roomId, info)
+            ])
+            if (presenceResult.status === 'rejected') throw presenceResult.reason
+            if (vehiclesResult.status === 'rejected') throw vehiclesResult.reason
+            const presence = presenceResult.value
+            const vehicles = vehiclesResult.value
+            heartbeat = setInterval(() => {
+                push({ event: 'HEARTBEAT' })
+                if (checking || closed) return
+                checking = true
+                void dataRedis.exists(roomKey(roomId)).then((exists) => {
+                    if (!exists) push({ event: 'CLOSED' })
+                }).catch(() => undefined).finally(() => { checking = false })
+            }, 15_000)
+            yield { event: 'SYNC', data: vehicles }
+            yield { event: 'PRESENCE', data: presence }
 
             while (!closed) {
                 if (queue.length === 0) {
@@ -483,17 +430,11 @@ export abstract class DispatchControls {
                     yield event
                     if (event.event === 'CLOSED') return
                 }
-
-                // The room can expire underneath us mid-shift.
-                if ((await dataRedis.exists(`room:${roomId}`)) === 0) {
-                    yield { event: 'CLOSED' }
-                    return
-                }
             }
         } finally {
             clearInterval(heartbeat)
             unsubscribe()
-            await DispatchControls.leave(roomId, userId).catch(() => undefined)
+            if (joined) await DispatchControls.leave(roomId, userId).catch(() => undefined)
         }
     }
 }

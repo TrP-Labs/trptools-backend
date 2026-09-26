@@ -74,8 +74,8 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                 }
             })
 
-            .get('/connect', async function* ({ roomId, user }) {
-                for await (const event of DispatchControls.stream(roomId, user.userId)) {
+            .get('/connect', async function* ({ roomId, room, user }) {
+                for await (const event of DispatchControls.stream(roomId, user.userId, room)) {
                     yield sse({ data: event })
                 }
             }, {
