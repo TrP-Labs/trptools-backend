@@ -11,6 +11,7 @@ import { activeOccurrence } from '../utils/recurrence'
 import { isElevated, type session, type SessionUser } from '../utils/sessionVerifier'
 import { findGroup } from '../groups/service'
 import { RoomModel } from './model'
+import { CLOSE_ROOM } from './dispatch/redisScripts'
 
 export type RoomInfo = {
     groupId: string
@@ -150,11 +151,8 @@ export abstract class RoomControls {
         const info = await requireRoom(roomId)
         await assertGroupPermission(session, info.groupId, PERM.START_ROOM)
 
-        await Promise.all([
-            dataRedis.del(groupIndexKey(info.groupId)),
-            deleteByPrefix(roomKey(roomId)),
-            deleteByPrefix(`dispatchroom:${roomId}`)
-        ])
+        await dataRedis.eval(CLOSE_ROOM, [roomKey(roomId), groupIndexKey(info.groupId)], [roomId, roomChannel(roomId)])
+        await deleteByPrefix(`dispatchroom:${roomId}:`)
 
         return 'Success' as globalModel.genericSuccess
     }
@@ -162,13 +160,13 @@ export abstract class RoomControls {
 
 /** Shared by the dispatch controller: can this user act in this room? */
 export async function canDispatch(user: SessionUser, roomId: string): Promise<RoomInfo | null> {
-    const groupId = await dataRedis.hget(roomKey(roomId), 'groupId')
-    if (!groupId) return null
+    const info = await dataRedis.hgetall(roomKey(roomId)) as Partial<RoomInfo>
+    if (!info.groupId) return null
 
     if (!isElevated(user)) {
-        const membership = await GetMembership(user.userId, groupId)
+        const membership = await GetMembership(user.userId, info.groupId)
         if (!has(membership.permissions, PERM.DISPATCH)) return null
     }
 
-    return requireRoom(roomId)
+    return info as RoomInfo
 }

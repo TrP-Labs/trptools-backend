@@ -2,7 +2,7 @@ import { Redis as IoRedis } from 'ioredis'
 import { Redis as UpstashRedis } from '@upstash/redis/cloudflare'
 import { env } from './env'
 import { resolveUpstashCredentials } from './redisCredentials'
-import { redisHash } from './redisHash'
+import { redisHash, pipelineResult } from './redisHash'
 
 const localOptions = {
     maxRetriesPerRequest: null,
@@ -36,10 +36,68 @@ localSubscriber?.on('error', (error) => console.error('[redis] subscriber error:
 class Pipeline {
     private readonly local = localRedis?.pipeline() ?? null
     private readonly edge = edgeRedis?.pipeline() ?? null
+    private readonly hashes: boolean[] = []
 
     hgetall(key: string) {
+        this.hashes.push(true)
         this.local?.hgetall(key)
         this.edge?.hgetall(key)
+        return this
+    }
+
+    hget(key: string, field: string) {
+        this.hashes.push(false)
+        this.local?.hget(key, field)
+        this.edge?.hget(key, field)
+        return this
+    }
+
+    hset(key: string, values: Record<string, string>) {
+        this.hashes.push(false)
+        this.local?.hset(key, values)
+        this.edge?.hset(key, values)
+        return this
+    }
+
+    expire(key: string, seconds: number) {
+        this.hashes.push(false)
+        this.local?.expire(key, seconds)
+        this.edge?.expire(key, seconds)
+        return this
+    }
+
+    rpush(key: string, value: string) {
+        this.hashes.push(false)
+        this.local?.rpush(key, value)
+        this.edge?.rpush(key, value)
+        return this
+    }
+
+    lrem(key: string, count: number, value: string) {
+        this.hashes.push(false)
+        this.local?.lrem(key, count, value)
+        this.edge?.lrem(key, count, value)
+        return this
+    }
+
+    del(key: string) {
+        this.hashes.push(false)
+        this.local?.del(key)
+        this.edge?.del(key)
+        return this
+    }
+
+    publish(channel: string, message: string) {
+        this.hashes.push(false)
+        this.local?.publish(channel, message)
+        this.edge?.publish(channel, message)
+        return this
+    }
+
+    eval(script: string, keys: string[], args: string[]) {
+        this.hashes.push(false)
+        this.local?.eval(script, keys.length, ...keys, ...args)
+        this.edge?.eval(script, keys, args)
         return this
     }
 
@@ -48,9 +106,7 @@ class Pipeline {
         if (!this.edge) return null
 
         const results = await this.edge.exec({ keepErrors: true })
-        // This pipeline only queues HGETALL. With deserialization disabled,
-        // Upstash returns [field, value, ...], not the ioredis hash object.
-        return results.map(({ result, error }) => [error ? new Error(error) : null, redisHash(result)])
+        return results.map(({ result, error }, index) => pipelineResult(result, error, this.hashes[index] ?? false))
     }
 }
 
