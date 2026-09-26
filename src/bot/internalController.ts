@@ -34,6 +34,16 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
         }
     })
 
+    .get('/groups/:groupId/guild', async ({ params }) => BotService.guildForGroup(params.groupId), {
+        response: { 200: BotInternal.guild, 401: globalModel.unauthorized, 404: globalModel.notFound },
+        detail: { summary: 'Configuration for one connected group' }
+    })
+
+    .get('/boards', async () => BotService.boardGuilds(), {
+        response: { 200: t.Array(t.Object({ guildId: t.String(), manifestRefreshSeconds: t.Number() })), 401: globalModel.unauthorized },
+        detail: { summary: 'Guild IDs with dispatch board refresh enabled' }
+    })
+
     .get('/due', async () => dueActions(), {
         response: { 200: BotInternal.dueActions, 401: globalModel.unauthorized },
         detail: {
@@ -161,19 +171,17 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
 
             .get(
                 '/manifest',
-                async ({ params: { guildId }, set }) => {
+                async ({ params: { guildId }, request }) => {
                     const { manifestFor } = await import('./manifest')
-                    const png = await manifestFor(guildId)
+                    const manifest = await manifestFor(guildId, request.headers.get('if-none-match'))
 
                     // 404 is the ordinary answer for most of a shift's life —
                     // it means no dispatch room is open, which is what tells
                     // the bot to stop asking rather than an error to report.
-                    if (!png) return status(404, 'Not Found')
-
-                    set.headers['content-type'] = 'image/png'
-                    return new Response(png as unknown as BodyInit, {
-                        headers: { 'content-type': 'image/png' }
-                    })
+                    if (!manifest) return status(404, 'Not Found')
+                    const headers = { 'content-type': 'image/png', etag: manifest.etag, 'cache-control': 'private, no-cache' }
+                    if (!manifest.png) return new Response(null, { status: 304, headers })
+                    return new Response(manifest.png as unknown as BodyInit, { headers })
                 },
                 {
                     detail: {

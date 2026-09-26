@@ -154,6 +154,19 @@ export abstract class BotService {
         return BotService.describe(config, group)
     }
 
+    static async guildForGroup(groupId: string): Promise<BotInternal.guild> {
+        const [row] = await db.select({ config: botConfigs, group: groups })
+            .from(botConfigs).innerJoin(groups, eq(botConfigs.groupId, groups.id))
+            .where(eq(botConfigs.groupId, groupId)).limit(1)
+        if (!row) throw status(404, 'Not Found')
+        return BotService.describe(row.config, row.group)
+    }
+
+    static async boardGuilds() {
+        return db.select({ guildId: botConfigs.guildId, manifestRefreshSeconds: botConfigs.manifestRefreshSeconds }).from(botConfigs)
+            .where(eq(botConfigs.manifestEnabled, true))
+    }
+
     private static async describe(
         config: typeof botConfigs.$inferSelect,
         group: typeof groups.$inferSelect
@@ -321,9 +334,9 @@ export abstract class BotService {
         // Selecting the slot they already hold gives it up.
         if (held?.slotId === body.slotId) {
             await db.delete(shiftSignups).where(eq(shiftSignups.id, held.id))
-            await publishSignupChange(group.id, body.eventId, occurrence, sheet.sheetId)
+            const syncDelivered = await publishSignupChange(group.id, body.eventId, occurrence, sheet.sheetId)
 
-            return { status: 'RELEASED', slotName: slot.name, previousSlotName: null }
+            return { status: 'RELEASED', slotName: slot.name, previousSlotName: null, syncDelivered, changedSheetIds: [sheet.sheetId] }
         }
 
         const takenHere = existing.filter((row) => row.slotId === body.slotId)
@@ -348,15 +361,17 @@ export abstract class BotService {
             ...identity
         })
 
-        await publishSignupChange(group.id, body.eventId, occurrence, sheet.sheetId)
-        if (from && from.sheetId !== sheet.sheetId) {
-            await publishSignupChange(group.id, body.eventId, occurrence, from.sheetId)
-        }
+        const changedSheetIds = [sheet.sheetId]
+        if (from && from.sheetId !== sheet.sheetId) changedSheetIds.push(from.sheetId)
+        const delivered = await Promise.all(changedSheetIds.map((sheetId) =>
+            publishSignupChange(group.id, body.eventId, occurrence, sheetId)))
 
         return {
             status: held ? 'MOVED' : 'TAKEN',
             slotName: slot.name,
-            previousSlotName: previous
+            previousSlotName: previous,
+            syncDelivered: delivered.every(Boolean),
+            changedSheetIds
         }
     }
 

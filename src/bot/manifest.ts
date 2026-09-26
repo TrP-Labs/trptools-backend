@@ -1,4 +1,5 @@
-import { eq } from 'drizzle-orm'
+import { manifestVersion, matchesManifestVersion } from './manifestVersion'
+import { eq, inArray } from 'drizzle-orm'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm'
 import satori, { type SatoriOptions } from 'satori'
@@ -399,7 +400,7 @@ export async function renderManifest(data: ManifestData): Promise<Buffer> {
  * Null is the normal case for most of a shift's life, and is what tells the
  * bot to stop asking rather than an error to report.
  */
-export async function manifestFor(guildId: string): Promise<Buffer | null> {
+export async function manifestFor(guildId: string, ifNoneMatch: string | null = null): Promise<{ png: Buffer | null; etag: string } | null> {
     const [row] = await db
         .select({ config: botConfigs, group: groups })
         .from(botConfigs)
@@ -430,6 +431,7 @@ export async function manifestFor(guildId: string): Promise<Buffer | null> {
                 displayName: users.cachedDisplayName
             })
             .from(users)
+            .where(inArray(users.robloxId, ownerIds.filter((id) => /^\d+$/.test(id)).map(Number)))
 
         for (const profile of profiles) {
             const key = profile.robloxId.toString()
@@ -441,12 +443,20 @@ export async function manifestFor(guildId: string): Promise<Buffer | null> {
     const present = await dataRedis.hgetall(roomUsersKey(roomId)).catch(() => ({}))
     const dispatchers = Object.values(present).filter((count) => Number(count) > 0).length
 
-    return renderManifest({
+    const data: ManifestData = {
         groupName: row.group.cachedName ?? row.group.slug,
         shiftName: info.eventName,
         vehicles,
         drivers,
         dispatchers,
         renderedAt: new Date()
+    }
+    const etag = await manifestVersion({
+        roomId, groupName: data.groupName, shiftName: data.shiftName,
+        vehicles: [...vehicles].sort((a, b) => a.id.localeCompare(b.id)),
+        drivers: [...drivers].sort(([a], [b]) => a.localeCompare(b)), dispatchers,
+        languages: row.config.languages
     })
+    if (matchesManifestVersion(ifNoneMatch, etag)) return { png: null, etag }
+    return { png: await renderManifest(data), etag }
 }
