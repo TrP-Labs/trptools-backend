@@ -137,7 +137,9 @@ export namespace BotInternal {
         ]),
         slotName: t.String(),
         /** The slot they left, when this was a move. */
-        previousSlotName: t.Union([t.String(), t.Null()])
+        previousSlotName: t.Union([t.String(), t.Null()]),
+        syncDelivered: t.Optional(t.Boolean()),
+        changedSheetIds: t.Optional(t.Array(t.String()))
     })
     export type signupResult = typeof signupResult.static
 

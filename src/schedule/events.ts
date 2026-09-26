@@ -36,7 +36,7 @@ export async function publishSignupChange(
     // the next edit, never a lost signup — the database already has the row.
     const serialized = JSON.stringify(payload)
     const notifications: Promise<unknown>[] = [
-        dataRedis.publish(SIGNUP_CHANNEL, serialized)
+        dataRedis.publish(SIGNUP_CHANNEL, serialized).then((listeners) => Number(listeners) > 0)
     ]
 
     if (env.BOT_WORKER_URL && env.BOT_WORKER_SYNC_TOKEN) {
@@ -49,8 +49,10 @@ export async function publishSignupChange(
             body: serialized
         }).then((response) => {
             if (!response.ok) throw new Error(`Bot sync returned ${response.status}`)
+            return true
         }))
     }
 
-    await Promise.allSettled(notifications)
+    const results = await Promise.allSettled(notifications)
+    return results.some((result) => result.status === 'fulfilled' && result.value === true)
 }
