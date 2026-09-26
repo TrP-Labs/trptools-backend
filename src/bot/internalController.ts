@@ -4,7 +4,6 @@ import { isBotServiceRequest } from '../utils/requestIdentity'
 import { globalModel } from '../utils/globalModel'
 import { BotInternal } from './internalModel'
 import { BotService } from './internalService'
-import { manifestFor } from './manifest'
 import { claimCompleted, completeClaim, dueActions, releaseClaim } from './scheduler'
 
 /**
@@ -163,6 +162,7 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
             .get(
                 '/manifest',
                 async ({ params: { guildId }, set }) => {
+                    const { manifestFor } = await import('./manifest')
                     const png = await manifestFor(guildId)
 
                     // 404 is the ordinary answer for most of a shift's life —

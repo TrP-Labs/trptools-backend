@@ -2,7 +2,7 @@ import { sha256 } from '@oslojs/crypto/sha2'
 import { encodeBase32LowerCaseNoPadding, encodeHexLowerCase } from '@oslojs/encoding'
 import { eq } from 'drizzle-orm'
 import db from '../db'
-import { apiKeys, sessions, users } from '../db/schema'
+import { apiKeys, sessions, users, type User } from '../db/schema'
 import { isBanned } from './moderation'
 import { env } from './env'
 
@@ -19,6 +19,41 @@ export type SessionUser = {
      * access — `isSiteAdmin` below is the only question worth asking.
      */
     adminMode: boolean
+    /** Presentation fields already read by the session's user join. */
+    profile?: SessionProfile
+}
+
+export type SessionProfile = Pick<User,
+    | 'createdAt' | 'primaryGroupId' | 'cachedUsername' | 'cachedDisplayName'
+    | 'cachedAvatar' | 'cachedAt' | 'theme' | 'locale' | 'timezone'
+    | 'discordId' | 'discordUsername' | 'discordAvatar' | 'discordLinkedAt'
+>
+
+const profileColumns = {
+    createdAt: users.createdAt,
+    primaryGroupId: users.primaryGroupId,
+    cachedUsername: users.cachedUsername,
+    cachedDisplayName: users.cachedDisplayName,
+    cachedAvatar: users.cachedAvatar,
+    cachedAt: users.cachedAt,
+    theme: users.theme,
+    locale: users.locale,
+    timezone: users.timezone,
+    discordId: users.discordId,
+    discordUsername: users.discordUsername,
+    discordAvatar: users.discordAvatar,
+    discordLinkedAt: users.discordLinkedAt
+}
+
+function profileFrom(row: SessionProfile): SessionProfile {
+    const {
+        createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
+        theme, locale, timezone, discordId, discordUsername, discordAvatar, discordLinkedAt
+    } = row
+    return {
+        createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
+        theme, locale, timezone, discordId, discordUsername, discordAvatar, discordLinkedAt
+    }
 }
 
 export type session = {
@@ -59,7 +94,8 @@ export default async function GetSession(token: string | undefined): Promise<ses
             robloxId: users.robloxId,
             siteRank: users.siteRank,
             bannedAt: users.bannedAt,
-            banExpiresAt: users.banExpiresAt
+            banExpiresAt: users.banExpiresAt,
+            ...profileColumns
         })
         .from(sessions)
         .innerJoin(users, eq(sessions.userId, users.id))
@@ -97,7 +133,8 @@ export default async function GetSession(token: string | undefined): Promise<ses
             siteRank: row.siteRank,
             // An admin who is not an admin any more takes the elevation with
             // them, whatever the row still says.
-            adminMode: row.siteRank === 'admin' && row.adminMode
+            adminMode: row.siteRank === 'admin' && row.adminMode,
+            profile: profileFrom(row)
         }
     }
 }
@@ -118,7 +155,8 @@ export async function GetApiKeySession(header: string | undefined): Promise<sess
             robloxId: users.robloxId,
             siteRank: users.siteRank,
             bannedAt: users.bannedAt,
-            banExpiresAt: users.banExpiresAt
+            banExpiresAt: users.banExpiresAt,
+            ...profileColumns
         })
         .from(apiKeys)
         .innerJoin(users, eq(apiKeys.userId, users.id))
@@ -149,7 +187,8 @@ export async function GetApiKeySession(header: string | undefined): Promise<sess
             // for one browser session, and there is nowhere to turn it on for
             // a key — one that silently carried the group-permission bypass
             // would be the most dangerous credential the site issues.
-            adminMode: false
+            adminMode: false,
+            profile: profileFrom(row)
         }
     }
 }

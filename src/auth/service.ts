@@ -161,20 +161,22 @@ export abstract class Session {
     static async Describe(session: session): Promise<AuthModel.SessionResponse> {
         if (!session.user) return { authenticated: false }
 
-        const [user] = await db.select().from(users).where(eq(users.id, session.user.userId)).limit(1)
+        // The session resolver already joined this user. A fallback keeps
+        // synthetic sessions usable without making every page repeat the join.
+        const user = session.user.profile ?? (await db.select().from(users).where(eq(users.id, session.user.userId)).limit(1))[0]
         if (!user) return { authenticated: false }
 
         // Refresh the cached Roblox identity in the background once it ages out.
         const stale = !user.cachedAt || Date.now() - user.cachedAt.getTime() > 1000 * 60 * 60 * 12
-        if (stale) void Session.RefreshIdentity(user.id, user.robloxId)
+        if (stale) void Session.RefreshIdentity(session.user.userId, session.user.robloxId)
 
         return {
             authenticated: true,
             user: {
-                userId: user.id,
-                robloxId: user.robloxId,
+                userId: session.user.userId,
+                robloxId: session.user.robloxId,
                 createdAt: user.createdAt,
-                siteRank: user.siteRank,
+                siteRank: session.user.siteRank,
                 // Read back off the session rather than the account: the
                 // standing is the account's, using it is this session's.
                 adminMode: session.user.adminMode,
