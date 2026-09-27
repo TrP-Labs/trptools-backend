@@ -28,6 +28,7 @@ export const READ_HOST = `${PREAMBLE}${SNAPSHOT}return encoded`
 export const EXTEND_HOST = `${PREAMBLE}
 finish = finish + tonumber(ARGV[4]) * 60000
 room.activeUntil = tostring(finish + 1800000)
+redis.call('HSET', KEYS[1], 'needsRefresh', now)
 redis.call('HSET', KEYS[1], 'expiresAt', finish, 'activeUntil', room.activeUntil)
 local ttl = math.max(7200, math.ceil((finish + 1800000 - now)/1000) + 7200)
 redis.call('EXPIRE', KEYS[1], ttl)
@@ -118,6 +119,15 @@ for _, item in ipairs(timeline) do
         if ARGV[5] == 'RELEASE' then item.status = 'QUEUED'
         else item.status = item.source == 'STAFF' and 'ACTIVATED' or 'AUTOMATED' end
         item.changedAt = now
+    end
+end
+${STORE}`
+
+export const STAFF_ACTION = `${PREAMBLE}
+if room.eventId ~= ARGV[4] or room.occurrence ~= ARGV[5] then return false end
+for _, item in ipairs(timeline) do
+    if item.action == ARGV[6] and (item.status == 'WAITING' or item.status == 'READY' or item.status == 'QUEUED' or item.status == 'RUNNING') then
+        item.status = 'ACTIVATED'; item.source = 'STAFF'; item.changedAt = now
     end
 end
 ${STORE}`

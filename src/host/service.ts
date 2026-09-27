@@ -8,6 +8,7 @@ import { has, PERM } from '../utils/permissions'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { dataRedis } from '../utils/redis'
 import { roomKey, roomChannel, groupIndexKey, requireRoom } from '../rooms/service'
+import { MediaService } from '../media/service'
 import { HostModel } from './model'
 import { DEFAULT_SCHEDULE, validSchedule } from './rules'
 import { CHANGE_EVENT, EXTEND_HOST, READ_HOST, SET_NOTE, CLAIM_TIMELINE } from './redisScripts'
@@ -48,8 +49,9 @@ export abstract class Host {
     }
     static async event(roomId: string, id: string, body: typeof HostModel.eventBody.static, session: session) {
         const info = await requireRoom(roomId)
-        await assertAnyGroupPermission(session, info.groupId, [PERM.START_ROOM, PERM.DISPATCH])
+        if (!session.user) throw status(401, 'Unauthorized')
         const permissions = isSiteAdmin(session) ? PERM.ADMINISTRATOR : (await GetMembership(session.user!.userId, info.groupId)).permissions
+        if (!has(permissions, PERM.START_ROOM) && !has(permissions, PERM.DISPATCH)) throw status(403, 'Forbidden')
         if (body.operation === 'RESCHEDULE' && (body.reference === undefined || body.offsetMinutes === undefined)) throw status(400, 'Bad Request')
         const raw = await dataRedis.eval<string | null>(CHANGE_EVENT, [roomKey(roomId)],
             [String(Date.now()), roomId, roomChannel(roomId), id, body.operation, has(permissions, PERM.START_ROOM) ? 'HOST' : 'DISPATCH', body.reference ?? '', String(body.offsetMinutes ?? 0), session.user!.userId])
@@ -58,14 +60,21 @@ export abstract class Host {
         if (raw === 'CONFLICT') throw status(409, 'This event has already been handled')
         return JSON.parse(raw) as HostModel.Snapshot
     }
+    static async upload(roomId: string, file: File, session: session) {
+        const info = await requireRoom(roomId)
+        await assertGroupPermission(session, info.groupId, PERM.START_ROOM)
+        const image = await MediaService.upload({ file, groupId: info.groupId, ownerType: 'SHIFT', ownerId: info.eventId }, session)
+        const previous = await hostSnapshot(roomId)
+        return writeRoomNote(roomId, info.eventId, info.occurrence, { note: previous.note, ownerRobloxId: previous.ownerRobloxId, imageUrl: image.url }, true)
+    }
     static async note(roomId: string, body: HostModel.Note, session: session) {
         const info = await requireRoom(roomId)
         await assertGroupPermission(session, info.groupId, PERM.START_ROOM)
         return writeRoomNote(roomId, info.eventId, info.occurrence, body)
     }
 }
-export async function writeRoomNote(roomId: string, eventId: string, occurrence: string, body: HostModel.Note) {
-    if (body.imageUrl && !validImageUrl(body.imageUrl)) throw status(400, 'Bad Request')
+export async function writeRoomNote(roomId: string, eventId: string, occurrence: string, body: HostModel.Note, trustedImage = false) {
+    if (!trustedImage && body.imageUrl && !validImageUrl(body.imageUrl)) throw status(400, 'Bad Request')
     const raw = await dataRedis.eval<string | null>(SET_NOTE, [roomKey(roomId), `shiftnote:${eventId}:${Date.parse(occurrence)}`],
         [String(Date.now()), roomId, roomChannel(roomId), JSON.stringify(body)])
     if (!raw) throw status(404, 'Not Found')

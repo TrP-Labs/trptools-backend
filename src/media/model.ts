@@ -6,7 +6,8 @@ export namespace MediaModel {
         t.Literal('GROUP'),
         t.Literal('ROUTE'),
         t.Literal('DEPOT'),
-        t.Literal('APPLICATION')
+        t.Literal('APPLICATION'),
+        t.Literal('SHIFT')
     ])
     export type ownerType = typeof ownerType.static
 

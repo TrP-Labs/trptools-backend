@@ -94,7 +94,11 @@ export abstract class RoomControls {
 
         const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, event.groupId)).limit(1)
         const enabled = { STAFF_START: Boolean(config?.signupsEnabled && config.autoStaffStart), BEGIN: Boolean(config?.announcementsEnabled && config.autoBegin), COMPLETE: Boolean(config?.autoComplete) }
-        const info: RoomInfo = {
+        const storedNote = await dataRedis.get(`shiftnote:${event.eventId}:${occurrence.start.getTime()}`)
+        let note: {note?:string;ownerRobloxId?:string|null;imageUrl?:string|null} = {}
+        try { note = storedNote ? JSON.parse(storedNote) : {} } catch { /* Old malformed notes must not prevent opening the room. */ }
+        const info: RoomInfo & Record<string,string> = {
+            note: note.note ?? '', ownerRobloxId: note.ownerRobloxId ?? '', imageUrl: note.imageUrl ?? '',
             groupId: event.groupId,
             eventId: event.eventId,
             eventName: event.name,

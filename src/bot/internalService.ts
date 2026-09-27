@@ -13,6 +13,11 @@ import type { BotModel } from './model'
 import { ownerRobloxId } from './owner'
 import { groupName } from '../groups/service'
 import { groupIndexKey, roomKey, type RoomInfo } from '../rooms/service'
+import { writeRoomNote, hostSnapshot } from '../host/service'
+import { saveDiscordImage } from '../host/images'
+import { STAFF_ACTION } from '../host/redisScripts'
+import { completeClaim } from './scheduler'
+import { roomChannel } from '../rooms/service'
 import { presentConfig } from './present'
 
 /**
@@ -26,7 +31,7 @@ import { presentConfig } from './present'
 const noteKey = (eventId: string, occurrence: Date) => `shiftnote:${eventId}:${occurrence.getTime()}`
 const NOTE_TTL = 60 * 60 * 24 * 30
 
-type StoredNote = { note: string; ownerRobloxId: string | null }
+type StoredNote = { note: string; ownerRobloxId: string | null; imageUrl?: string | null }
 
 async function readNote(eventId: string, occurrence: Date): Promise<StoredNote> {
     const raw = await dataRedis.get(noteKey(eventId, occurrence)).catch(() => null)
@@ -122,6 +127,7 @@ async function presentShift(
         end: occurrence.end,
         note: note.note,
         ownerRobloxId: note.ownerRobloxId,
+        imageUrl: note.imageUrl ?? null,
         signupsOpenAt: signupsOpenAt(occurrence.start, signupLeadMinutes),
         signupsOpen: signupsOpen(occurrence.start, occurrence.end, signupLeadMinutes)
     }
@@ -268,7 +274,12 @@ export abstract class BotService {
 
         if (!event) throw status(404, 'Not Found')
 
-        const end = new Date(occurrence.getTime() + event.duration * 60_000)
+        let end = new Date(occurrence.getTime() + event.duration * 60_000)
+        const roomId = await dataRedis.get(groupIndexKey(group.id))
+        if (roomId) {
+            const info = await dataRedis.hgetall(roomKey(roomId)) as Partial<RoomInfo>
+            if (info.eventId === event.eventId && info.occurrence === occurrence.toISOString()) end = new Date(Number(info.expiresAt))
+        }
 
         return {
             shift: await presentShift(event, { start: occurrence, end }, group.signupLeadMinutes),
@@ -384,13 +395,31 @@ export abstract class BotService {
         }
     }
 
+    static async staffAction(body: { guildId: string; eventId: string; occurrence: string; action: BotInternal.dueAction['action'] }) {
+        const { group } = await requireGuild(body.guildId)
+        const [event] = await db.select({id:events.eventId}).from(events).where(and(eq(events.eventId, body.eventId),eq(events.groupId,group.id))).limit(1)
+        if (!event) throw status(404, 'Not Found')
+        const roomId = await dataRedis.get(groupIndexKey(group.id))
+        if (roomId) await dataRedis.eval(STAFF_ACTION, [roomKey(roomId)], [String(Date.now()),roomId,roomChannel(roomId),body.eventId,body.occurrence,body.action])
+        await completeClaim(body.action, body.eventId, body.occurrence)
+        return 'Success' as const
+    }
     static async setNote(guildId: string, body: BotInternal.noteBody) {
-        await requireGuild(guildId)
-
+        const { group } = await requireGuild(guildId)
+        // Resolve the occurrence against its guild before accepting a write.
+        await BotService.occurrence(guildId, { eventId: body.eventId, occurrence: body.occurrence })
         const occurrence = new Date(body.occurrence)
-        if (Number.isNaN(occurrence.getTime())) throw status(400, 'Bad Request')
-
-        const value: StoredNote = { note: body.note, ownerRobloxId: body.ownerRobloxId }
+        if (body.imageUrl) body = { ...body, imageUrl: await saveDiscordImage(group.id, body.eventId, body.imageUrl) }
+        const roomId = await dataRedis.get(groupIndexKey(group.id))
+        if (roomId) {
+            const info = await dataRedis.hgetall(roomKey(roomId)) as Partial<RoomInfo>
+            if (info.eventId === body.eventId && info.occurrence === occurrence.toISOString()) {
+                await writeRoomNote(roomId, body.eventId, body.occurrence, body, true)
+                return 'Success' as const
+            }
+        }
+        const previous = await readNote(body.eventId, occurrence)
+        const value: StoredNote = { ...previous, ...body }
         await dataRedis.set(noteKey(body.eventId, occurrence), JSON.stringify(value), 'EX', NOTE_TTL)
 
         return 'Success' as const

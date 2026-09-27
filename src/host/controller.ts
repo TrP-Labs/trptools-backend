@@ -14,3 +14,5 @@ export const host = new Elysia({ prefix: '/host', tags: ['Host'] }).use(sessionP
         body: HostModel.eventBody, response: { 200: HostModel.snapshot }
     })
     .put('/:roomId/note', ({ params, body, session }) => Host.note(params.roomId, body, session), { body: HostModel.noteBody, response: { 200: HostModel.snapshot } })
+
+    .put('/:roomId/image', ({ params, body, session }) => Host.upload(params.roomId, body.file, session), { body: t.Object({ file: t.File({ maxSize: '6m' }) }), response: { 200: HostModel.snapshot } })

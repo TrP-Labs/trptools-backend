@@ -159,7 +159,14 @@ export async function completeClaim(action: ActionName, eventId: string, occurre
     await dataRedis.del(claimKey(action, eventId, when))
 }
 
-export async function claimCompleted(action: ActionName, eventId: string, occurrence: string) {
+export async function claimCompleted(action: ActionName, eventId: string, occurrence: string, roomId?: string, timelineId?: string) {
+    if (roomId && timelineId) {
+        const info = await dataRedis.hgetall(roomKey(roomId)) as Partial<RoomInfo>
+        if (!info.timeline) return true
+        if (action === 'REFRESH') return timelineId !== `refresh-${(info as Record<string,string>).needsRefresh}`
+        const timeline = JSON.parse(info.timeline) as Array<{id:string;status:string}>
+        return !timeline.some(item => item.id === timelineId && item.status === 'RUNNING')
+    }
     const when = new Date(occurrence)
     if (Number.isNaN(when.getTime())) return false
     return Boolean(await dataRedis.exists(doneKey(action, eventId, when)))

@@ -65,6 +65,7 @@ export namespace BotInternal {
          * whether it is open now. A sheet posted before this points at a shift
          * page that will not let anybody sign up.
          */
+        imageUrl: t.Optional(t.Union([t.String(), t.Null()])),
         signupsOpenAt: t.Date(),
         signupsOpen: t.Boolean()
     })
@@ -147,7 +148,8 @@ export namespace BotInternal {
         eventId: t.String({ format: 'uuid' }),
         occurrence: t.String(),
         note: t.String({ maxLength: 1000 }),
-        ownerRobloxId: t.Union([t.String({ pattern: '^[0-9]{1,20}$' }), t.Null()])
+        ownerRobloxId: t.Union([t.String({ pattern: '^[0-9]{1,20}$' }), t.Null()]),
+        imageUrl: t.Optional(t.Union([t.String({ maxLength: 2048 }), t.Null()]))
     })
     export type noteBody = typeof noteBody.static
 

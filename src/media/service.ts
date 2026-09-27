@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import db from '../db'
-import { applications, depots, groups, media, routes, type Media } from '../db/schema'
+import { applications, events, depots, groups, media, routes, type Media } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
@@ -76,7 +76,7 @@ export async function mediaForOwners(
 async function resolveIconOwner(groupId: string, ownerType: MediaModel.ownerType, ownerId?: string) {
     // Application forms have no single image of their own — their pictures are
     // components in the form, uploaded to the gallery and referenced by id.
-    if (ownerType === 'APPLICATION') throw status(400, 'Bad Request' satisfies globalModel.badRequest)
+    if (ownerType === 'APPLICATION' || ownerType === 'SHIFT') throw status(400, 'Bad Request' satisfies globalModel.badRequest)
 
     if (ownerType === 'GROUP') {
         const [group] = await db
@@ -170,6 +170,8 @@ function ownerGrant(ownerType: MediaModel.ownerType): number {
             return PERM.MANAGE_DEPOTS
         case 'APPLICATION':
             return PERM.MANAGE_APPLICATIONS
+        case 'SHIFT':
+            return PERM.START_ROOM
         case 'GROUP':
             return PERM.MANAGE_GROUP
     }
@@ -223,7 +225,10 @@ export abstract class MediaService {
 
         // The owner must belong to this group, or a manager of group A could
         // attach images to group B's routes.
-        if (body.ownerType !== 'GROUP') {
+        if (body.ownerType === 'SHIFT') {
+            const [owned] = await db.select({ id: events.eventId }).from(events).where(and(eq(events.eventId, body.ownerId!), eq(events.groupId, group.id))).limit(1)
+            if (!owned) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        } else if (body.ownerType !== 'GROUP') {
             if (!body.ownerId) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
 
             const owner =
