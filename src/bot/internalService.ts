@@ -12,6 +12,7 @@ import { BotInternal } from './internalModel'
 import type { BotModel } from './model'
 import { ownerRobloxId } from './owner'
 import { groupName } from '../groups/service'
+import { groupIndexKey, roomKey, type RoomInfo } from '../rooms/service'
 import { presentConfig } from './present'
 
 /**
@@ -214,6 +215,14 @@ export abstract class BotService {
     static async shift(guildId: string, when: 'next' | 'current' = 'next'): Promise<BotInternal.shiftOrNull> {
         const { group } = await requireGuild(guildId)
 
+        const roomId = when === 'current' ? await dataRedis.get(groupIndexKey(group.id)) : null
+        if (roomId) {
+            const room = await dataRedis.hgetall(roomKey(roomId)) as Partial<RoomInfo>
+            if (room.eventId && room.occurrence) {
+                const [event] = await db.select().from(events).where(and(eq(events.eventId, room.eventId), eq(events.groupId, group.id))).limit(1)
+                if (event) return presentShift(event, { start: new Date(room.occurrence), end: new Date(Number(room.expiresAt)) }, group.signupLeadMinutes)
+            }
+        }
         const rows = await db.select().from(events).where(eq(events.groupId, group.id))
         if (rows.length === 0) return null
 
@@ -223,7 +232,7 @@ export abstract class BotService {
             let best: { event: typeof events.$inferSelect; occurrence: { start: Date; end: Date } } | null = null
 
             for (const event of rows) {
-                const live = activeOccurrence(event.rrule, event.startTime, event.duration, lead)
+                const live = activeOccurrence(event.rrule, event.startTime, event.duration, lead, new Date(), 30)
                 if (live && (!best || live.start < best.occurrence.start)) {
                     best = { event, occurrence: live }
                 }

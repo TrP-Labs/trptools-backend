@@ -83,7 +83,9 @@ export const PERM = {
      * a shift who did not put themselves there, which is a different and much
      * louder thing to be able to do to somebody's Saturday.
      */
-    EDIT_SIGNUPS: 1 << 18
+    EDIT_SIGNUPS: 1 << 18,
+    /** End an active room early. Deliberately absent from the Host preset. */
+    CLOSE_ROOM: 1 << 19
 } as const
 
 export type PermissionFlag = (typeof PERM)[keyof typeof PERM]

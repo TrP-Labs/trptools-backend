@@ -178,10 +178,11 @@ export function activeOccurrence(
     dtstart: Date,
     durationMinutes: number,
     graceMinutes = 30,
-    now = new Date()
+    now = new Date(),
+    afterMinutes = 0
 ): Occurrence | null {
     try {
-        const window = Math.max(durationMinutes, 1) * 60_000
+        const window = Math.max(durationMinutes + afterMinutes, 1) * 60_000
         const candidates = occurrenceStartsBetween(rule, dtstart,
             new Date(now.getTime() - window),
             new Date(now.getTime() + graceMinutes * 60_000)
@@ -191,7 +192,7 @@ export function activeOccurrence(
             const end = new Date(start.getTime() + durationMinutes * 60_000)
             const opensAt = start.getTime() - graceMinutes * 60_000
 
-            if (now.getTime() >= opensAt && now.getTime() < end.getTime()) {
+            if (now.getTime() >= opensAt && now.getTime() < end.getTime() + afterMinutes * 60_000) {
                 return { start, end }
             }
         }

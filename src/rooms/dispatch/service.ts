@@ -6,7 +6,7 @@ import type { VehicleCategory } from '../../db/schema'
 import { dataRedis } from '../../utils/redis'
 import { broker } from '../../utils/events'
 import { globalModel } from '../../utils/globalModel'
-import { roomChannel, roomUsersKey, roomVehiclesKey, roomKey, requireRoom, type RoomInfo } from '../service'
+import { roomChannel, roomUsersKey, roomVehiclesKey, roomKey, requireRoom, touchRoom, type RoomInfo } from '../service'
 import { Vehicles } from './model'
 import { assertResults, runBatches, type RedisTask } from './batch'
 import { ADD_VEHICLE, PATCH_VEHICLE, MODIFY_VEHICLE, DELETE_VEHICLES, CHANGE_PRESENCE } from './redisScripts'
@@ -408,7 +408,7 @@ export abstract class DispatchControls {
                 push({ event: 'HEARTBEAT' })
                 if (checking || closed) return
                 checking = true
-                void dataRedis.exists(roomKey(roomId)).then((exists) => {
+                void touchRoom(roomId).then((exists) => {
                     if (!exists) push({ event: 'CLOSED' })
                 }).catch(() => undefined).finally(() => { checking = false })
             }, 15_000)
@@ -434,7 +434,10 @@ export abstract class DispatchControls {
         } finally {
             clearInterval(heartbeat)
             unsubscribe()
-            if (joined) await DispatchControls.leave(roomId, userId).catch(() => undefined)
+            if (joined) {
+                await DispatchControls.leave(roomId, userId).catch(() => undefined)
+                await touchRoom(roomId).catch(() => undefined)
+            }
         }
     }
 }

@@ -5,12 +5,13 @@ import db from '../db'
 import { events } from '../db/schema'
 import { dataRedis, deleteByPrefix } from '../utils/redis'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
+import { assertGroupPermission, assertAnyGroupPermission, GetMembership } from '../utils/groupPermission'
 import { has, PERM } from '../utils/permissions'
 import { activeOccurrence } from '../utils/recurrence'
 import { isElevated, type session, type SessionUser } from '../utils/sessionVerifier'
 import { findGroup } from '../groups/service'
 import { RoomModel } from './model'
+import { CREATE_ROOM, TOUCH_ROOM } from './lifecycle'
 import { CLOSE_ROOM } from './dispatch/redisScripts'
 
 export type RoomInfo = {
@@ -20,6 +21,8 @@ export type RoomInfo = {
     creatorId: string
     createdAt: string
     expiresAt: string
+    occurrence: string
+    activeUntil: string
 }
 
 export function generateRoomId(): string {
@@ -35,6 +38,11 @@ export const roomVehiclesKey = (roomId: string) => `dispatchroom:${roomId}:vehic
 export const roomChannel = (roomId: string) => `dispatchroom.${roomId}`
 
 /** Reads a room, or throws 404 if it has closed or expired. */
+export async function touchRoom(roomId: string) {
+    return dataRedis.eval<number>(TOUCH_ROOM, [roomKey(roomId), roomUsersKey(roomId)],
+        [String(Date.now()), roomId, roomChannel(roomId)])
+}
+
 export async function requireRoom(roomId: string): Promise<RoomInfo> {
     const info = (await dataRedis.hgetall(roomKey(roomId))) as Partial<RoomInfo>
     if (!info || Object.keys(info).length === 0) {
@@ -67,18 +75,12 @@ export abstract class RoomControls {
         const group = await findGroup(event.groupId)
         const lead = group?.roomOpenLeadMinutes ?? 10
 
-        const occurrence = activeOccurrence(event.rrule, event.startTime, event.duration, lead)
+        const occurrence = activeOccurrence(event.rrule, event.startTime, event.duration, lead, new Date(), 30)
         if (!occurrence) {
             throw status(409, 'this shift is not running right now' satisfies RoomModel.notScheduled)
         }
 
         const roomId = generateRoomId()
-
-        // SET NX is what makes "one room per group" a race-free guarantee.
-        const claimed = await dataRedis.set(groupIndexKey(event.groupId), roomId, 'EX', 60 * 60 * 6, 'NX')
-        if (!claimed) {
-            throw status(409, 'this group already has a room open' satisfies RoomModel.alreadyOpen)
-        }
 
         // Keep the room alive until the shift ends, plus an hour of slack for
         // overruns, and never less than 30 minutes.
@@ -93,12 +95,14 @@ export abstract class RoomControls {
             eventName: event.name,
             creatorId: session.user.userId,
             createdAt: Date.now().toString(),
-            expiresAt: occurrence.end.getTime().toString()
+            expiresAt: occurrence.end.getTime().toString(),
+            occurrence: occurrence.start.toISOString(),
+            activeUntil: String(occurrence.end.getTime() + 30 * 60_000)
         }
 
-        await dataRedis.hset(roomKey(roomId), info)
-        await dataRedis.expire(roomKey(roomId), ttlSeconds)
-        await dataRedis.expire(groupIndexKey(event.groupId), ttlSeconds)
+        const claimed = await dataRedis.eval<number>(CREATE_ROOM,
+            [roomKey(roomId), groupIndexKey(event.groupId)], [roomId, JSON.stringify(info), String(ttlSeconds + 7200)])
+        if (!claimed) throw status(409, 'this group already has a room open' satisfies RoomModel.alreadyOpen)
 
         return { roomId }
     }
@@ -110,7 +114,7 @@ export abstract class RoomControls {
         const group = await findGroup(groupIdOrSlug)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertGroupPermission(session, group.id, PERM.DISPATCH)
+        await assertAnyGroupPermission(session, group.id, [PERM.DISPATCH, PERM.START_ROOM])
 
         const roomId = await dataRedis.get(groupIndexKey(group.id))
         if (!roomId) throw status(404, 'Not Found' satisfies globalModel.notFound)
@@ -122,7 +126,7 @@ export abstract class RoomControls {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
         const info = await requireRoom(roomId)
-        await assertGroupPermission(session, info.groupId, PERM.DISPATCH)
+        await assertAnyGroupPermission(session, info.groupId, [PERM.DISPATCH, PERM.START_ROOM])
 
         const [dispatchers, vehicles] = await Promise.all([
             dataRedis.hgetall(roomUsersKey(roomId)),
@@ -149,7 +153,7 @@ export abstract class RoomControls {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
         const info = await requireRoom(roomId)
-        await assertGroupPermission(session, info.groupId, PERM.START_ROOM)
+        await assertGroupPermission(session, info.groupId, Date.now() < Number(info.activeUntil ?? Number(info.expiresAt) + 1800000) ? PERM.CLOSE_ROOM : PERM.START_ROOM)
 
         await dataRedis.eval(CLOSE_ROOM, [roomKey(roomId), groupIndexKey(info.groupId)], [roomId, roomChannel(roomId)])
         await deleteByPrefix(`dispatchroom:${roomId}:`)
@@ -165,7 +169,7 @@ export async function canDispatch(user: SessionUser, roomId: string): Promise<Ro
 
     if (!isElevated(user)) {
         const membership = await GetMembership(user.userId, info.groupId)
-        if (!has(membership.permissions, PERM.DISPATCH)) return null
+        if (!has(membership.permissions, PERM.DISPATCH) && !has(membership.permissions, PERM.START_ROOM)) return null
     }
 
     return info as RoomInfo
