@@ -46,14 +46,14 @@ import type { Vehicles } from '../rooms/dispatch/model'
  *
  * Loaded once; reading two fonts per render would dominate the render cost.
  */
-type BunAssetReader = { file(path: string): { arrayBuffer(): Promise<ArrayBuffer> } }
+type BunAssetReader = { file(path: string | URL): { arrayBuffer(): Promise<ArrayBuffer> } }
 
 const bun = (globalThis as typeof globalThis & { Bun?: BunAssetReader }).Bun
 
 async function assetBytes(value: string | ArrayBuffer): Promise<ArrayBuffer> {
     if (value instanceof ArrayBuffer) return value
     if (!bun) throw new Error('A binary asset was emitted as a path outside Bun')
-    return bun.file(value).arrayBuffer()
+    return bun.file(new URL(value, import.meta.url)).arrayBuffer()
 }
 
 let renderer: Promise<SatoriOptions['fonts']> | undefined
