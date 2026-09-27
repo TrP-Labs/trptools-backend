@@ -13,10 +13,12 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
       # This is the same gate used by `worker:deploy`: unit tests, TypeScript,
       # the Bun bundle, the Worker bundle, and a real workerd health probe.
@@ -27,11 +29,19 @@ jobs:
       # partial pipeline failures; the suite owns its disposable processes.
       - run: sudo apt-get update -qq && sudo apt-get install -y redis-server
       - run: bun run test:dispatch
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: trptools-backend:test
+      - run: bun run scripts/test-container.ts trptools-backend:test
 
   publish:
     needs: check
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     # A release pushes `main` and the tag together, so two runs of this job
     # start on the same commit seconds apart. Both write the same

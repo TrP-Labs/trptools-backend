@@ -1,296 +1,52 @@
-# TrP Tools API
+# trptools-backend
 
-The backend for TrP Tools 2.0. ElysiaJS on Bun or Cloudflare Workers, Postgres
-via Drizzle, and Valkey/Redis for caching, dispatch room state and realtime
-fan-out.
+TrPTools API: Elysia, Drizzle, Postgres, and Redis. Runs on Bun in Docker or on Cloudflare Workers with Neon and Upstash REST.
 
-## Running locally
+## Development
 
-```bash
-cp .env.example .env      # fill in ENCRYPTION_KEY and the Roblox app credentials
-bun install
-bun run db:migrate
-bun run dev
-```
+1. Start infrastructure from the parent checkout: `docker compose up -d postgres valkey garage garage-init images`.
+2. Run `cp .env.example .env` and fill in your credentials.
+3. Run `bun install --frozen-lockfile && bun run db:migrate`.
+4. Optionally run `bun run db:seed` for a demo group and session token.
+5. Run `bun run dev`; the API listens on `http://localhost:3001` and docs are at `/docs`.
 
-The API listens on `http://localhost:3001`. Interactive documentation is served
-at `/docs`.
+## Docker
 
-Postgres, Valkey and MinIO come from the compose file one directory up:
+1. Follow [trptools-deploy](https://github.com/TrP-Labs/trptools-deploy) for a server install.
+2. To build locally, run `docker build -t trptools-backend .`.
 
-```bash
-docker compose up -d postgres valkey minio minio-init
-```
+The image applies migrations before starting. Set `DATABASE_URL`, `REDIS_URL`, public `BASE_URL`, allowed `FRONTEND_URL`, and a permanent `ENCRYPTION_KEY`; see [.env.example](./.env.example).
 
 ## Cloudflare Workers
 
-The Worker entry point exposes the same route tree as the Bun server. The Bun
-target remains available for local development and Docker; the Worker target
-selects edge-safe adapters for the services that cannot use persistent TCP
-connections:
+1. Run `bun install --frozen-lockfile` and set your Worker name and domain in `wrangler.jsonc`.
+2. Create a Neon database, an Upstash Redis database, and an R2 bucket with a public image domain.
+3. Put credentials in Cloudflare secrets: `DATABASE_URL`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `ENCRYPTION_KEY`, `ROBLOX_CLIENT_ID`, `ROBLOX_CLIENT_SECRET`, `S3_ACCESS_KEY`, and `S3_SECRET_KEY`.
+4. Set Worker variables `BASE_URL`, `FRONTEND_URL`, `COOKIE_DOMAIN`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_PUBLIC_URL`, and `S3_REGION=auto` for R2.
+5. Run `DATABASE_URL=<Neon connection URL> bun run db:migrate` from your local environment.
+6. Run `bun run check`, then `bun run worker:deploy` when you are ready.
 
-- Neon HTTP for Drizzle/Postgres queries
-- Upstash REST for Redis commands and its SSE API for pub/sub subscriptions
-- signed Fetch requests for S3-compatible storage, including R2
-- the WebAssembly build of Resvg for generated dispatch manifests
+Use `bunx wrangler secret put NAME` for each secret; local Worker development reads `.dev.vars`. The **Deploy Cloudflare Worker** GitHub workflow is also manual and uses the `production` environment's Cloudflare token and account ID; Workers do not run migrations on startup.
 
-For local Worker development, copy the example bindings and fill in the
-credentials:
+For Cloudflare Builds, use `bun install --frozen-lockfile` as the build command and `bun run worker:deploy` as the deploy command. Configure runtime secrets on the Worker and migrate the database before starting the build.
 
-```bash
-cp .dev.vars.example .dev.vars
-bun run worker:dev
-```
+## Sign-in and storage
 
-Use a pooled or direct Neon connection string for `DATABASE_URL`. Set
-`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` explicitly in
-production. The adapter can derive them from an Upstash `rediss://` URL for
-compatibility, but the explicit REST bindings make the deployed configuration
-unambiguous.
+1. Create a [Roblox OAuth app](https://create.roblox.com/dashboard/credentials) with `openid`, `profile`, and `group:read`.
+2. Register `<BASE_URL>/auth/callback` and set the client credentials.
+3. For separate site/API subdomains, set `COOKIE_DOMAIN` to their shared parent (for example `.example.com`).
 
-The Worker applies the broad 600 requests/minute client limit and 1,200
-requests/minute bot-service limit through Cloudflare rate-limit bindings in
-`wrangler.jsonc`. These checks do not send a Redis command for every API
-request. Cloudflare counts by edge location and updates counters eventually,
-so the limits are abuse protection rather than exact global quotas. The tighter
-limits on login, uploads, form submissions, and other costly routes still use
-Redis for shared enforcement. The standalone Bun server keeps its Redis-backed
-broad limit.
+The API supports Garage, R2, and other S3 services; `S3_ENDPOINT` is for uploads and `S3_PUBLIC_URL` is the full browser-facing image base. Group Open Cloud keys are optional and must be user-owned.
 
-Store credentials as Worker secrets rather than committing them. At minimum,
-set the database, Redis, encryption and OAuth values used by the installation:
+## Discord (optional)
 
-```bash
-bunx wrangler secret put DATABASE_URL
-bunx wrangler secret put UPSTASH_REDIS_REST_URL
-bunx wrangler secret put UPSTASH_REDIS_REST_TOKEN
-bunx wrangler secret put ENCRYPTION_KEY
-bunx wrangler secret put ROBLOX_CLIENT_ID
-bunx wrangler secret put ROBLOX_CLIENT_SECRET
-```
+1. Set `DISCORD_APP_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, and `BOT_SERVICE_TOKEN`.
+2. Register `<BASE_URL>/bot/callback` and `<BASE_URL>/auth/discord/callback` in Discord.
+3. For a bot Worker, set `BOT_WORKER_URL` and `BOT_WORKER_SYNC_TOKEN` (matching the bot's `SYNC_TOKEN`).
 
-Add the Discord, Roblox API-key and S3/R2 secrets from `.dev.vars.example` when
-those integrations are enabled. `BASE_URL` must be the public Worker origin so
-OAuth redirects return to the API. `FRONTEND_URL` is the comma-separated list
-of allowed browser origins. For R2, use its S3 API endpoint for `S3_ENDPOINT`
-and a public bucket/custom-domain URL for `S3_PUBLIC_URL`.
+## Checks
 
-Database migrations are an operator or CI step; they do not run inside a
-request or during Worker startup. Migrate first, run both target builds, then
-deploy:
+1. Run `bun run check` for types, unit tests, both bundles, and a local Worker health probe.
+2. With Redis installed, run `bun run test:dispatch` to exercise both Redis clients.
 
-```bash
-DATABASE_URL='<neon-connection-string>' bun run db:migrate
-bun run worker:deploy
-```
-
-`worker:deploy` runs the complete release gate before invoking Wrangler: unit
-tests, TypeScript, both production bundles and a real local workerd health
-probe. Arguments still pass through to Wrangler, so a secrets file can be
-supplied with `bun run worker:deploy -- --secrets-file .env.production`.
-
-For Cloudflare Workers Builds, use `bun run check` as the build command and
-`bunx wrangler deploy` as the deploy command. Runtime credentials belong in
-Settings → Variables and Secrets; Settings → Build → Build Variables and
-Secrets configures a separate build environment. The release checks use mocked
-storage and local smoke-test bindings, so they do not need production secrets.
-Any CI step that runs database migrations needs its own `DATABASE_URL` build
-secret.
-
-### Working without Roblox credentials
-
-Roblox OAuth needs a registered app and a browser round trip, which is awkward
-when you only want to work on a screen. The seed creates a group, routes,
-depots, shifts and a signed-in session:
-
-```bash
-bun run db:seed
-```
-
-It prints a session token. Set it as an `access_token` cookie on the API origin
-and you are signed in as a site admin.
-
-## Layout
-
-Each domain owns a `controller` (routes and schemas), a `service` (the actual
-work) and a `model` (request and response types). Subdomains nest.
-
-```
-src/
-  auth/          Roblox OAuth, sessions, API keys
-  users/         Profiles, preferences, route preferences
-  groups/        Registration, settings, visibility
-    rank/        Roblox role → permission mapping
-    routes/      Custom routes and depots
-  schedule/      Recurring shifts, occurrences, signups
-  rooms/         Dispatch room lifecycle
-    dispatch/    Live vehicle state, SSE, automatic assignment
-  public/        Anonymous reads of published pages
-  media/         Image uploads to object storage
-  reports/       Reporting and the site admin portal
-  tools/         Stage programmer storage
-  db/            Drizzle schema, split by domain
-  utils/         Cross-cutting concerns
-```
-
-## How Roblox access works
-
-Roblox has moved group and user reads to **Open Cloud v2**, which rejects
-anonymous requests. Membership is read with
-`GET /cloud/v2/groups/{id}/memberships?filter=user == 'users/{id}'`.
-
-The catch is rate limits. A single OAuth authorization is capped at 30
-requests/minute for `GetGroup` and 90/minute for roles and memberships, while an
-API key owner gets 150 and 300. TrP Tools resolves a permission level on nearly
-every request, so a user's own token cannot carry that load.
-
-Credentials are therefore tried in order (`src/utils/roblox.ts`):
-
-1. **The group's own Open Cloud API key.** Highest limits, and it works when
-   nobody is signed in. Group owners add one in group settings; it is verified
-   against their group and stored AES-GCM encrypted.
-2. **An instance-wide API key**, if the operator sets `ROBLOX_API_KEY`.
-3. **The requesting user's OAuth token**, which carries the `group:read` scope.
-4. **The legacy endpoints**, so a group can onboard before wiring up a key.
-
-Every response is cached in Redis, and permission levels are cached for a
-minute. A busy dispatch room costs a couple of Roblox calls per minute rather
-than hundreds.
-
-## Authentication
-
-- **Users** sign in with Roblox OAuth. The session token is random, and only its
-  SHA-256 hash is stored. Cookies are `HttpOnly`, `Secure` when the API is
-  served over https, and `SameSite=None` because the site and API are separate
-  origins.
-- **Integrations** send `Authorization: Bearer <key>`. Keys are scoped, hashed
-  at rest, and shown exactly once at creation.
-- Mutating requests are rejected when they carry an `Origin` outside
-  `FRONTEND_URL`, which is what stops a third-party page from riding the
-  session cookie.
-
-## Permissions
-
-Permission always derives from the Roblox role the user currently holds, mapped
-through the group's rank bindings. Nothing is stored that Roblox does not still
-back, so a demotion in the Roblox group takes effect within a minute.
-
-| Level | Name     | Can                                            |
-| ----- | -------- | ---------------------------------------------- |
-| 0     | None     | Nothing                                        |
-| 1     | Dispatch | Join a dispatch room and assign routes         |
-| 2     | Host     | Open and close dispatch rooms                  |
-| 3     | Manage   | Ranks, routes, shifts, settings                |
-
-The Roblox owner role is pinned to level 3 and cannot be demoted through the
-API, so a group cannot lock itself out.
-
-## Realtime
-
-Dispatch updates fan out over Redis pub/sub and reach clients as server-sent
-events on `GET /dispatch/:roomId/connect`. The stream opens with a `SYNC` frame
-carrying the whole vehicle list, which makes reconnection self-healing: a client
-that drops does not need to replay anything.
-
-## Depots and routes
-
-Every group is seeded with what the game itself has:
-
-- **Depots 1 (Main Island) and 2 (Cat Island).** Depots are identified by their
-  number.
-- **Routes 6, 9, 10, 14 and 16**, marked `builtIn`. They can be recoloured,
-  reshaped, re-shared and disabled, but never renamed or deleted — a group that
-  removed one would have no way to get it back.
-
-Depot 1 serves 10, 14 and 16; depot 2 serves 6, 9 and 10, matching the legacy
-spawn table. Both depots and routes accept descriptions and uploaded images,
-which appear on the group's public page.
-
-## Automatic route assignment
-
-`src/rooms/dispatch/solver.ts`. The legacy dispatcher hardcoded five route
-numbers and a fixed depot table, which is exactly why custom routes were never
-assignable. Here the eligible set comes from the database: a route declares
-which depots it serves and whether it accepts automatic assignment.
-
-Routes carry a **target share** — the percentage of vehicles they should hold —
-rather than a hard cap. Shares are normalised across whichever routes a given
-vehicle's depot actually reaches, so they never have to total 100 and a depot
-served by two routes still splits evenly between them.
-
-Assignment prefers routes the driver marked as a favourite, then routes they
-have no opinion about, then ones they dislike. Within a tier it picks whichever
-route is furthest below its target share, breaking ties randomly.
-
-## Images
-
-Uploads go to S3-compatible object storage through signed Fetch requests, so
-MinIO, Garage, R2 and AWS work from both Bun and Workers. The compose file runs
-MinIO.
-
-`S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_REGION`
-configure authenticated uploads and deletes. `S3_PUBLIC_URL` is the **full
-public bucket URL**: `http://localhost:9000/trptools` for local MinIO, or
-`https://assets.example.com` for an R2 custom domain. Only the object key
-(`groups/...`) is appended. Leaving it blank falls back to
-`S3_ENDPOINT/S3_BUCKET`; in Docker, supply a URL the browser can reach.
-
-For R2, set `S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`,
-`S3_REGION=auto`, the bucket name and R2 credentials, and the bucket's public
-domain as `S3_PUBLIC_URL`. Configure public reads through the bucket policy
-or public domain; uploads do not send object ACLs, which R2 does not support.
-Docker's MinIO initialization already configures public reads.
-
-**Upgrading:** older versions appended the bucket to `S3_PUBLIC_URL`. Add
-`/<bucket-name>` to an existing MinIO public URL when upgrading (for example,
-`http://localhost:9000` becomes `http://localhost:9000/trptools`). R2 public
-domains need no bucket suffix. Existing media needs no database migration
-when objects retain their original keys.
-
-Banners, badges and galleries resolve their public URLs from media keys on
-read. Banners uploaded by older versions may still have a saved URL in the
-database; it is ignored in favor of their media reference, so changing storage
-settings also fixes their appearance in settings, public pages and social previews.
-
-Files are validated by their magic number rather than the declared content
-type, capped at 6MB, and limited to 12 per route or depot. Uploads are rate
-limited per account.
-
-## Moderation
-
-Anything a group puts in front of the public — the group itself, routes, depots
-and images — can be reported by any signed-in user.
-
-Filing a report hides the target **immediately**. Waiting for a human would
-leave abusive images in front of the public for as long as it takes an admin to
-wake up. A site admin then either clears the content, which restores it and
-exempts it from future automatic hiding, or upholds the report and it stays
-down. The exemption matters: without it one persistent reporter could keep a
-legitimate group suppressed indefinitely.
-
-Reports are capped at 10 per account per hour, and a user cannot file two open
-reports against the same thing.
-
-Site admins (`SITE_ADMINS`, or `siteRank = 'admin'`) get `/admin/*`: an
-overview, the report queue with a snapshot of each target and its images, and
-the clear/uphold actions.
-
-## Scripts
-
-| Script                   | Purpose                                      |
-| ------------------------ | -------------------------------------------- |
-| `bun run dev`            | Run the Bun server in watch mode             |
-| `bun run start`          | Run the Bun server once                      |
-| `bun run build`          | Bundle the Bun server to `dist/`             |
-| `bun run worker:dev`     | Run the API in the local Workers runtime     |
-| `bun run worker:build`   | Build and validate the Worker without deploy |
-| `bun run worker:smoke`   | Boot workerd and probe the packaged API       |
-| `bun run worker:deploy`  | Pass the full gate, then deploy the Worker    |
-| `bun run worker:types`   | Regenerate Cloudflare binding types          |
-| `bun run check`          | Run tests, typecheck and both builds         |
-| `bun run typecheck`      | Type check without emitting                  |
-| `bun run db:generate`    | Generate a migration from the schema         |
-| `bun run db:migrate`     | Apply migrations                             |
-| `bun run db:push`        | Push the schema without a migration          |
-| `bun run db:seed`        | Seed development data                        |
-| `bun run db:studio`      | Browse the database                          |
+MIT — see [LICENSE](./LICENSE).
