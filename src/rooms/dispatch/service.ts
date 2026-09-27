@@ -364,7 +364,7 @@ export abstract class DispatchControls {
      * client cannot block the broker, and it is bounded so a stalled reader
      * gets dropped instead of growing memory without limit.
      */
-    static async *stream(roomId: string, userId: string, room?: RoomInfo): AsyncGenerator<Vehicles.streamEvent> {
+    static async *stream(roomId: string, userId: string, room?: RoomInfo, signal?: AbortSignal, onCleanup?: (promise: Promise<unknown>) => void): AsyncGenerator<Vehicles.streamEvent> {
         const info = room ?? await requireRoom(roomId)
 
         const queue: Vehicles.streamEvent[] = []
@@ -391,7 +391,26 @@ export abstract class DispatchControls {
         let joined = false
         let heartbeat: ReturnType<typeof setInterval> | undefined
         let checking = false
+        let cleanupPromise: Promise<void> | undefined
+        const cleanup = () => cleanupPromise ??= (async () => {
+            clearInterval(heartbeat)
+            signal?.removeEventListener('abort', abort)
+            unsubscribe()
+            if (joined) {
+                joined = false
+                await DispatchControls.leave(roomId, userId).catch(() => undefined)
+                await touchRoom(roomId).catch(() => undefined)
+            }
+        })()
+        const abort = () => {
+            closed = true
+            notify?.()
+            if (joined) onCleanup?.(cleanup())
+        }
+        signal?.addEventListener('abort', abort, {once:true})
+        if (signal?.aborted) abort()
         try {
+            if (closed) return
             // Subscribe before loading the snapshot so changes in flight are
             // queued. Joining and reading can share their network wait.
             const [presenceResult, vehiclesResult] = await Promise.allSettled([
@@ -401,6 +420,7 @@ export abstract class DispatchControls {
                 }),
                 DispatchControls.getAllVehicles(roomId, info)
             ])
+            if (closed) return
             if (presenceResult.status === 'rejected') throw presenceResult.reason
             if (vehiclesResult.status === 'rejected') throw vehiclesResult.reason
             const presence = presenceResult.value
@@ -435,12 +455,7 @@ export abstract class DispatchControls {
                 }
             }
         } finally {
-            clearInterval(heartbeat)
-            unsubscribe()
-            if (joined) {
-                await DispatchControls.leave(roomId, userId).catch(() => undefined)
-                await touchRoom(roomId).catch(() => undefined)
-            }
+            await cleanup()
         }
     }
 }

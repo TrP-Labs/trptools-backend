@@ -1,4 +1,5 @@
 import { Elysia, sse, status, t } from 'elysia'
+import { finishRequestCleanup } from '../../utils/requestLifetime'
 import { Vehicles } from './model'
 import { DispatchControls } from './service'
 import { canDispatch } from '../service'
@@ -76,8 +77,8 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                 }
             })
 
-            .get('/connect', async function* ({ roomId, room, user }) {
-                for await (const event of DispatchControls.stream(roomId, user.userId, room)) {
+            .get('/connect', async function* ({ roomId, room, user, request }) {
+                for await (const event of DispatchControls.stream(roomId, user.userId, room, request.signal, promise => finishRequestCleanup(request, promise))) {
                     yield sse({ data: event })
                 }
             }, {

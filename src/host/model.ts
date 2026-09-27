@@ -57,6 +57,7 @@ export namespace HostModel {
     export type TimelineEntry = typeof timelineEntry.static
     export const snapshot = t.Object({
         roomId: t.String(),
+        groupId: t.String(),
         eventId: t.String(),
         eventName: t.String(),
         occurrence: t.String(),

@@ -11,7 +11,7 @@ local start = tonumber(room.startAt)
 local finish = tonumber(room.expiresAt)
 `
 const SNAPSHOT = `
-local snapshot = {roomId=ARGV[2], eventId=room.eventId, eventName=room.eventName, occurrence=room.occurrence,
+local snapshot = {roomId=ARGV[2], groupId=room.groupId, eventId=room.eventId, eventName=room.eventName, occurrence=room.occurrence,
 botConnected=room.botConnected == 'true', endsAt=finish, activeUntil=tonumber(room.activeUntil), timeline=timeline,
 note=room.note or '', ownerRobloxId=room.ownerRobloxId or '', imageUrl=room.imageUrl or ''}
 if snapshot.ownerRobloxId == '' then snapshot.ownerRobloxId = cjson.null end

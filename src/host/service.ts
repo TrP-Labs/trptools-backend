@@ -23,7 +23,6 @@ import { DEFAULT_SCHEDULE, validSchedule, BOT_ACTIONS } from './rules'
 import {
     CHANGE_EVENT,
     EXTEND_HOST,
-    READ_HOST,
     SET_NOTE,
     CLAIM_TIMELINE,
 } from './redisScripts'
@@ -71,12 +70,15 @@ export abstract class Host {
         return 'Success' as const
     }
     static async get(roomId: string, session: session) {
-        const info = await requireRoom(roomId)
-        await assertAnyGroupPermission(session, info.groupId, [
+        if (!session.user) throw status(401, 'Unauthorized')
+        // The atomic snapshot already carries the room's group. Reading the
+        // complete Redis hash first duplicates both the transfer and parsing.
+        const snapshot = await hostSnapshot(roomId)
+        await assertAnyGroupPermission(session, snapshot.groupId, [
             PERM.START_ROOM,
             PERM.DISPATCH,
         ])
-        return hostSnapshot(roomId)
+        return snapshot
     }
     static async extend(roomId: string, minutes: number, session: session) {
         const info = await requireRoom(roomId)
@@ -104,6 +106,11 @@ export abstract class Host {
         if (
             !has(permissions, PERM.START_ROOM) &&
             !has(permissions, PERM.DISPATCH)
+        )
+            throw status(403, 'Forbidden')
+        if (
+            body.operation !== 'ACKNOWLEDGE' &&
+            !has(permissions, PERM.START_ROOM)
         )
             throw status(403, 'Forbidden')
         if (

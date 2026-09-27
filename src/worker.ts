@@ -1,8 +1,12 @@
 import { Elysia } from 'elysia'
 import { CloudflareAdapter } from 'elysia/adapter/cloudflare-worker'
+import { registerRequestLifetime } from './utils/requestLifetime'
 import { app } from './index'
 import { env } from './utils/env'
-import { checkWorkerRateLimit, type WorkerRateLimitBindings } from './utils/workerRateLimit'
+import {
+    checkWorkerRateLimit,
+    type WorkerRateLimitBindings,
+} from './utils/workerRateLimit'
 
 /**
  * Cloudflare needs a Fetch entry point instead of Bun's listening socket.
@@ -12,8 +16,17 @@ import { checkWorkerRateLimit, type WorkerRateLimitBindings } from './utils/work
 const workerApp = new Elysia({ adapter: CloudflareAdapter }).use(app).compile()
 
 export default {
-    async fetch(request: Request, bindings: WorkerRateLimitBindings) {
-        const limited = await checkWorkerRateLimit(request, bindings, env.BOT_SERVICE_TOKEN)
+    async fetch(
+        request: Request,
+        bindings: WorkerRateLimitBindings,
+        context?: { waitUntil(promise: Promise<unknown>): void },
+    ) {
+        if (context) registerRequestLifetime(request, context)
+        const limited = await checkWorkerRateLimit(
+            request,
+            bindings,
+            env.BOT_SERVICE_TOKEN,
+        )
         return limited ?? workerApp.fetch(request)
-    }
+    },
 }
