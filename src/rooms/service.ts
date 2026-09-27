@@ -2,7 +2,7 @@ import { status } from 'elysia'
 import { eq } from 'drizzle-orm'
 import { encodeBase32LowerCaseNoPadding } from '@oslojs/encoding'
 import db from '../db'
-import { events } from '../db/schema'
+import { events, botConfigs } from '../db/schema'
 import { dataRedis, deleteByPrefix } from '../utils/redis'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission, assertAnyGroupPermission, GetMembership } from '../utils/groupPermission'
@@ -10,6 +10,7 @@ import { has, PERM } from '../utils/permissions'
 import { activeOccurrence } from '../utils/recurrence'
 import { isElevated, type session, type SessionUser } from '../utils/sessionVerifier'
 import { findGroup } from '../groups/service'
+import { makeTimeline, DEFAULT_SCHEDULE } from '../host/rules'
 import { RoomModel } from './model'
 import { CREATE_ROOM, TOUCH_ROOM } from './lifecycle'
 import { CLOSE_ROOM } from './dispatch/redisScripts'
@@ -23,6 +24,8 @@ export type RoomInfo = {
     expiresAt: string
     occurrence: string
     activeUntil: string
+    startAt: string
+    timeline: string
 }
 
 export function generateRoomId(): string {
@@ -89,6 +92,8 @@ export abstract class RoomControls {
             1800
         )
 
+        const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, event.groupId)).limit(1)
+        const enabled = { STAFF_START: Boolean(config?.signupsEnabled && config.autoStaffStart), BEGIN: Boolean(config?.announcementsEnabled && config.autoBegin), COMPLETE: Boolean(config?.autoComplete) }
         const info: RoomInfo = {
             groupId: event.groupId,
             eventId: event.eventId,
@@ -97,7 +102,9 @@ export abstract class RoomControls {
             createdAt: Date.now().toString(),
             expiresAt: occurrence.end.getTime().toString(),
             occurrence: occurrence.start.toISOString(),
-            activeUntil: String(occurrence.end.getTime() + 30 * 60_000)
+            activeUntil: String(occurrence.end.getTime() + 30 * 60_000),
+            startAt: String(occurrence.start.getTime()),
+            timeline: JSON.stringify(makeTimeline(group?.hostSchedule ?? DEFAULT_SCHEDULE, occurrence.start.getTime(), occurrence.end.getTime(), enabled))
         }
 
         const claimed = await dataRedis.eval<number>(CREATE_ROOM,

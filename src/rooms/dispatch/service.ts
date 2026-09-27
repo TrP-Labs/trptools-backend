@@ -7,6 +7,7 @@ import { dataRedis } from '../../utils/redis'
 import { broker } from '../../utils/events'
 import { globalModel } from '../../utils/globalModel'
 import { roomChannel, roomUsersKey, roomVehiclesKey, roomKey, requireRoom, touchRoom, type RoomInfo } from '../service'
+import { hostSnapshot } from '../../host/service'
 import { Vehicles } from './model'
 import { assertResults, runBatches, type RedisTask } from './batch'
 import { ADD_VEHICLE, PATCH_VEHICLE, MODIFY_VEHICLE, DELETE_VEHICLES, CHANGE_PRESENCE } from './redisScripts'
@@ -410,10 +411,12 @@ export abstract class DispatchControls {
                 checking = true
                 void touchRoom(roomId).then((exists) => {
                     if (!exists) push({ event: 'CLOSED' })
+                    else if (info.timeline) void hostSnapshot(roomId).then(snapshot => push({ event: 'HOST', data: snapshot })).catch(() => undefined)
                 }).catch(() => undefined).finally(() => { checking = false })
             }, 15_000)
             yield { event: 'SYNC', data: vehicles }
             yield { event: 'PRESENCE', data: presence }
+            if (info.timeline) yield { event: 'HOST', data: await hostSnapshot(roomId) }
 
             while (!closed) {
                 if (queue.length === 0) {

@@ -1,10 +1,11 @@
 import { relations } from 'drizzle-orm'
-import { boolean, index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
+import { boolean, jsonb, index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
 import { moderationEnum, visibilityEnum, vehicleCategoryEnum } from './enums'
 import { routes, depots } from './routes'
 import { events } from './events'
 import { botConfigs } from './bot'
 import { signupSheets, signupSheetRanks } from './signups'
+import type { HostModel } from '../../host/model'
 import { translations } from './translations'
 
 export const groups = pgTable(
@@ -57,6 +58,8 @@ export const groups = pgTable(
          * opened hours early holds the group's single room slot for no reason,
          * so the window is the group's to choose.
          */
+        hostSchedule: jsonb('host_schedule').$type<HostModel.Schedule>(),
+
         roomOpenLeadMinutes: integer('room_open_lead_minutes').notNull().default(10),
 
         /**
