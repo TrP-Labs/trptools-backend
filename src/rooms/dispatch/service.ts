@@ -330,12 +330,12 @@ export abstract class DispatchControls {
 
     static async join(roomId: string, userId: string): Promise<string[]> {
         return dataRedis.eval<string[]>(CHANGE_PRESENCE, [roomKey(roomId), roomUsersKey(roomId)],
-            [userId, '1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId)])
+            [userId, '1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId), String(Date.now())])
     }
 
     static async leave(roomId: string, userId: string): Promise<string[]> {
         return dataRedis.eval<string[]>(CHANGE_PRESENCE, [roomKey(roomId), roomUsersKey(roomId)],
-            [userId, '-1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId)])
+            [userId, '-1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId), String(Date.now())])
     }
 
     /** The same list, resolved to profiles for the room's presence dialog. */

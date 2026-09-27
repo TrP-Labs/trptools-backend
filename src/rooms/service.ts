@@ -10,6 +10,7 @@ import { has, PERM } from '../utils/permissions'
 import { activeOccurrence } from '../utils/recurrence'
 import { isElevated, type session, type SessionUser } from '../utils/sessionVerifier'
 import { findGroup } from '../groups/service'
+import { runBatches, assertResults } from './dispatch/batch'
 import { makeTimeline, DEFAULT_SCHEDULE } from '../host/rules'
 import { RoomModel } from './model'
 import { CREATE_ROOM, TOUCH_ROOM } from './lifecycle'
@@ -85,19 +86,21 @@ export abstract class RoomControls {
 
         const roomId = generateRoomId()
 
-        // Keep the room alive until the shift ends, plus an hour of slack for
-        // overruns, and never less than 30 minutes.
-        const ttlSeconds = Math.max(
-            Math.ceil((occurrence.end.getTime() - Date.now()) / 1000) + 3600,
-            1800
-        )
+        // An empty room expires exactly when its occurrence's wrap-up ends.
+        // Presence heartbeats extend this TTL while staff are still connected.
+        const ttlSeconds = Math.max(1, Math.ceil((occurrence.end.getTime() + 1800000 - Date.now()) / 1000))
 
         const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, event.groupId)).limit(1)
         const enabled = { STAFF_START: Boolean(config?.signupsEnabled && config.autoStaffStart), BEGIN: Boolean(config?.announcementsEnabled && config.autoBegin), COMPLETE: Boolean(config?.autoComplete) }
         const storedNote = await dataRedis.get(`shiftnote:${event.eventId}:${occurrence.start.getTime()}`)
         let note: {note?:string;ownerRobloxId?:string|null;imageUrl?:string|null} = {}
         try { note = storedNote ? JSON.parse(storedNote) : {} } catch { /* Old malformed notes must not prevent opening the room. */ }
+        const timeline = makeTimeline(group?.hostSchedule ?? DEFAULT_SCHEDULE, occurrence.start.getTime(), occurrence.end.getTime(), enabled)
+        const completed = await runBatches(dataRedis, timeline.map(item => pipeline => pipeline.eval("return redis.call('GET', KEYS[1])", [`bot:done:${item.action}:${event.eventId}:${occurrence.start.getTime()}`], [])))
+        assertResults(completed)
+        completed.forEach(([,value],index) => { if (value) timeline[index]!.status = value === 'STAFF' ? 'ACTIVATED' : 'AUTOMATED' })
         const info: RoomInfo & Record<string,string> = {
+            botConnected: String(Boolean(config)),
             note: note.note ?? '', ownerRobloxId: note.ownerRobloxId ?? '', imageUrl: note.imageUrl ?? '',
             groupId: event.groupId,
             eventId: event.eventId,
@@ -108,11 +111,11 @@ export abstract class RoomControls {
             occurrence: occurrence.start.toISOString(),
             activeUntil: String(occurrence.end.getTime() + 30 * 60_000),
             startAt: String(occurrence.start.getTime()),
-            timeline: JSON.stringify(makeTimeline(group?.hostSchedule ?? DEFAULT_SCHEDULE, occurrence.start.getTime(), occurrence.end.getTime(), enabled))
+            timeline: JSON.stringify(timeline)
         }
 
         const claimed = await dataRedis.eval<number>(CREATE_ROOM,
-            [roomKey(roomId), groupIndexKey(event.groupId)], [roomId, JSON.stringify(info), String(ttlSeconds + 7200)])
+            [roomKey(roomId), groupIndexKey(event.groupId)], [roomId, JSON.stringify(info), String(ttlSeconds)])
         if (!claimed) throw status(409, 'this group already has a room open' satisfies RoomModel.alreadyOpen)
 
         return { roomId }
@@ -128,7 +131,7 @@ export abstract class RoomControls {
         await assertAnyGroupPermission(session, group.id, [PERM.DISPATCH, PERM.START_ROOM])
 
         const roomId = await dataRedis.get(groupIndexKey(group.id))
-        if (!roomId) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (!roomId || !await touchRoom(roomId)) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         return { roomId }
     }

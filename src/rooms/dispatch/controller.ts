@@ -2,6 +2,8 @@ import { Elysia, sse, status, t } from 'elysia'
 import { Vehicles } from './model'
 import { DispatchControls } from './service'
 import { canDispatch } from '../service'
+import { assertGroupPermission } from '../../utils/groupPermission'
+import { PERM } from '../../utils/permissions'
 import { globalModel } from '../../utils/globalModel'
 import { requireUser, sessionPlugin } from '../../utils/authPlugin'
 import { hasScope } from '../../utils/sessionVerifier'
@@ -106,6 +108,7 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
 
             .post('/solve', async ({ roomId, room, body, session }) => {
                 if (!hasScope(session, 'dispatch:write')) throw status(403, 'Forbidden' satisfies globalModel.forbidden)
+                await assertGroupPermission(session, room.groupId, PERM.DISPATCH)
                 return DispatchControls.solveRoom(roomId, room, body)
             }, {
                 body: Vehicles.solveBody,
@@ -128,6 +131,7 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                         if (!hasScope(session, 'dispatch:write')) {
                             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
                         }
+                        await assertGroupPermission(session, room.groupId, PERM.DISPATCH)
                         return DispatchControls.modifyVehicle(roomId, params.vehicleId, room, body)
                     }, {
                         params: t.Object({ roomId: t.String(), vehicleId: t.String({ maxLength: 32 }) }),
@@ -150,6 +154,7 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                         if (!hasScope(session, 'dispatch:write')) {
                             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
                         }
+                        await assertGroupPermission(session, room.groupId, PERM.DISPATCH)
                         return DispatchControls.deleteVehicle(roomId, params.vehicleId, room)
                     }, {
                         params: t.Object({ roomId: t.String(), vehicleId: t.String({ maxLength: 32 }) }),

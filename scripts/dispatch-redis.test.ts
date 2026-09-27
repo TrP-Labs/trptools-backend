@@ -96,10 +96,11 @@ mock.module('../src/rooms/dispatch/solver', () => ({
     loadSolverContext: async () => { await beforeContext?.(); return context },
     loadRoutePreferences: async () => new Map()
 }))
-mock.module('../src/groups/service', () => ({ findGroup: async () => null }))
+mock.module('../src/groups/service', () => ({ findGroup: async () => null, recordAudit: async () => {} }))
 mock.module('../src/utils/groupPermission', () => ({
     GetMembership: async () => ({ permissions: Number(await dataRedis.get('permission')) }),
-    assertGroupPermission: async () => {}
+    assertGroupPermission: async () => {},
+    assertAnyGroupPermission: async () => {}
 }))
 const { dataRedis } = await import('../src/utils/redis')
 const { DispatchControls } = await import('../src/rooms/dispatch/service')
@@ -127,7 +128,7 @@ dataRedis.pipeline = () => {
     }
     return pipeline
 }
-const info: RoomInfo = { groupId, eventId: 'event', eventName: 'Shift', creatorId: 'host', createdAt: '1', expiresAt: '2' }
+const info: RoomInfo = { groupId, eventId: 'event', eventName: 'Shift', creatorId: 'host', createdAt: '1', expiresAt: String(Date.now()+3600000), occurrence: new Date().toISOString(), activeUntil: String(Date.now()+5400000), startAt: String(Date.now()), timeline: '' }
 const user = { userId: 'dispatcher', robloxId: 1, siteRank: 'user', adminMode: false }
 const seed = (id: number | string): Vehicles.seedVehicle => ({ Id: id, OwnerId: 1, Name: 'Bus', Depot: 'Main Island Depot' })
 const key = (id: string | number) => `dispatchroom:integration:vehicles:${id}`

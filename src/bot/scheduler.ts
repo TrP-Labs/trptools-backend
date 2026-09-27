@@ -6,6 +6,8 @@ import type { BotInternal } from './internalModel'
 import { groupIndexKey, roomKey, roomChannel, touchRoom, type RoomInfo } from '../rooms/service'
 import { CLAIM_TIMELINE, FINISH_TIMELINE } from '../host/redisScripts'
 import { runBatches, assertResults } from '../rooms/dispatch/batch'
+import { timelineCandidates } from '../host/candidates'
+import { DEFAULT_SCHEDULE } from '../host/rules'
 import { dueCandidates } from './schedulerRules'
 
 /**
@@ -61,6 +63,7 @@ export async function dueActions(
             },
             groupId: groups.id,
             signupLeadMinutes: groups.signupLeadMinutes,
+            hostSchedule: groups.hostSchedule,
             shift: {
                 eventId: events.eventId,
                 startTime: events.startTime,
@@ -95,10 +98,12 @@ export async function dueActions(
         for (const item of claimed) due.push({ ...item, guildId: config.guildId, groupId: pointer.groupId, expiresAt: new Date(item.expiresAt).toISOString() })
     }
 
-    for (const { config, groupId, signupLeadMinutes, shift } of rows) {
-        for (const candidate of dueCandidates(
-            shift.rrule, shift.startTime, shift.duration, config, signupLeadMinutes, now
-        )) {
+    for (const { config, groupId, signupLeadMinutes, hostSchedule, shift } of rows) {
+        for (const candidate of [
+            ...dueCandidates(shift.rrule, shift.startTime, shift.duration, config, signupLeadMinutes, now)
+                .filter(item => !['STAFF_START','BEGIN','COMPLETE'].includes(item.action)),
+            ...timelineCandidates(shift.rrule, shift.startTime, shift.duration, hostSchedule ?? DEFAULT_SCHEDULE, config, now)
+        ]) {
             const { action, occurrence, expiresAt } = candidate
             const room = open.get(groupId)
             if (room?.info.eventId === shift.eventId && room.info.occurrence === occurrence.toISOString() && ['STAFF_START', 'BEGIN', 'COMPLETE'].includes(action)) continue

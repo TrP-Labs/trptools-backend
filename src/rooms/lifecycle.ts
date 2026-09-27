@@ -11,7 +11,9 @@ if tonumber(ARGV[1]) >= active and redis.call('HLEN', KEYS[2]) == 0 then
     redis.call('PUBLISH', ARGV[3], '{"event":"CLOSED"}')
     return 0
 end
-local ttl = math.max(7200, math.ceil((active - tonumber(ARGV[1])) / 1000) + 7200)
+local occupied = redis.call('HLEN', KEYS[2]) > 0
+local ttl = math.max(1, math.ceil((active - tonumber(ARGV[1])) / 1000))
+if occupied then ttl = math.max(7200, ttl + 7200) end
 redis.call('EXPIRE', KEYS[1], ttl)
 redis.call('EXPIRE', 'groupindex:' .. group, ttl)
 return 1

@@ -401,7 +401,7 @@ export abstract class BotService {
         if (!event) throw status(404, 'Not Found')
         const roomId = await dataRedis.get(groupIndexKey(group.id))
         if (roomId) await dataRedis.eval(STAFF_ACTION, [roomKey(roomId)], [String(Date.now()),roomId,roomChannel(roomId),body.eventId,body.occurrence,body.action])
-        await completeClaim(body.action, body.eventId, body.occurrence)
+        await dataRedis.set(`bot:done:${body.action}:${body.eventId}:${Date.parse(body.occurrence)}`, 'STAFF', 'EX', 86400)
         return 'Success' as const
     }
     static async setNote(guildId: string, body: BotInternal.noteBody) {

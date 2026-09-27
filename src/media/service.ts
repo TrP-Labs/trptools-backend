@@ -245,7 +245,9 @@ export abstract class MediaService {
 
         const ownerId = body.ownerType === 'GROUP' ? null : (body.ownerId ?? null)
 
-        const existing = await db
+        // Shift images belong to dated announcements, rather than one bounded
+        // gallery: a recurring shift must not stop accepting images after 12 weeks.
+        const existing = body.ownerType === 'SHIFT' ? [] : await db
             .select({ id: media.id })
             .from(media)
             .where(

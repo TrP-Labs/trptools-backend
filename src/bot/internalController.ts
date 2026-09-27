@@ -77,7 +77,7 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
     .post(
         '/due/release',
         async ({ body }) => {
-            await releaseClaim(body.action, body.eventId, body.occurrence)
+            await releaseClaim(body.action, body.eventId, body.occurrence, 'legacy', body.roomId, body.timelineId)
             return 'Success' as globalModel.genericSuccess
         },
         {
