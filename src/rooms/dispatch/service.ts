@@ -6,7 +6,8 @@ import type { VehicleCategory } from '../../db/schema'
 import { dataRedis } from '../../utils/redis'
 import { broker } from '../../utils/events'
 import { globalModel } from '../../utils/globalModel'
-import { roomChannel, roomUsersKey, roomVehiclesKey, roomKey, requireRoom, type RoomInfo } from '../service'
+import { roomChannel, roomUsersKey, roomVehiclesKey, roomKey, requireRoom, touchRoom, type RoomInfo } from '../service'
+import { hostSnapshot } from '../../host/service'
 import { Vehicles } from './model'
 import { assertResults, runBatches, type RedisTask } from './batch'
 import { ADD_VEHICLE, PATCH_VEHICLE, MODIFY_VEHICLE, DELETE_VEHICLES, CHANGE_PRESENCE } from './redisScripts'
@@ -329,12 +330,12 @@ export abstract class DispatchControls {
 
     static async join(roomId: string, userId: string): Promise<string[]> {
         return dataRedis.eval<string[]>(CHANGE_PRESENCE, [roomKey(roomId), roomUsersKey(roomId)],
-            [userId, '1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId)])
+            [userId, '1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId), String(Date.now())])
     }
 
     static async leave(roomId: string, userId: string): Promise<string[]> {
         return dataRedis.eval<string[]>(CHANGE_PRESENCE, [roomKey(roomId), roomUsersKey(roomId)],
-            [userId, '-1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId)])
+            [userId, '-1', String(VEHICLE_TTL_SECONDS), roomChannel(roomId), String(Date.now())])
     }
 
     /** The same list, resolved to profiles for the room's presence dialog. */
@@ -363,7 +364,7 @@ export abstract class DispatchControls {
      * client cannot block the broker, and it is bounded so a stalled reader
      * gets dropped instead of growing memory without limit.
      */
-    static async *stream(roomId: string, userId: string, room?: RoomInfo): AsyncGenerator<Vehicles.streamEvent> {
+    static async *stream(roomId: string, userId: string, room?: RoomInfo, signal?: AbortSignal, onCleanup?: (promise: Promise<unknown>) => void): AsyncGenerator<Vehicles.streamEvent> {
         const info = room ?? await requireRoom(roomId)
 
         const queue: Vehicles.streamEvent[] = []
@@ -390,7 +391,26 @@ export abstract class DispatchControls {
         let joined = false
         let heartbeat: ReturnType<typeof setInterval> | undefined
         let checking = false
+        let cleanupPromise: Promise<void> | undefined
+        const cleanup = () => cleanupPromise ??= (async () => {
+            clearInterval(heartbeat)
+            signal?.removeEventListener('abort', abort)
+            unsubscribe()
+            if (joined) {
+                joined = false
+                await DispatchControls.leave(roomId, userId).catch(() => undefined)
+                await touchRoom(roomId).catch(() => undefined)
+            }
+        })()
+        const abort = () => {
+            closed = true
+            notify?.()
+            if (joined) onCleanup?.(cleanup())
+        }
+        signal?.addEventListener('abort', abort, {once:true})
+        if (signal?.aborted) abort()
         try {
+            if (closed) return
             // Subscribe before loading the snapshot so changes in flight are
             // queued. Joining and reading can share their network wait.
             const [presenceResult, vehiclesResult] = await Promise.allSettled([
@@ -400,6 +420,7 @@ export abstract class DispatchControls {
                 }),
                 DispatchControls.getAllVehicles(roomId, info)
             ])
+            if (closed) return
             if (presenceResult.status === 'rejected') throw presenceResult.reason
             if (vehiclesResult.status === 'rejected') throw vehiclesResult.reason
             const presence = presenceResult.value
@@ -408,12 +429,14 @@ export abstract class DispatchControls {
                 push({ event: 'HEARTBEAT' })
                 if (checking || closed) return
                 checking = true
-                void dataRedis.exists(roomKey(roomId)).then((exists) => {
+                void touchRoom(roomId).then((exists) => {
                     if (!exists) push({ event: 'CLOSED' })
+                    else if (info.timeline) void hostSnapshot(roomId).then(snapshot => push({ event: 'HOST', data: snapshot })).catch(() => undefined)
                 }).catch(() => undefined).finally(() => { checking = false })
             }, 15_000)
             yield { event: 'SYNC', data: vehicles }
             yield { event: 'PRESENCE', data: presence }
+            if (info.timeline) yield { event: 'HOST', data: await hostSnapshot(roomId) }
 
             while (!closed) {
                 if (queue.length === 0) {
@@ -432,9 +455,7 @@ export abstract class DispatchControls {
                 }
             }
         } finally {
-            clearInterval(heartbeat)
-            unsubscribe()
-            if (joined) await DispatchControls.leave(roomId, userId).catch(() => undefined)
+            await cleanup()
         }
     }
 }

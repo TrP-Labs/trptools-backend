@@ -1,0 +1,1 @@
+ALTER TYPE "public"."media_owner" ADD VALUE 'SHIFT';

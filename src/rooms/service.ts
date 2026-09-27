@@ -2,15 +2,18 @@ import { status } from 'elysia'
 import { eq } from 'drizzle-orm'
 import { encodeBase32LowerCaseNoPadding } from '@oslojs/encoding'
 import db from '../db'
-import { events } from '../db/schema'
+import { events, botConfigs } from '../db/schema'
 import { dataRedis, deleteByPrefix } from '../utils/redis'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
+import { assertGroupPermission, assertAnyGroupPermission, GetMembership } from '../utils/groupPermission'
 import { has, PERM } from '../utils/permissions'
 import { activeOccurrence } from '../utils/recurrence'
 import { isElevated, type session, type SessionUser } from '../utils/sessionVerifier'
 import { findGroup } from '../groups/service'
+import { runBatches, assertResults } from './dispatch/batch'
+import { makeTimeline, DEFAULT_SCHEDULE } from '../host/rules'
 import { RoomModel } from './model'
+import { CREATE_ROOM, TOUCH_ROOM } from './lifecycle'
 import { CLOSE_ROOM } from './dispatch/redisScripts'
 
 export type RoomInfo = {
@@ -20,6 +23,10 @@ export type RoomInfo = {
     creatorId: string
     createdAt: string
     expiresAt: string
+    occurrence: string
+    activeUntil: string
+    startAt: string
+    timeline: string
 }
 
 export function generateRoomId(): string {
@@ -35,6 +42,11 @@ export const roomVehiclesKey = (roomId: string) => `dispatchroom:${roomId}:vehic
 export const roomChannel = (roomId: string) => `dispatchroom.${roomId}`
 
 /** Reads a room, or throws 404 if it has closed or expired. */
+export async function touchRoom(roomId: string) {
+    return dataRedis.eval<number>(TOUCH_ROOM, [roomKey(roomId), roomUsersKey(roomId)],
+        [String(Date.now()), roomId, roomChannel(roomId)])
+}
+
 export async function requireRoom(roomId: string): Promise<RoomInfo> {
     const info = (await dataRedis.hgetall(roomKey(roomId))) as Partial<RoomInfo>
     if (!info || Object.keys(info).length === 0) {
@@ -67,38 +79,44 @@ export abstract class RoomControls {
         const group = await findGroup(event.groupId)
         const lead = group?.roomOpenLeadMinutes ?? 10
 
-        const occurrence = activeOccurrence(event.rrule, event.startTime, event.duration, lead)
+        const occurrence = activeOccurrence(event.rrule, event.startTime, event.duration, lead, new Date(), 30)
         if (!occurrence) {
             throw status(409, 'this shift is not running right now' satisfies RoomModel.notScheduled)
         }
 
         const roomId = generateRoomId()
 
-        // SET NX is what makes "one room per group" a race-free guarantee.
-        const claimed = await dataRedis.set(groupIndexKey(event.groupId), roomId, 'EX', 60 * 60 * 6, 'NX')
-        if (!claimed) {
-            throw status(409, 'this group already has a room open' satisfies RoomModel.alreadyOpen)
-        }
+        // An empty room expires exactly when its occurrence's wrap-up ends.
+        // Presence heartbeats extend this TTL while staff are still connected.
+        const ttlSeconds = Math.max(1, Math.ceil((occurrence.end.getTime() + 1800000 - Date.now()) / 1000))
 
-        // Keep the room alive until the shift ends, plus an hour of slack for
-        // overruns, and never less than 30 minutes.
-        const ttlSeconds = Math.max(
-            Math.ceil((occurrence.end.getTime() - Date.now()) / 1000) + 3600,
-            1800
-        )
-
-        const info: RoomInfo = {
+        const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, event.groupId)).limit(1)
+        const enabled = { STAFF_START: Boolean(config?.signupsEnabled && config.autoStaffStart), BEGIN: Boolean(config?.announcementsEnabled && config.autoBegin), COMPLETE: Boolean(config?.autoComplete) }
+        const storedNote = await dataRedis.get(`shiftnote:${event.eventId}:${occurrence.start.getTime()}`)
+        let note: {note?:string;ownerRobloxId?:string|null;imageUrl?:string|null} = {}
+        try { note = storedNote ? JSON.parse(storedNote) : {} } catch { /* Old malformed notes must not prevent opening the room. */ }
+        const timeline = makeTimeline(group?.hostSchedule ?? DEFAULT_SCHEDULE, occurrence.start.getTime(), occurrence.end.getTime(), enabled)
+        const completed = await runBatches(dataRedis, timeline.map(item => pipeline => pipeline.eval("return redis.call('GET', KEYS[1])", [`bot:done:${item.action}:${event.eventId}:${occurrence.start.getTime()}`], [])))
+        assertResults(completed)
+        completed.forEach(([,value],index) => { if (value) timeline[index]!.status = value === 'STAFF' ? 'ACTIVATED' : 'AUTOMATED' })
+        const info: RoomInfo & Record<string,string> = {
+            botConnected: String(Boolean(config)),
+            note: note.note ?? '', ownerRobloxId: note.ownerRobloxId ?? '', imageUrl: note.imageUrl ?? '',
             groupId: event.groupId,
             eventId: event.eventId,
             eventName: event.name,
             creatorId: session.user.userId,
             createdAt: Date.now().toString(),
-            expiresAt: occurrence.end.getTime().toString()
+            expiresAt: occurrence.end.getTime().toString(),
+            occurrence: occurrence.start.toISOString(),
+            activeUntil: String(occurrence.end.getTime() + 30 * 60_000),
+            startAt: String(occurrence.start.getTime()),
+            timeline: JSON.stringify(timeline)
         }
 
-        await dataRedis.hset(roomKey(roomId), info)
-        await dataRedis.expire(roomKey(roomId), ttlSeconds)
-        await dataRedis.expire(groupIndexKey(event.groupId), ttlSeconds)
+        const claimed = await dataRedis.eval<number>(CREATE_ROOM,
+            [roomKey(roomId), groupIndexKey(event.groupId)], [roomId, JSON.stringify(info), String(ttlSeconds)])
+        if (!claimed) throw status(409, 'this group already has a room open' satisfies RoomModel.alreadyOpen)
 
         return { roomId }
     }
@@ -110,10 +128,10 @@ export abstract class RoomControls {
         const group = await findGroup(groupIdOrSlug)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertGroupPermission(session, group.id, PERM.DISPATCH)
+        await assertAnyGroupPermission(session, group.id, [PERM.DISPATCH, PERM.START_ROOM])
 
         const roomId = await dataRedis.get(groupIndexKey(group.id))
-        if (!roomId) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (!roomId || !await touchRoom(roomId)) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         return { roomId }
     }
@@ -122,7 +140,7 @@ export abstract class RoomControls {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
         const info = await requireRoom(roomId)
-        await assertGroupPermission(session, info.groupId, PERM.DISPATCH)
+        await assertAnyGroupPermission(session, info.groupId, [PERM.DISPATCH, PERM.START_ROOM])
 
         const [dispatchers, vehicles] = await Promise.all([
             dataRedis.hgetall(roomUsersKey(roomId)),
@@ -149,7 +167,7 @@ export abstract class RoomControls {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
         const info = await requireRoom(roomId)
-        await assertGroupPermission(session, info.groupId, PERM.START_ROOM)
+        await assertGroupPermission(session, info.groupId, Date.now() < Number(info.activeUntil ?? Number(info.expiresAt) + 1800000) ? PERM.CLOSE_ROOM : PERM.START_ROOM)
 
         await dataRedis.eval(CLOSE_ROOM, [roomKey(roomId), groupIndexKey(info.groupId)], [roomId, roomChannel(roomId)])
         await deleteByPrefix(`dispatchroom:${roomId}:`)
@@ -165,7 +183,7 @@ export async function canDispatch(user: SessionUser, roomId: string): Promise<Ro
 
     if (!isElevated(user)) {
         const membership = await GetMembership(user.userId, info.groupId)
-        if (!has(membership.permissions, PERM.DISPATCH)) return null
+        if (!has(membership.permissions, PERM.DISPATCH) && !has(membership.permissions, PERM.START_ROOM)) return null
     }
 
     return info as RoomInfo

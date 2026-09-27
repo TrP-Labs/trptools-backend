@@ -14,6 +14,7 @@ import { route, depot } from './groups/routes/controller'
 import { schedule } from './schedule/controller'
 import { signups } from './signups/controller'
 import { applicationRoutes } from './applications/controller'
+import { host } from './host/controller'
 import { rooms } from './rooms/controller'
 import { dispatch } from './rooms/dispatch/controller'
 import { publicPages } from './public/controller'
@@ -120,6 +121,7 @@ export const app = new Elysia()
     .use(signups)
     .use(applicationRoutes)
     .use(rooms)
+    .use(host)
     .use(dispatch)
     .use(publicPages)
     .use(mediaRoutes)

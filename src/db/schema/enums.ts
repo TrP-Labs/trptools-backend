@@ -23,7 +23,7 @@ export const reportTargetEnum = pgEnum('report_target', ['GROUP', 'ROUTE', 'DEPO
 
 export const reportStatusEnum = pgEnum('report_status', ['OPEN', 'UPHELD', 'DISMISSED'])
 
-export const mediaOwnerEnum = pgEnum('media_owner', ['GROUP', 'ROUTE', 'DEPOT', 'APPLICATION'])
+export const mediaOwnerEnum = pgEnum('media_owner', ['GROUP', 'ROUTE', 'DEPOT', 'APPLICATION', 'SHIFT'])
 
 /**
  * The components a staff application form is built out of.

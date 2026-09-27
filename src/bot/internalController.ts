@@ -26,6 +26,8 @@ const serviceAuth = new Elysia({ name: 'trptools/bot-service' }).onBeforeHandle(
 export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] })
     .use(serviceAuth)
 
+    .post('/staff-action', ({ body }) => BotService.staffAction(body), {body:t.Object({guildId:t.String(),eventId:t.String({format:'uuid'}),occurrence:t.String(),action:BotInternal.dueAction.properties.action})})
+
     .get('/guilds', async () => BotService.guilds(), {
         response: { 200: BotInternal.guilds, 401: globalModel.unauthorized },
         detail: {
@@ -60,11 +62,13 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
     })
 
     .get('/due/completed', async ({ query }) =>
-        claimCompleted(query.action, query.eventId, query.occurrence), {
+        claimCompleted(query.action, query.eventId, query.occurrence, query.roomId, query.timelineId), {
         query: t.Object({
             action: BotInternal.dueAction.properties.action,
             eventId: t.String({ format: 'uuid' }),
-            occurrence: t.String()
+            occurrence: t.String(),
+            roomId: t.Optional(t.String()),
+            timelineId: t.Optional(t.String())
         }),
         response: { 200: t.Boolean(), 401: globalModel.unauthorized },
         detail: { summary: 'Whether a leased bot action was already completed' }
@@ -73,14 +77,16 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
     .post(
         '/due/release',
         async ({ body }) => {
-            await releaseClaim(body.action, body.eventId, body.occurrence)
+            await releaseClaim(body.action, body.eventId, body.occurrence, 'legacy', body.roomId, body.timelineId)
             return 'Success' as globalModel.genericSuccess
         },
         {
             body: t.Object({
                 action: BotInternal.dueAction.properties.action,
                 eventId: t.String({ format: 'uuid' }),
-                occurrence: t.String()
+                occurrence: t.String(),
+                roomId: t.Optional(t.String()),
+                timelineId: t.Optional(t.String())
             }),
             response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized },
             detail: {
@@ -93,14 +99,16 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
     .post(
         '/due/lease/release',
         async ({ body }) => {
-            await releaseClaim(body.action, body.eventId, body.occurrence, 'leased')
+            await releaseClaim(body.action, body.eventId, body.occurrence, 'leased', body.roomId, body.timelineId)
             return 'Success' as globalModel.genericSuccess
         },
         {
             body: t.Object({
                 action: BotInternal.dueAction.properties.action,
                 eventId: t.String({ format: 'uuid' }),
-                occurrence: t.String()
+                occurrence: t.String(),
+                roomId: t.Optional(t.String()),
+                timelineId: t.Optional(t.String())
             }),
             response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized },
             detail: { summary: 'Release a leased bot action for retry' }
@@ -110,14 +118,16 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
     .post(
         '/due/complete',
         async ({ body }) => {
-            await completeClaim(body.action, body.eventId, body.occurrence)
+            await completeClaim(body.action, body.eventId, body.occurrence, body.roomId, body.timelineId)
             return 'Success' as globalModel.genericSuccess
         },
         {
             body: t.Object({
                 action: BotInternal.dueAction.properties.action,
                 eventId: t.String({ format: 'uuid' }),
-                occurrence: t.String()
+                occurrence: t.String(),
+                roomId: t.Optional(t.String()),
+                timelineId: t.Optional(t.String())
             }),
             response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized },
             detail: { summary: 'Mark a due bot action complete' }

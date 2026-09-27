@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { HostModel } from '../../host/model'
 
 export namespace Vehicles {
     export const category = t.Union([
@@ -154,6 +155,7 @@ export namespace Vehicles {
         t.Object({ event: t.Literal('DELETE'), data: t.String() }),
         t.Object({ event: t.Literal('PRESENCE'), data: t.Array(t.String()) }),
         t.Object({ event: t.Literal('CLOSED') }),
+        t.Object({ event: t.Literal('HOST'), data: HostModel.snapshot }),
         t.Object({ event: t.Literal('HEARTBEAT') })
     ])
     export type streamEvent = typeof streamEvent.static

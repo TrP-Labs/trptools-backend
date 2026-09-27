@@ -1,0 +1,56 @@
+{
+  "method": "Local workerd V8 sampling profiler, 100µs interval; warm requests; idle/root samples excluded; estimate, not production CPU billing.",
+  "results": [
+    {
+      "operation": "GET /host/:roomId",
+      "samplesMs": [
+        6.03,
+        6.534,
+        6.684,
+        5.661,
+        5.501,
+        4.633,
+        5.237,
+        8.594,
+        6.134,
+        5.338
+      ],
+      "meanMs": 6.0346,
+      "maxMs": 8.594
+    },
+    {
+      "operation": "POST /host/:roomId/extend",
+      "samplesMs": [
+        6.36,
+        6.41,
+        4.7,
+        5.721,
+        3.476,
+        6.284,
+        4.813,
+        4.248,
+        5.647,
+        5.763
+      ],
+      "meanMs": 5.3422,
+      "maxMs": 6.41
+    },
+    {
+      "operation": "PUT /host/:roomId/note",
+      "samplesMs": [
+        8.214,
+        7.441,
+        5.574,
+        6.301,
+        6.12,
+        5.28,
+        5.71,
+        5.918,
+        7.462,
+        5.315
+      ],
+      "meanMs": 6.333499999999999,
+      "maxMs": 8.214
+    }
+  ]
+}
