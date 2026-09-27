@@ -1,0 +1,34 @@
+services:
+  postgres:
+    ports: !override ['127.0.0.1:55432:5432']
+  valkey:
+    ports: !override ['127.0.0.1:56379:6379']
+  garage:
+    ports: !override ['127.0.0.1:53900:3900']
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: GK11111111111111111111111111111111
+      GARAGE_DEFAULT_SECRET_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
+  images:
+    ports: !override ['127.0.0.1:59000:8080']
+  backend:
+    ports: !override ['127.0.0.1:53001:3001']
+    environment:
+      BASE_URL: http://localhost:53001
+      FRONTEND_URL: http://localhost:53000
+      BOT_SERVICE_TOKEN: local-host-verification-only
+      DISCORD_BOT_TOKEN: ''
+      S3_ACCESS_KEY: GK11111111111111111111111111111111
+      S3_SECRET_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
+      S3_ENDPOINT: http://garage:3900
+      S3_PUBLIC_URL: http://localhost:59000
+  frontend:
+    ports: !override ['127.0.0.1:53000:3000']
+    environment:
+      ORIGIN: http://localhost:53000
+      PUBLIC_API_URL: http://localhost:53001
+      INTERNAL_API_URL: http://backend:3001
+  bot:
+    environment:
+      DISCORD_APP_ID: '111111111111111111'
+      DISCORD_BOT_TOKEN: local-verification-only
+      BOT_SERVICE_TOKEN: local-host-verification-only
