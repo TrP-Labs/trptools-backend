@@ -1,4 +1,5 @@
 import { Elysia, redirect, status, t } from 'elysia'
+import { safeReturnPath } from '../utils/returnPath'
 import { AuthModel } from './model'
 import { ApiKeys, DiscordLink, Session } from './service'
 import { BotModel } from '../bot/model'
@@ -40,7 +41,7 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
 
     .get(
         '/login',
-        async ({ cookie: { roblox_oauth_state, roblox_code_verifier }, query, request }) => {
+        async ({ cookie: { roblox_oauth_state, roblox_code_verifier, roblox_return_to }, query, request }) => {
             await rateLimit('auth:login', clientKey(request), 20, 60)
 
             const { url, state, codeVerifier } = await Session.GenerateLogin()
@@ -48,25 +49,30 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
 
             roblox_oauth_state.set({ ...baseCookie, value: state, expires })
             roblox_code_verifier.set({ ...baseCookie, value: codeVerifier, expires })
+            roblox_return_to.set({ ...baseCookie, value: safeReturnPath(query.next, '/'), expires })
 
             if (query.json === 'true') return { url } satisfies AuthModel.LoginUrlResponse
 
             return redirect(url, 303)
         },
         {
-            query: t.Object({ json: t.Optional(t.String()) }),
+            query: t.Object({ json: t.Optional(t.String()), next: t.Optional(t.String({ maxLength: 300 })) }),
             detail: { summary: 'Begin Roblox OAuth' }
         }
     )
 
     .get(
         '/callback',
-        async ({ cookie: { roblox_oauth_state, roblox_code_verifier, access_token }, query, request }) => {
+        async ({ cookie: { roblox_oauth_state, roblox_code_verifier, roblox_return_to, access_token }, query, request }) => {
             await rateLimit('auth:callback', clientKey(request), 20, 60)
+
+            const next = safeReturnPath(roblox_return_to.value as string | undefined, '/')
+            roblox_return_to.remove()
+            const retry = `&next=${encodeURIComponent(next)}`
 
             // The user declined, or Roblox refused the authorization.
             if (query.error || !query.code || !query.state) {
-                return redirect(`${FRONTEND_URL}/login?error=denied`, 303)
+                return redirect(`${FRONTEND_URL}/login?error=denied${retry}`, 303)
             }
 
             const outcome = await Session.VerifyOAuth(
@@ -85,7 +91,7 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
                 const until = outcome.banned.until
                 const lifts = until ? `&until=${encodeURIComponent(until.toISOString())}` : ''
 
-                return redirect(`${FRONTEND_URL}/login?error=banned${lifts}`, 303)
+                return redirect(`${FRONTEND_URL}/login?error=banned${lifts}${retry}`, 303)
             }
 
             access_token.set({
@@ -94,7 +100,7 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
                 expires: new Date(Date.now() + env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000)
             })
 
-            return redirect(FRONTEND_URL, 303)
+            return redirect(`${FRONTEND_URL}${next}`, 303)
         },
         {
             query: AuthModel.OauthCallbackQuery,

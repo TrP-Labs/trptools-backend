@@ -19,11 +19,12 @@ export const DEFAULT_RETURN_PATH = '/settings'
  * site — and a backslash is treated as a slash by browsers while not looking
  * like one here, which is how `/\evil.com` gets through a naive check.
  */
-export function safeReturnPath(requested: string | undefined | null): string {
-    if (!requested) return DEFAULT_RETURN_PATH
-    if (!requested.startsWith('/')) return DEFAULT_RETURN_PATH
-    if (requested.startsWith('//')) return DEFAULT_RETURN_PATH
-    if (requested.includes('\\')) return DEFAULT_RETURN_PATH
+export function safeReturnPath(requested: string | undefined | null, fallback = DEFAULT_RETURN_PATH): string {
+    if (!requested) return fallback
+    if (!requested.startsWith('/')) return fallback
+    if (requested.startsWith('//')) return fallback
+    if (requested.includes('\\')) return fallback
+    if (/[\u0000-\u0020\u007f]/.test(requested)) return fallback
 
     return requested
 }

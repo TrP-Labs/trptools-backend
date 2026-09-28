@@ -31,3 +31,12 @@ describe('safeReturnPath', () => {
         expect(safeReturnPath('settings')).toBe(DEFAULT_RETURN_PATH)
     })
 })
+
+
+test('login return paths retain bot setup and reject URL normalization escapes', () => {
+    expect(safeReturnPath('/dashboard?setup=bot', '/')).toBe('/dashboard?setup=bot')
+    expect(safeReturnPath(undefined, '/')).toBe('/')
+    for (const path of ['//evil.example', '/\t/evil.example', '/\n/evil.example', '/ path']) {
+        expect(safeReturnPath(path, '/')).toBe('/')
+    }
+})
