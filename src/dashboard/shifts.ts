@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, count, eq, gte, inArray, lte, or, sql } from 'drizzle-orm'
 import db from '../db'
 import {
     events, groups, shiftSignups, signupSheetRanks, signupSheets, signupSlotRanks, signupSlots,
@@ -38,7 +38,8 @@ export async function dashboardSchedules(
     from: Date,
     to: Date,
     perGroup: number,
-    eventCounts?: Map<string, number>
+    eventCounts?: Map<string, number>,
+    publicOnly = false
 ): Promise<DashboardModel.upcomingShift[][]> {
     if (!session.user || groupsOnPage.length === 0) return groupsOnPage.map(() => [])
 
@@ -56,13 +57,13 @@ export async function dashboardSchedules(
             .where(inArray(events.groupId, groupIds))
     ])
 
-    const elevated = isSiteAdmin(session)
+    const elevated = !publicOnly && isSiteAdmin(session)
 
     const groupById = new Map(groupsOnPage.map((group) => [group.id, group]))
     const windows = new Map<string, WindowEntry[]>(groupIds.map((id) => [id, []]))
     for (const row of rows) {
         const group = groupById.get(row.event.groupId)!
-        const isMember = elevated || isGroupMember(memberships.get(group.id)!)
+        const isMember = elevated || (!publicOnly && isGroupMember(memberships.get(group.id)!))
         if (!isMember && (row.visibility === 'PRIVATE' || !row.showShifts || row.event.visibility !== 'PUBLIC')) {
             continue
         }
@@ -91,7 +92,7 @@ export async function dashboardSchedules(
     }
 
     const memberGroupIds = groupIds.filter((id) =>
-        windows.get(id)!.length > 0 && (elevated || isGroupMember(memberships.get(id)!))
+        !publicOnly && windows.get(id)!.length > 0 && (elevated || isGroupMember(memberships.get(id)!))
     )
     const allSlots = new Map<string, { groupId: string; capacity: number; rankIds: Set<string> }>()
 
@@ -165,11 +166,22 @@ export async function dashboardSchedules(
         }
     }
 
+    const ownSignups = new Set<string>()
+    if (publicOnly && [...windows.values()].some((entries) => entries.length > 0)) {
+        const own = await db.select({ eventId: shiftSignups.eventId, occurrence: shiftSignups.occurrence })
+            .from(shiftSignups).where(and(
+                inArray(shiftSignups.eventId, [...new Set([...windows.values()].flat().map((entry) => entry.event.eventId))]),
+                or(eq(shiftSignups.userId, session.user.userId), session.user.profile?.discordId ? eq(shiftSignups.discordUserId, session.user.profile.discordId) : undefined),
+                gte(shiftSignups.occurrence, new Date(from.getTime() - 24 * 60 * 60_000)), lte(shiftSignups.occurrence, to)
+            ))
+        for (const row of own) ownSignups.add(`${row.eventId}:${row.occurrence.getTime()}`)
+    }
+
     return groupsOnPage.map((group) => (windows.get(group.id) ?? []).map((entry) => {
         const open = signupsOpen(entry.start, entry.end, entry.leadMinutes, from)
         const slots = open ? visibleSlots.get(group.id)! : []
         let filled = 0
-        let signedUp = false
+        let signedUp = ownSignups.has(`${entry.event.eventId}:${entry.start.getTime()}`)
         for (const slot of slots) {
             const count = signupCounts.get(signupKey(entry.event.eventId, entry.start, slot.id))
             filled += count?.filled ?? 0

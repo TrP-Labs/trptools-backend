@@ -8,6 +8,7 @@ import { dataRedis } from '../utils/redis'
 import { GetMemberships, permissionCacheKey } from '../utils/groupPermission'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import type { Membership } from '../utils/membershipRule'
+import { Follows } from '../users/follows'
 import { Group_ } from '../groups/service'
 import { groupIndexKey } from '../rooms/service'
 import type { GroupModel } from '../groups/model'
@@ -51,12 +52,12 @@ export abstract class Dashboard {
      * reason it is absent everywhere else — including for a site admin who has
      * not turned admin mode on.
      */
-    static async get(session: session): Promise<DashboardModel.dashboardResponse> {
+    static async get(session: session, mode: 'user' | 'host' = 'user'): Promise<DashboardModel.dashboardResponse> {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
         const userId = session.user.userId
 
         const [all, pin] = await Promise.all([
-            Group_.getGroups(session),
+            mode === 'host' ? Group_.getGroups(session) : Follows.list(session),
             session.user.profile
                 ? Promise.resolve(session.user.profile.primaryGroupId)
                 : db.select({ primaryGroupId: users.primaryGroupId })
@@ -88,10 +89,10 @@ export abstract class Dashboard {
         // Permission cache entries and live room ids are both Redis strings.
         // Read them together so the home page spends one Upstash command on
         // this whole set rather than one per group plus another for rooms.
-        const permissionKeys = isSiteAdmin(session)
+        const permissionKeys = mode === 'user' || isSiteAdmin(session)
             ? []
             : groups.map((group) => permissionCacheKey(group.id, userId))
-        const cache = dataRedis.mget([
+        const cache = mode === 'user' ? Promise.resolve([] as Array<string | null>) : dataRedis.mget([
             ...permissionKeys,
             ...groups.map((group) => groupIndexKey(group.id))
         ]).catch(() => [] as Array<string | null>)
@@ -104,7 +105,7 @@ export abstract class Dashboard {
             ))
 
         const [schedules, rooms, reviews] = await Promise.all([
-            dashboardSchedules(groups, session, memberships, from, to, PER_GROUP).catch((error) => {
+            dashboardSchedules(groups, session, memberships, from, to, PER_GROUP, undefined, mode === 'user').catch((error) => {
                 console.error('[dashboard] batched schedule load failed', error)
                 return groups.map(() => [] as DashboardModel.upcomingShift[])
             }),
@@ -147,13 +148,11 @@ export abstract class Dashboard {
     /** Drivers use membership discovery, then the same fresh per-group checks as the home page. */
     static async shifts(session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
-        const groups = await Group_.getMemberGroups(session)
-        const memberships = isSiteAdmin(session)
-            ? Promise.resolve(new Map<string, Membership>())
-            : GetMemberships(session.user.userId, groups.map((group) => group.id))
+        const groups = await Follows.list(session)
+        const memberships = Promise.resolve(new Map<string, Membership>())
         const from = new Date()
         const to = new Date(from.getTime() + 30 * 24 * 60 * 60 * 1000)
-        const schedules = await dashboardSchedules(groups, session, memberships, from, to, 20)
+        const schedules = await dashboardSchedules(groups, session, memberships, from, to, 20, undefined, true)
         return {
             groups,
             occurrences: schedules.flat().sort((a, b) => a.start.getTime() - b.start.getTime()).slice(0, 60)

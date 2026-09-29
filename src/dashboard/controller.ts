@@ -10,11 +10,12 @@ import { sessionPlugin } from '../utils/authPlugin'
 export const dashboard = new Elysia({ prefix: '/dashboard', tags: ['Dashboard'] })
     .use(sessionPlugin)
 
-    .get('/home', async ({ session }) => {
+    .get('/home', async ({ session, query }) => {
         const described = await Session.Describe(session)
         if (!described.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
-        return { user: described.user, dashboard: await Dashboard.get(session) }
+        return { user: described.user, dashboard: await Dashboard.get(session, query.mode) }
     }, {
+        query: t.Object({ mode: t.Optional(t.Union([t.Literal('user'), t.Literal('host')])) }),
         response: { 200: DashboardModel.homeResponse, 401: globalModel.unauthorized },
         detail: { summary: 'Identity and signed-in home data in one request' }
     })
@@ -50,7 +51,8 @@ export const dashboard = new Elysia({ prefix: '/dashboard', tags: ['Dashboard'] 
         detail: { summary: 'Identity and shifts across every member group in one request' }
     })
 
-    .get('/', async ({ session }) => Dashboard.get(session), {
+    .get('/', async ({ session, query }) => Dashboard.get(session, query.mode), {
+        query: t.Object({ mode: t.Optional(t.Union([t.Literal('user'), t.Literal('host')])) }),
         response: {
             200: DashboardModel.dashboardResponse,
             401: globalModel.unauthorized

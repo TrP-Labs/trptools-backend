@@ -1,5 +1,6 @@
 export * from './enums'
 export * from './users'
+export * from './follows'
 export * from './auth'
 export * from './groups'
 export * from './routes'
