@@ -1,3 +1,4 @@
+import { aggregateStatistics } from '../statistics/collector'
 import { runNotificationTick } from '../notifications/scheduler'
 export function startBackgroundRunner() {
     let running = false
@@ -5,6 +6,7 @@ export function startBackgroundRunner() {
         if (running) return
         running = true
         try {
+            await aggregateStatistics()
             await runNotificationTick(async (kind, id) => {
                 if (kind === 'plan') {
                     const { planNotification } = await import('../notifications/scheduler')

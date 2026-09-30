@@ -7,6 +7,7 @@ import { isBotServiceRequest } from './utils/requestIdentity'
 
 import { authorizedBackgroundJob } from './background/auth'
 import { background } from './background/controller'
+import { statistics, statisticsCollector } from './statistics/controller'
 import { notifications } from './notifications/controller'
 import { auth } from './auth/controller'
 import { adminUsers, users } from './users/controller'
@@ -113,6 +114,8 @@ export const app = new Elysia()
     .get('/', () => ({ message: 'TrP Tools API', docs: `${env.BASE_URL}/docs` }), { detail: { hide: true } })
     .get('/health', () => ({ status: 'ok' }), { detail: { hide: true } })
 
+    .use(statisticsCollector)
+    .use(statistics)
     .use(auth)
     .use(users)
     .use(notifications)

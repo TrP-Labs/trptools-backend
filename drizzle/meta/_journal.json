@@ -218,6 +218,13 @@
       "when": 1790727625993,
       "tag": "0030_futuristic_cable",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790727972538,
+      "tag": "0031_curved_cardiac",
+      "breakpoints": true
     }
   ]
 }
