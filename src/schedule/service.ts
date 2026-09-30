@@ -241,6 +241,7 @@ export abstract class Schedule {
                     ...(body.name !== undefined && body.name !== event.name
                         ? { slug: await freeShiftSlug(event.groupId, body.name, eventId) }
                         : {}),
+                    notificationAt: new Date(),
                     updatedAt: new Date()
                 })
                 .where(eq(events.eventId, eventId))

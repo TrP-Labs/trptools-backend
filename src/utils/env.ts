@@ -52,6 +52,11 @@ export const env = {
     /** Key material for AES-GCM encryption of stored OAuth tokens and API keys. */
     ENCRYPTION_KEY: optional('ENCRYPTION_KEY', 'trptools-development-encryption-key'),
 
+    VAPID_PUBLIC_KEY: optional('VAPID_PUBLIC_KEY', ''),
+    VAPID_PRIVATE_KEY: optional('VAPID_PRIVATE_KEY', ''),
+    VAPID_SUBJECT: optional('VAPID_SUBJECT', ''),
+    BACKGROUND_JOB_TOKEN: optional('BACKGROUND_JOB_TOKEN', ''),
+
     // --- Discord ------------------------------------------------------------
     // The application id doubles as the OAuth client id and as the bot's own
     // user id, which is what channel permission checks resolve against.

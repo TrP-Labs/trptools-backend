@@ -50,3 +50,28 @@ The API supports Garage, R2, and other S3 services; `S3_ENDPOINT` is for uploads
 2. With Redis installed, run `bun run test:dispatch` to exercise both Redis clients.
 
 MIT — see [LICENSE](./LICENSE).
+
+### Browser shift reminders
+
+Generate VAPID keys with `bun run scripts/generate-vapid.ts`, set
+`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, a real `VAPID_SUBJECT` contact, and a
+random `BACKGROUND_JOB_TOKEN`. Keep the private key stable: changing it requires
+browsers to subscribe again. Push subscriptions are encrypted with
+`ENCRYPTION_KEY`; rotating it also requires re-enabling devices.
+
+Workers runs the minute cron in `wrangler.jsonc`. Each of up to five due series
+and twenty deliveries is dispatched to a separate authenticated Worker request,
+keeping encryption and recurrence out of page loads and bounding work per
+invocation. `BASE_URL` must resolve to this Worker. Docker/Bun uses the same
+planner and outbox from a minute timer in the API process. Multiple replicas are
+safe: delivery leases and unique occurrence keys prevent ordinary duplicate
+sends. A provider timeout after acceptance can cause a retry; browsers collapse
+it using the occurrence notification tag.
+
+Reminders arrive about ten minutes before a public shift starts. Following and
+reminders are separate opt-ins; neither grants access to private shifts or staff
+sheets. Push needs HTTPS (localhost works for development). iOS/iPadOS needs a
+Home Screen install. Unconfigured instances show an explanatory disabled control.
+Delivery retries are bounded to five attempts and fifteen minutes after the
+occurrence starts; 404/410 removes an expired device. History is pruned after a
+week. No notification job calls Roblox or Redis.

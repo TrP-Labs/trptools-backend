@@ -38,11 +38,13 @@ export const events = pgTable(
         hostLevel: integer('host_level').notNull().default(2),
 
         createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+        notificationAt: timestamp('notification_at', { withTimezone: true }).defaultNow(),
         updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
     },
     (table) => [
         unique('events_group_slug_unique').on(table.groupId, table.slug),
-        index('events_group_idx').on(table.groupId)
+        index('events_group_idx').on(table.groupId),
+        index('events_notification_due_idx').on(table.notificationAt)
     ]
 )
 
