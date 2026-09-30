@@ -76,3 +76,20 @@ Home Screen install. Unconfigured instances show an explanatory disabled control
 Delivery retries are bounded to five attempts and fifteen minutes after the
 occurrence starts; 404/410 removes an expired device. History is pruned after a
 week. No notification job calls Roblox or Redis.
+
+
+## Following, homepages, join links and statistics
+
+Personal feeds use explicit group follows rather than Roblox group discovery.
+Following is a reading preference and grants no access. User/host widget layouts
+and optional instant join redirects are saved in account preferences; defaults
+keep the join confirmation visible. Group managers configure a canonical Discord
+invite and the Roblox join-link toggle through group settings.
+
+Anonymous page counters are queued outside the response path and folded by the
+minute background runner. Statistics requires VIEW_DASHBOARD. Route preference
+breakdowns are aggregated with a five-vote minimum; built-in route preferences
+remain global. Apply migrations through 0031 for these features.
+
+See [engagement verification](docs/engagement-verification.md) for API/runtime
+coverage, browser screenshots and the measured limits of the 10 ms CPU target.

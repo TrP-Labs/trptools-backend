@@ -1,0 +1,192 @@
+{
+  "method": "Local workerd V8 sampling profiler, 100µs interval; warm requests; idle/root samples excluded; estimate, not production CPU billing.",
+  "results": [
+    {
+      "operation": "GET /dashboard/home?mode=user",
+      "samplesMs": [
+        9.216,
+        7.312,
+        8.443,
+        10.582,
+        9.06,
+        8.221,
+        9.295,
+        14.14,
+        8.882,
+        7.442
+      ],
+      "meanMs": 9.259300000000001,
+      "maxMs": 14.14
+    },
+    {
+      "operation": "GET /dashboard/home?mode=host",
+      "samplesMs": [
+        9.266,
+        10.071,
+        10.276,
+        7.978,
+        7.61,
+        10.027,
+        6.856,
+        7.096,
+        6.046,
+        6.472
+      ],
+      "meanMs": 8.1698,
+      "maxMs": 10.276
+    },
+    {
+      "operation": "GET /statistics/groups/:groupId",
+      "samplesMs": [
+        5.676,
+        5.771,
+        2.692,
+        9.762,
+        3.155,
+        9.647,
+        7.14,
+        9.004,
+        7.912,
+        9.934
+      ],
+      "meanMs": 7.0693,
+      "maxMs": 9.934
+    },
+    {
+      "operation": "GET /notifications/groups/:groupId",
+      "samplesMs": [
+        7.151,
+        3.451,
+        3.928,
+        3.605,
+        3.542,
+        3.693,
+        3.583,
+        5.785,
+        4.082,
+        1.634
+      ],
+      "meanMs": 4.0454,
+      "maxMs": 7.151
+    },
+    {
+      "operation": "PUT /users/me/follows/:groupId",
+      "samplesMs": [
+        6.952,
+        3.626,
+        5.482,
+        6.034,
+        5.485,
+        3.881,
+        8.639,
+        4.925,
+        5.566,
+        5.83
+      ],
+      "meanMs": 5.6419999999999995,
+      "maxMs": 8.639
+    },
+    {
+      "operation": "PATCH /users/me/preferences",
+      "samplesMs": [
+        2.728,
+        6.04,
+        4.343,
+        4.106,
+        4.096,
+        4.304,
+        6.967,
+        7.325,
+        4.12,
+        3.969
+      ],
+      "meanMs": 4.799799999999999,
+      "maxMs": 7.325
+    },
+    {
+      "operation": "POST /statistics/events",
+      "samplesMs": [
+        2.946,
+        1.631,
+        1.63,
+        1.884,
+        1.728,
+        1.774,
+        2.838,
+        2.62,
+        1.021,
+        1.831
+      ],
+      "meanMs": 1.9903000000000002,
+      "maxMs": 2.946
+    },
+    {
+      "operation": "GET /public/groups/:slug/join/discord",
+      "samplesMs": [
+        1.858,
+        3.99,
+        5.09,
+        2.196,
+        2.034,
+        3.803,
+        5.016,
+        5.161,
+        0.782,
+        4.365
+      ],
+      "meanMs": 3.4295,
+      "maxMs": 5.161
+    },
+    {
+      "operation": "POST /background/notification/plan/:eventId",
+      "samplesMs": [
+        1.456,
+        9.114,
+        7.065,
+        6.136,
+        5.9,
+        2.911,
+        8.393,
+        5.242,
+        5.999,
+        8.113
+      ],
+      "meanMs": 6.0329,
+      "maxMs": 9.114
+    },
+    {
+      "operation": "POST /background/notification/send/:jobId",
+      "samplesMs": [
+        6.697,
+        7.401,
+        7.961,
+        6.291,
+        7.305,
+        6.554,
+        5.748,
+        5.935,
+        5.018,
+        6.58
+      ],
+      "meanMs": 6.549000000000001,
+      "maxMs": 7.961
+    },
+    {
+      "operation": "POST /background/notifications/drain",
+      "samplesMs": [
+        1.266,
+        1.243,
+        1.233,
+        3.598,
+        1.381,
+        1.249,
+        4.145,
+        0,
+        3.36,
+        3.881
+      ],
+      "meanMs": 2.1356,
+      "maxMs": 4.145
+    }
+  ]
+}
