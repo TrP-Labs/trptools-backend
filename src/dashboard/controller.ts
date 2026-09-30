@@ -13,7 +13,7 @@ export const dashboard = new Elysia({ prefix: '/dashboard', tags: ['Dashboard'] 
     .get('/home', async ({ session, query }) => {
         const described = await Session.Describe(session)
         if (!described.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
-        return { user: described.user, dashboard: await Dashboard.get(session, query.mode) }
+        return { user: described.user, dashboard: await Dashboard.get(session, query.mode ?? described.user.homeMode) }
     }, {
         query: t.Object({ mode: t.Optional(t.Union([t.Literal('user'), t.Literal('host')])) }),
         response: { 200: DashboardModel.homeResponse, 401: globalModel.unauthorized },

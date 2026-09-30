@@ -115,3 +115,16 @@ test('internal jobs refuse ordinary sessions and malformed subscription bodies',
     expect((await call('/notifications/subscription', 'PUT', {})).status).toBe(400)
     expect((await call('/notifications/groups/not-a-uuid', 'PUT', { enabled: true })).status).toBe(400)
 })
+
+test('homepage layouts round-trip per account and reject privilege-shaped or duplicate widgets', async () => {
+    const homeLayout = { user: [{ id: 'today', width: 2 }, { id: 'my-shifts', width: 1 }], host: [{ id: 'reviews', width: 2 }] }
+    expect((await call('/users/me/preferences', 'PATCH', { homeLayout, homeMode: 'host' })).status).toBe(200)
+    expect((await call('/users/me/preferences')).data).toMatchObject({ homeLayout, homeMode: 'host' })
+    expect((await call('/auth/session')).data.user.homeLayout).toEqual(homeLayout)
+    expect((await call('/users/me/preferences', 'PATCH', { homeLayout: { ...homeLayout, user: [{ id: 'reviews', width: 1 }] } })).status).toBe(400)
+    expect((await call('/users/me/preferences', 'PATCH', { homeLayout: { ...homeLayout, user: [{ id: 'today', width: 1 }, { id: 'today', width: 1 }] } })).status).toBe(400)
+    expect((await call('/users/me/preferences', 'PATCH', { homeLayout: { ...homeLayout, user: [{ id: 'next', width: 3 }] } })).status).toBe(400)
+    expect((await call('/users/me/preferences', 'GET', undefined, otherToken)).data.homeLayout).not.toEqual(homeLayout)
+    // Host mode is a view preference, never a permission grant.
+    expect((await call('/dashboard/home?mode=host')).data.dashboard.groups).toEqual([])
+})

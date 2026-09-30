@@ -24,12 +24,14 @@ export type SessionUser = {
 }
 
 export type SessionProfile = Pick<User,
+    | 'homeMode' | 'homeLayout'
     | 'createdAt' | 'primaryGroupId' | 'cachedUsername' | 'cachedDisplayName'
     | 'cachedAvatar' | 'cachedAt' | 'theme' | 'locale' | 'timezone'
     | 'discordId' | 'discordUsername' | 'discordAvatar' | 'discordLinkedAt'
 >
 
 const profileColumns = {
+    homeMode: users.homeMode, homeLayout: users.homeLayout,
     createdAt: users.createdAt,
     primaryGroupId: users.primaryGroupId,
     cachedUsername: users.cachedUsername,
@@ -47,11 +49,11 @@ const profileColumns = {
 
 function profileFrom(row: SessionProfile): SessionProfile {
     const {
-        createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
+        homeMode, homeLayout, createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
         theme, locale, timezone, discordId, discordUsername, discordAvatar, discordLinkedAt
     } = row
     return {
-        createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
+        homeMode, homeLayout, createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
         theme, locale, timezone, discordId, discordUsername, discordAvatar, discordLinkedAt
     }
 }

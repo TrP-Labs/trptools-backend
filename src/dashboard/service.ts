@@ -8,6 +8,7 @@ import { dataRedis } from '../utils/redis'
 import { GetMemberships, permissionCacheKey } from '../utils/groupPermission'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import type { Membership } from '../utils/membershipRule'
+import { UserService } from '../users/service'
 import { Follows } from '../users/follows'
 import { Group_ } from '../groups/service'
 import { groupIndexKey } from '../rooms/service'
@@ -56,17 +57,18 @@ export abstract class Dashboard {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
         const userId = session.user.userId
 
-        const [all, pin] = await Promise.all([
+        const [all, pin, routePreferences] = await Promise.all([
             mode === 'host' ? Group_.getGroups(session) : Follows.list(session),
             session.user.profile
                 ? Promise.resolve(session.user.profile.primaryGroupId)
                 : db.select({ primaryGroupId: users.primaryGroupId })
                     .from(users).where(eq(users.id, userId)).limit(1)
-                    .then((rows) => rows[0]?.primaryGroupId ?? null)
+                    .then((rows) => rows[0]?.primaryGroupId ?? null),
+            mode === 'user' ? UserService.getRoutePreferences(session) : Promise.resolve([])
         ])
 
         if (all.length === 0) {
-            return { primaryGroupId: null, groups: [], groupTotal: 0, shifts: [], reviews: [] }
+            return { mode, routePreferences, signedUpShifts: [], primaryGroupId: null, groups: [], groupTotal: 0, shifts: [], reviews: [] }
         }
 
         // A pin survives losing access to what it points at — an afternoon
@@ -79,6 +81,7 @@ export abstract class Dashboard {
             .sort((a, b) => Number(b.id === primaryGroupId) - Number(a.id === primaryGroupId))
             .slice(0, MAX_GROUPS)
 
+        const scheduleGroups = mode === 'user' ? all : groups
         const from = new Date()
         const to = new Date(from.getTime() + HORIZON_DAYS * 24 * 60 * 60 * 1000)
 
@@ -105,7 +108,7 @@ export abstract class Dashboard {
             ))
 
         const [schedules, rooms, reviews] = await Promise.all([
-            dashboardSchedules(groups, session, memberships, from, to, PER_GROUP, undefined, mode === 'user').catch((error) => {
+            dashboardSchedules(scheduleGroups, session, memberships, from, to, mode === 'user' ? 20 : PER_GROUP, undefined, mode === 'user').catch((error) => {
                 console.error('[dashboard] batched schedule load failed', error)
                 return groups.map(() => [] as DashboardModel.upcomingShift[])
             }),
@@ -126,12 +129,14 @@ export abstract class Dashboard {
 
         // `schedules` was built by mapping `groups`, so the two line up.
         const nextByGroup = new Map<string, DashboardModel.upcomingShift>()
-        groups.forEach((group, index) => {
+        scheduleGroups.forEach((group, index) => {
             const next = schedules[index]?.[0]
             if (next) nextByGroup.set(group.id, next)
         })
 
         return {
+            mode, routePreferences,
+            signedUpShifts: schedules.flat().filter((shift) => shift.signedUp).sort((a, b) => a.start.getTime() - b.start.getTime()).slice(0, 60),
             primaryGroupId,
             groupTotal: all.length,
             groups: groups.map((group) => ({

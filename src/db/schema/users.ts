@@ -1,5 +1,6 @@
+import { DEFAULT_HOME_LAYOUT, type HomeLayout } from '../../users/homeLayout'
 import { relations } from 'drizzle-orm'
-import { bigint, boolean, index, pgTable, text, timestamp, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
+import { bigint, boolean, index, jsonb, pgTable, text, timestamp, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { sessions, apiKeys } from './auth'
 import { groups } from './groups'
 import { globalRoutePreferences, routePreferences } from './routes'
@@ -65,6 +66,8 @@ export const users = pgTable(
         bannedBy: uuid('banned_by').references((): AnyPgColumn => users.id, { onDelete: 'set null' }),
 
         // Preferences
+        homeMode: text('home_mode').$type<'user' | 'host'>().notNull().default('user'),
+        homeLayout: jsonb('home_layout').$type<HomeLayout>().notNull().default(DEFAULT_HOME_LAYOUT),
         theme: text('theme').notNull().default('dim'),
         /**
          * The interface language, or null for "follow the browser".

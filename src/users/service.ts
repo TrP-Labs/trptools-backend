@@ -13,6 +13,7 @@ import { isBanned } from '../utils/moderation'
 import { Roblox } from '../utils/roblox'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { presentDiscord, Session } from '../auth/service'
+import { validHomeLayout } from './homeLayout'
 import { UserModel } from './model'
 import { presentTranslations } from '../utils/translations'
 
@@ -173,6 +174,8 @@ export abstract class UserService {
 
         const [user] = await db
             .select({
+                homeMode: users.homeMode,
+                homeLayout: users.homeLayout,
                 theme: users.theme,
                 locale: users.locale,
                 timezone: users.timezone,
@@ -209,6 +212,8 @@ export abstract class UserService {
         // somebody remembered to redeploy the API too. A tag that is
         // well-formed but not shipped is harmless: the frontend's `isLocale`
         // rejects it at render and falls back, exactly as it does for null.
+        if (body.homeLayout && !validHomeLayout(body.homeLayout)) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
+
         if (body.locale != null && !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(body.locale)) {
             throw status(400, 'Bad Request' satisfies globalModel.badRequest)
         }
