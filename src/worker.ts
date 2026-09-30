@@ -26,11 +26,13 @@ export default {
             const response = await fetch(`${env.BASE_URL}/background/notification/${kind}/${id}`, {
                 method: 'POST', headers: { authorization: `Bearer ${env.BACKGROUND_JOB_TOKEN}` }, signal: AbortSignal.timeout(20_000)
             })
+            await response.body?.cancel()
             if (!response.ok) throw new Error(`Background notification ${kind}: ${response.status}`)
         }, new Date(), async () => {
             const response = await fetch(`${env.BASE_URL}/background/notifications/drain`, {
                 method: 'POST', headers: { authorization: `Bearer ${env.BACKGROUND_JOB_TOKEN}` }, signal: AbortSignal.timeout(120_000)
             })
+            await response.body?.cancel()
             if (!response.ok) throw new Error(`Notification drain: ${response.status}`)
         }))
     },

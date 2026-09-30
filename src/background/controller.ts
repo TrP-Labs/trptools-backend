@@ -10,13 +10,14 @@ export const background = new Elysia({ prefix: '/background' })
             const response = await fetch(`${env.BASE_URL}/background/notification/send/${id}`, {
                 method: 'POST', headers: { authorization: `Bearer ${env.BACKGROUND_JOB_TOKEN}` }, signal: AbortSignal.timeout(20_000)
             })
+            await response.body?.cancel()
             if (!response.ok) throw new Error(`Notification send: ${response.status}`)
         })
         const hop = Number(query.hop ?? 0)
         if (more && hop < 14) {
             const next = fetch(`${env.BASE_URL}/background/notifications/drain?hop=${hop + 1}`, {
                 method: 'POST', headers: { authorization: `Bearer ${env.BACKGROUND_JOB_TOKEN}` }, signal: AbortSignal.timeout(120_000)
-            }).then(response => { if (!response.ok) throw new Error(`Notification drain: ${response.status}`) })
+            }).then(async response => { await response.body?.cancel(); if (!response.ok) throw new Error(`Notification drain: ${response.status}`) })
                 .catch(error => console.error('[notifications] drain deferred to next tick', error instanceof Error ? error.message : 'unknown'))
             finishRequestCleanup(request, next)
         }
