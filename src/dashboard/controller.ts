@@ -48,7 +48,7 @@ export const dashboard = new Elysia({ prefix: '/dashboard', tags: ['Dashboard'] 
         return { user: described.user, ...await Dashboard.shifts(session) }
     }, {
         response: { 200: DashboardModel.shiftsPageResponse, 401: globalModel.unauthorized },
-        detail: { summary: 'Identity and shifts across every member group in one request' }
+        detail: { summary: 'Identity and public shifts across followed groups in one request' }
     })
 
     .get('/', async ({ session, query }) => Dashboard.get(session, query.mode), {
@@ -60,8 +60,7 @@ export const dashboard = new Elysia({ prefix: '/dashboard', tags: ['Dashboard'] 
         detail: {
             summary: 'Everything the signed-in home page shows',
             description:
-                'The groups you can act in, your next shifts across all of them, and the application forms ' +
-                'waiting on a decision. Only groups you hold a rank in appear — a site admin sees the whole ' +
-                'instance here only while admin mode is on.'
+                'User mode shows followed groups and public shifts without membership discovery. Host mode shows ' +
+                'authorized groups, staffing summaries and review queues; admin bypass requires admin mode.'
         }
     })

@@ -62,7 +62,7 @@ async function withFreshCache(group: Group, credentialsFor: () => Promise<Roblox
  * doing so. The Roblox name is the floor; `Group <id>` is only reached when
  * Roblox has never been readable for this group at all.
  */
-export function groupName(group: Group): string {
+export function groupName(group: Pick<Group, 'name' | 'cachedName' | 'robloxId'>): string {
     return group.name?.trim() || group.cachedName || `Group ${group.robloxId}`
 }
 
@@ -114,7 +114,18 @@ function present(group: Group, membership: Membership, images: Map<string, strin
     }
 }
 
-export function summarise(group: Group, membership: Membership): GroupModel.groupSummary {
+export const GROUP_SUMMARY_COLUMNS = {
+    id: groups.id, robloxId: groups.robloxId, slug: groups.slug, name: groups.name,
+    cachedName: groups.cachedName, cachedIcon: groups.cachedIcon, cachedMembers: groups.cachedMembers,
+    tagline: groups.tagline, sourceLocale: groups.sourceLocale, translations: groups.translations,
+    accentColor: groups.accentColor, visibility: groups.visibility
+}
+function prepareAdminGroups() {
+    return db.select(GROUP_SUMMARY_COLUMNS).from(groups).orderBy(asc(groups.cachedName)).prepare('trptools_admin_groups')
+}
+let adminGroupQuery: ReturnType<typeof prepareAdminGroups> | undefined
+
+export function summarise(group: Pick<Group, 'id' | 'slug' | 'robloxId' | 'name' | 'cachedName' | 'cachedIcon' | 'cachedMembers' | 'tagline' | 'sourceLocale' | 'translations' | 'accentColor' | 'visibility'>, membership: Membership): GroupModel.groupSummary {
     return {
         id: group.id,
         slug: group.slug,
@@ -174,7 +185,7 @@ export abstract class Group_ {
         // whole point of the switch, and why this list is the one place the
         // difference is most obvious.
         if (isSiteAdmin(session)) {
-            const all = await db.select().from(groups).orderBy(asc(groups.cachedName))
+            const all = await (adminGroupQuery ??= prepareAdminGroups()).execute()
             return all.map((entry) => summarise(entry, ELEVATED))
         }
 
@@ -221,7 +232,7 @@ export abstract class Group_ {
         // The same bypass as everywhere else, and for the same reason (§5.1):
         // an elevated admin operates the instance.
         if (isSiteAdmin(session)) {
-            const all = await db.select().from(groups).orderBy(asc(groups.cachedName))
+            const all = await (adminGroupQuery ??= prepareAdminGroups()).execute()
             return all.map((entry) => summarise(entry, ELEVATED))
         }
 

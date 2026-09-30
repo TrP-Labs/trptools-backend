@@ -1,20 +1,25 @@
 import { status } from 'elysia'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, ne, sql } from 'drizzle-orm'
 import db from '../db'
 import { groupFollows, groups } from '../db/schema'
-import { summarise } from '../groups/service'
+import { summarise, GROUP_SUMMARY_COLUMNS } from '../groups/service'
 import { requireUser } from '../utils/authPlugin'
 import { NON_MEMBER } from '../utils/membershipRule'
 import type { session } from '../utils/sessionVerifier'
 import { databaseLimitReached } from '../utils/databaseLimit'
 
+function prepareFollows() {
+    return db.select({ group: GROUP_SUMMARY_COLUMNS }).from(groupFollows)
+        .innerJoin(groups, eq(groups.id, groupFollows.groupId))
+        .where(and(eq(groupFollows.userId, sql.placeholder('userId')), ne(groups.visibility, 'PRIVATE'), ne(groups.moderation, 'HIDDEN')))
+        .orderBy(groupFollows.createdAt).limit(100).prepare('trptools_follows')
+}
+let followQuery: ReturnType<typeof prepareFollows> | undefined
+
 export abstract class Follows {
     static async list(session: session) {
         const user = requireUser(session)
-        const rows = await db.select({ group: groups }).from(groupFollows)
-            .innerJoin(groups, eq(groups.id, groupFollows.groupId))
-            .where(and(eq(groupFollows.userId, user.userId), ne(groups.visibility, 'PRIVATE'), ne(groups.moderation, 'HIDDEN')))
-            .orderBy(groupFollows.createdAt).limit(100)
+        const rows = await (followQuery ??= prepareFollows()).execute({ userId: user.userId })
         // Following is a reading preference. It never grants group permissions.
         return rows.map(({ group }) => summarise(group, NON_MEMBER))
     }

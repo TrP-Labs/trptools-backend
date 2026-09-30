@@ -14,6 +14,7 @@ process.env.NODE_ENV = 'test'
 
 const group = {
     id: '00000000-0000-4000-8000-000000000002', robloxId: '123', slug: 'test-group',
+    discordInvite: '', robloxJoinEnabled: true,
     name: null, cachedName: 'Test Group', cachedAt: new Date(), cachedIcon: null,
     cachedDescription: '', cachedMembers: 10, visibility: 'PUBLIC', tagline: '', about: '',
     sourceLocale: 'en', translations: {}, accentColor: '#4287f5', bannerMediaId: null,
@@ -71,6 +72,7 @@ mock.module('../src/db', () => ({ default: {
             from(value: Parameters<typeof getTableName>[0]) { table = getTableName(value); return this },
             where() { return this }, innerJoin() { return this }, leftJoin() { return this },
             orderBy() { return this }, groupBy() { return this }, limit() { return this },
+            prepare() { return { execute: () => Promise.resolve().then(rows) } },
             then(resolve: (value: unknown[]) => unknown, reject?: (error: unknown) => unknown) {
                 return Promise.resolve().then(rows).then(resolve, reject)
             }

@@ -1,8 +1,9 @@
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { status } from 'elysia'
 import db from '../db'
 import { databaseRows } from '../db/rows'
-import { findGroup } from '../groups/service'
+import { groups } from '../db/schema'
+import { isUuid } from '../utils/slug'
 import { assertGroupPermission } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
 import type { session } from '../utils/sessionVerifier'
@@ -12,7 +13,7 @@ const countKeys = { group_view: 'groupViews', route_view: 'routeViews', depot_vi
 const empty = () => ({ groupViews: 0, routeViews: 0, depotViews: 0, shiftViews: 0, robloxViews: 0, discordViews: 0, robloxClicks: 0, discordClicks: 0 })
 export async function groupStatistics(groupId: string, days: number, session: session): Promise<StatisticsModel.response> {
     await assertGroupPermission(session, groupId, PERM.VIEW_DASHBOARD)
-    const group = await findGroup(groupId)
+    const [group] = await db.select({ id: groups.id }).from(groups).where(isUuid(groupId) ? eq(groups.id, groupId) : eq(groups.slug, groupId)).limit(1)
     if (!group) throw status(404, 'Not Found')
     const today = new Date(); today.setUTCHours(0, 0, 0, 0)
     const start = new Date(today.getTime() - (days - 1) * 86400_000).toISOString().slice(0, 10)

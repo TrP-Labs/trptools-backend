@@ -1,5 +1,5 @@
 import { status } from 'elysia'
-import { and, count, eq, inArray } from 'drizzle-orm'
+import { and, count, eq, sql } from 'drizzle-orm'
 import db from '../db'
 import { applications, applicationSubmissions, users } from '../db/schema'
 import { globalModel } from '../utils/globalModel'
@@ -39,6 +39,36 @@ const TOTAL_SHIFTS = 12
  * such lookup.
  */
 const MAX_GROUPS = 12
+
+function prepareReviewQueue() {
+    return db
+        .select({
+            applicationId: applications.id,
+            name: applications.name,
+            translations: applications.translations,
+            color: applications.color,
+            groupId: applications.groupId,
+            pendingCount: count(applicationSubmissions.id)
+        })
+        .from(applications)
+        .innerJoin(
+            applicationSubmissions,
+            and(
+                eq(applicationSubmissions.applicationId, applications.id),
+                eq(applicationSubmissions.status, 'PENDING')
+            )
+        )
+        .where(sql`${applications.groupId} = ANY(${sql.placeholder('groupIds')}::uuid[])`)
+        .groupBy(
+            applications.id,
+            applications.name,
+            applications.translations,
+            applications.color,
+            applications.groupId
+        )
+        .prepare('trptools_review_queue')
+}
+let reviewQuery: ReturnType<typeof prepareReviewQueue> | undefined
 
 export abstract class Dashboard {
     /**
@@ -125,7 +155,7 @@ export abstract class Dashboard {
         const shifts = schedules
             .flat()
             .sort((a, b) => a.start.getTime() - b.start.getTime())
-            .slice(0, TOTAL_SHIFTS)
+            .slice(0, mode === 'user' ? 60 : TOTAL_SHIFTS)
 
         // `schedules` was built by mapping `groups`, so the two line up.
         const nextByGroup = new Map<string, DashboardModel.upcomingShift>()
@@ -150,7 +180,7 @@ export abstract class Dashboard {
         }
     }
 
-    /** Drivers use membership discovery, then the same fresh per-group checks as the home page. */
+    /** Drivers choose followed groups; this public feed never asks Roblox for membership. */
     static async shifts(session: session) {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
         const groups = await Follows.list(session)
@@ -178,36 +208,7 @@ export abstract class Dashboard {
     ): Promise<DashboardModel.pendingReview[]> {
         if (manageable.length === 0) return []
 
-        const rows = await db
-            .select({
-                applicationId: applications.id,
-                name: applications.name,
-                translations: applications.translations,
-                color: applications.color,
-                groupId: applications.groupId,
-                pendingCount: count(applicationSubmissions.id)
-            })
-            .from(applications)
-            .innerJoin(
-                applicationSubmissions,
-                and(
-                    eq(applicationSubmissions.applicationId, applications.id),
-                    eq(applicationSubmissions.status, 'PENDING')
-                )
-            )
-            .where(
-                inArray(
-                    applications.groupId,
-                    manageable.map((group) => group.id)
-                )
-            )
-            .groupBy(
-                applications.id,
-                applications.name,
-                applications.translations,
-                applications.color,
-                applications.groupId
-            )
+        const rows = await (reviewQuery ??= prepareReviewQueue()).execute({ groupIds: manageable.map(group => group.id) })
 
         const byId = new Map(manageable.map((group) => [group.id, group]))
 

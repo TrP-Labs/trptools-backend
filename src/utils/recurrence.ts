@@ -10,12 +10,30 @@ import { Frequency, RRule, rrulestr } from 'rrule'
 
 export function parseRule(rule: string, dtstart: Date): RRule | null {
     try {
-        const parsed = rrulestr(rule, { dtstart, forceset: false })
+        const parsed = rrulestr(rule, { dtstart, forceset: false, cache: false })
         // rrulestr can hand back an RRuleSet; both expose the methods we use.
         return parsed as RRule
     } catch {
         return null
     }
+}
+
+// Cache parsing only, never occurrence windows or permission data. The key
+// includes the start instant, so editing either field takes effect immediately.
+// Disable rrule's unbounded result cache and cap retained parsers per isolate.
+const parsedRules = new Map<string, RRule | null>()
+function cachedRule(rule: string, dtstart: Date): RRule | null {
+    const key = `${dtstart.getTime()}:${rule}`
+    if (parsedRules.has(key)) {
+        const parsed = parsedRules.get(key)!
+        parsedRules.delete(key)
+        parsedRules.set(key, parsed)
+        return parsed
+    }
+    const parsed = parseRule(rule, new Date(dtstart))
+    if (parsedRules.size >= 128) parsedRules.delete(parsedRules.keys().next().value!)
+    parsedRules.set(key, parsed)
+    return parsed
 }
 
 export function isValidRule(rule: string): boolean {
@@ -112,10 +130,10 @@ function calendarStarts(parsed: RRule, from: Date, to: Date, limit: number): Dat
 export function occurrenceStartsBetween(
     rule: string, dtstart: Date, from: Date, to: Date, limit = Number.POSITIVE_INFINITY
 ): Date[] {
-    const parsed = parseRule(rule, dtstart)
+    const parsed = cachedRule(rule, dtstart)
     if (!parsed || from > to) return []
     try {
-        return calendarStarts(parsed, from, to, limit) ?? parsed.between(from, to, true).slice(0, limit)
+        return calendarStarts(parsed, from, to, limit) ?? parsed.between(from, to, true, (_date, index) => index < limit)
     } catch {
         return []
     }
@@ -142,7 +160,7 @@ export function upcomingOccurrences(
     from: Date,
     count: number
 ): Occurrence[] {
-    const parsed = parseRule(rule, dtstart)
+    const parsed = cachedRule(rule, dtstart)
     if (!parsed) return []
 
     try {
@@ -205,7 +223,7 @@ export function activeOccurrence(
 
 /** A human summary such as "every week on Monday". */
 export function describeRule(rule: string, dtstart: Date): string {
-    const parsed = parseRule(rule, dtstart)
+    const parsed = cachedRule(rule, dtstart)
     if (!parsed) return 'Invalid recurrence'
 
     try {

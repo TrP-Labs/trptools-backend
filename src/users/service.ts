@@ -1,5 +1,5 @@
 import { status } from 'elysia'
-import { and, desc, eq, gt, ilike, isNotNull, isNull, ne, or } from 'drizzle-orm'
+import { and, desc, eq, gt, ilike, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import db from '../db'
 import { globalRoutePreferences, groups, routePreferences, routes, users } from '../db/schema'
@@ -16,6 +16,34 @@ import { presentDiscord, Session } from '../auth/service'
 import { validHomeLayout } from './homeLayout'
 import { UserModel } from './model'
 import { presentTranslations } from '../utils/translations'
+
+function prepareCustomPreferences() {
+    return db
+        .select({
+            routeId: routes.id,
+            groupId: routes.groupId,
+            name: routes.name,
+            translations: routes.translations,
+            color: routes.color,
+            preference: routePreferences.preference
+        })
+        .from(routePreferences)
+        .innerJoin(routes, eq(routePreferences.routeId, routes.id))
+        .where(eq(routePreferences.userId, sql.placeholder('userId')))
+        .prepare('trptools_custom_preferences')
+}
+let customPreferenceQuery: ReturnType<typeof prepareCustomPreferences> | undefined
+function prepareGlobalPreferences() {
+    return db
+        .select({
+            name: globalRoutePreferences.routeName,
+            preference: globalRoutePreferences.preference
+        })
+        .from(globalRoutePreferences)
+        .where(eq(globalRoutePreferences.userId, sql.placeholder('userId')))
+        .prepare('trptools_global_preferences')
+}
+let globalPreferenceQuery: ReturnType<typeof prepareGlobalPreferences> | undefined
 
 export abstract class UserService {
     static async getProfile(userId: string, session: session): Promise<UserModel.publicProfile> {
@@ -239,25 +267,8 @@ export abstract class UserService {
         const userId = session.user.userId
 
         const [custom, global] = await Promise.all([
-            db
-                .select({
-                    routeId: routes.id,
-                    groupId: routes.groupId,
-                    name: routes.name,
-                    translations: routes.translations,
-                    color: routes.color,
-                    preference: routePreferences.preference
-                })
-                .from(routePreferences)
-                .innerJoin(routes, eq(routePreferences.routeId, routes.id))
-                .where(eq(routePreferences.userId, userId)),
-            db
-                .select({
-                    name: globalRoutePreferences.routeName,
-                    preference: globalRoutePreferences.preference
-                })
-                .from(globalRoutePreferences)
-                .where(eq(globalRoutePreferences.userId, userId))
+            (customPreferenceQuery ??= prepareCustomPreferences()).execute({ userId }),
+            (globalPreferenceQuery ??= prepareGlobalPreferences()).execute({ userId })
         ])
 
         return [
