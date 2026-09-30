@@ -27,3 +27,9 @@ S3_REGION=auto
 SITE_ADMINS=
 SESSION_TTL_DAYS=30
 # COOKIE_DOMAIN=.example.com
+
+# Optional push notifications; set these as secrets in production.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=
+BACKGROUND_JOB_TOKEN=

@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, count, eq, sql } from 'drizzle-orm'
 import db from '../db'
 import {
     events, groups, shiftSignups, signupSheetRanks, signupSheets, signupSlotRanks, signupSlots,
@@ -26,6 +26,66 @@ type VisibleSlot = { id: string; capacity: number }
 const signupKey = (eventId: string, start: Date, slotId: string) =>
     `${eventId}:${start.getTime()}:${slotId}`
 
+function prepareEvents() {
+    return db.select({
+        event: events,
+        visibility: groups.visibility,
+        showShifts: groups.showShifts,
+        leadMinutes: groups.signupLeadMinutes
+        })
+        .from(events)
+        .innerJoin(groups, eq(events.groupId, groups.id))
+        .where(sql`${events.groupId} = ANY(${sql.placeholder('groupIds')}::uuid[])`)
+        .prepare('trptools_dashboard_events')
+}
+let eventQuery: ReturnType<typeof prepareEvents> | undefined
+
+function prepareSlots() {
+    return db.select({
+        groupId: signupSheets.groupId,
+        slotId: signupSlots.id,
+        capacity: signupSlots.capacity,
+        rankId: sql<string | null>`coalesce(${signupSheetRanks.rankId}, ${signupSlotRanks.rankId})`
+        })
+        .from(signupSheets)
+        .innerJoin(signupSlots, eq(signupSlots.sheetId, signupSheets.id))
+        .leftJoin(signupSheetRanks, and(
+            eq(signupSheets.uniformRanks, true), eq(signupSheetRanks.sheetId, signupSheets.id)
+        ))
+        .leftJoin(signupSlotRanks, and(
+            eq(signupSheets.uniformRanks, false), eq(signupSlotRanks.slotId, signupSlots.id)
+        ))
+        .where(and(eq(signupSheets.enabled, true), sql`${signupSheets.groupId} = ANY(${sql.placeholder('groupIds')}::uuid[])`))
+        .prepare('trptools_dashboard_slots')
+}
+let slotQuery: ReturnType<typeof prepareSlots> | undefined
+
+function prepareOwn() {
+    return db.select({ eventId: shiftSignups.eventId, occurrence: shiftSignups.occurrence })
+        .from(shiftSignups) .where(sql`${shiftSignups.eventId} = ANY(${sql.placeholder('eventIds')}::uuid[])
+            AND (${shiftSignups.userId} = ${sql.placeholder('userId')}::uuid OR ${shiftSignups.discordUserId} = ${sql.placeholder('discordId')})
+            AND ${shiftSignups.occurrence} >= ${sql.placeholder('from')}::timestamptz AND ${shiftSignups.occurrence} <= ${sql.placeholder('to')}::timestamptz`)
+        .prepare('trptools_dashboard_own_signups')
+}
+let ownQuery: ReturnType<typeof prepareOwn> | undefined
+
+function prepareCounts() {
+    return db.select({
+        eventId: shiftSignups.eventId,
+        occurrence: shiftSignups.occurrence,
+        slotId: shiftSignups.slotId,
+        filled: count(shiftSignups.id),
+        signedUp: sql<boolean>`coalesce(bool_or(${shiftSignups.userId} = ${sql.placeholder('userId')}), false)`
+        })
+        .from(shiftSignups)
+        .where(sql`${shiftSignups.slotId} = ANY(${sql.placeholder('slotIds')}::uuid[])
+            AND ${shiftSignups.eventId} = ANY(${sql.placeholder('eventIds')}::uuid[])
+            AND ${shiftSignups.occurrence} >= ${sql.placeholder('from')}::timestamptz AND ${shiftSignups.occurrence} <= ${sql.placeholder('to')}::timestamptz`)
+        .groupBy(shiftSignups.eventId, shiftSignups.occurrence, shiftSignups.slotId)
+        .prepare('trptools_dashboard_signup_counts')
+}
+let countQuery: ReturnType<typeof prepareCounts> | undefined
+
 /**
  * The home page needs counts, not complete signup forms. Read all its groups'
  * events, visible slots and signup counts in three batched database queries.
@@ -38,31 +98,24 @@ export async function dashboardSchedules(
     from: Date,
     to: Date,
     perGroup: number,
-    eventCounts?: Map<string, number>
+    eventCounts?: Map<string, number>,
+    publicOnly = false
 ): Promise<DashboardModel.upcomingShift[][]> {
     if (!session.user || groupsOnPage.length === 0) return groupsOnPage.map(() => [])
 
     const groupIds = groupsOnPage.map((group) => group.id)
     const [memberships, rows] = await Promise.all([
         membershipsPromise,
-        db.select({
-            event: events,
-            visibility: groups.visibility,
-            showShifts: groups.showShifts,
-            leadMinutes: groups.signupLeadMinutes
-        })
-            .from(events)
-            .innerJoin(groups, eq(events.groupId, groups.id))
-            .where(inArray(events.groupId, groupIds))
+        (eventQuery ??= prepareEvents()).execute({ groupIds })
     ])
 
-    const elevated = isSiteAdmin(session)
+    const elevated = !publicOnly && isSiteAdmin(session)
 
     const groupById = new Map(groupsOnPage.map((group) => [group.id, group]))
     const windows = new Map<string, WindowEntry[]>(groupIds.map((id) => [id, []]))
     for (const row of rows) {
         const group = groupById.get(row.event.groupId)!
-        const isMember = elevated || isGroupMember(memberships.get(group.id)!)
+        const isMember = elevated || (!publicOnly && isGroupMember(memberships.get(group.id)!))
         if (!isMember && (row.visibility === 'PRIVATE' || !row.showShifts || row.event.visibility !== 'PUBLIC')) {
             continue
         }
@@ -91,7 +144,7 @@ export async function dashboardSchedules(
     }
 
     const memberGroupIds = groupIds.filter((id) =>
-        windows.get(id)!.length > 0 && (elevated || isGroupMember(memberships.get(id)!))
+        !publicOnly && windows.get(id)!.length > 0 && (elevated || isGroupMember(memberships.get(id)!))
     )
     const allSlots = new Map<string, { groupId: string; capacity: number; rankIds: Set<string> }>()
 
@@ -99,21 +152,7 @@ export async function dashboardSchedules(
         // Only the rank list in force joins each slot. This avoids four serial
         // sheet queries per group and never loads names or translations that
         // the home card cannot display.
-        const slotRows = await db.select({
-            groupId: signupSheets.groupId,
-            slotId: signupSlots.id,
-            capacity: signupSlots.capacity,
-            rankId: sql<string | null>`coalesce(${signupSheetRanks.rankId}, ${signupSlotRanks.rankId})`
-        })
-            .from(signupSheets)
-            .innerJoin(signupSlots, eq(signupSlots.sheetId, signupSheets.id))
-            .leftJoin(signupSheetRanks, and(
-                eq(signupSheets.uniformRanks, true), eq(signupSheetRanks.sheetId, signupSheets.id)
-            ))
-            .leftJoin(signupSlotRanks, and(
-                eq(signupSheets.uniformRanks, false), eq(signupSlotRanks.slotId, signupSlots.id)
-            ))
-            .where(and(eq(signupSheets.enabled, true), inArray(signupSheets.groupId, memberGroupIds)))
+        const slotRows = await (slotQuery ??= prepareSlots()).execute({ groupIds: memberGroupIds })
 
         for (const row of slotRows) {
             let slot = allSlots.get(row.slotId)
@@ -142,21 +181,9 @@ export async function dashboardSchedules(
         const slotIds = [...new Set(openEntries.flatMap((entry) => visibleSlots.get(entry.group.id)!.map((slot) => slot.id)))]
         const eventIds = [...new Set(openEntries.map((entry) => entry.event.eventId))]
         const starts = openEntries.map((entry) => entry.start.getTime())
-        const counts = await db.select({
-            eventId: shiftSignups.eventId,
-            occurrence: shiftSignups.occurrence,
-            slotId: shiftSignups.slotId,
-            filled: count(shiftSignups.id),
-            signedUp: sql<boolean>`coalesce(bool_or(${shiftSignups.userId} = ${session.user.userId}), false)`
+        const counts = await (countQuery ??= prepareCounts()).execute({ slotIds, eventIds,
+            userId: session.user.userId, from: new Date(Math.min(...starts)).toISOString(), to: new Date(Math.max(...starts)).toISOString()
         })
-            .from(shiftSignups)
-            .where(and(
-                inArray(shiftSignups.slotId, slotIds),
-                inArray(shiftSignups.eventId, eventIds),
-                gte(shiftSignups.occurrence, new Date(Math.min(...starts))),
-                lte(shiftSignups.occurrence, new Date(Math.max(...starts)))
-            ))
-            .groupBy(shiftSignups.eventId, shiftSignups.occurrence, shiftSignups.slotId)
 
         for (const row of counts) {
             signupCounts.set(signupKey(row.eventId, row.occurrence, row.slotId), {
@@ -165,11 +192,20 @@ export async function dashboardSchedules(
         }
     }
 
+    const ownSignups = new Set<string>()
+    if (publicOnly && [...windows.values()].some((entries) => entries.length > 0)) {
+        const own = await (ownQuery ??= prepareOwn()).execute({
+            eventIds: [...new Set([...windows.values()].flat().map(entry => entry.event.eventId))], userId: session.user.userId,
+            discordId: session.user.profile?.discordId ?? null, from: new Date(from.getTime() - 24 * 60 * 60_000).toISOString(), to: to.toISOString()
+        })
+        for (const row of own) ownSignups.add(`${row.eventId}:${row.occurrence.getTime()}`)
+    }
+
     return groupsOnPage.map((group) => (windows.get(group.id) ?? []).map((entry) => {
         const open = signupsOpen(entry.start, entry.end, entry.leadMinutes, from)
         const slots = open ? visibleSlots.get(group.id)! : []
         let filled = 0
-        let signedUp = false
+        let signedUp = ownSignups.has(`${entry.event.eventId}:${entry.start.getTime()}`)
         for (const slot of slots) {
             const count = signupCounts.get(signupKey(entry.event.eventId, entry.start, slot.id))
             filled += count?.filled ?? 0

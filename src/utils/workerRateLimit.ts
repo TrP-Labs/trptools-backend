@@ -5,6 +5,7 @@ export type WorkerRateLimit = {
 }
 
 export type WorkerRateLimitBindings = {
+    ANALYTICS_RATE_LIMIT?: WorkerRateLimit
     GLOBAL_RATE_LIMIT: WorkerRateLimit
     BOT_RATE_LIMIT: WorkerRateLimit
 }
@@ -14,7 +15,8 @@ export async function checkWorkerRateLimit(
     request: Request, bindings: WorkerRateLimitBindings, botServiceToken: string
 ): Promise<Response | null> {
     const bot = isBotServiceRequest(request, botServiceToken)
-    const limiter = bot ? bindings.BOT_RATE_LIMIT : bindings.GLOBAL_RATE_LIMIT
+    const analytics = new URL(request.url).pathname === '/statistics/events'
+    const limiter = analytics && bindings.ANALYTICS_RATE_LIMIT ? bindings.ANALYTICS_RATE_LIMIT : bot ? bindings.BOT_RATE_LIMIT : bindings.GLOBAL_RATE_LIMIT
     const key = bot ? 'authenticated' : clientKey(request, true)
 
     // Like the Redis limiter, an unavailable limiter must not lock users out.

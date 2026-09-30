@@ -1,5 +1,5 @@
 import { status } from 'elysia'
-import { and, desc, eq, gt, ilike, isNotNull, isNull, ne, or } from 'drizzle-orm'
+import { and, desc, eq, gt, ilike, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import db from '../db'
 import { globalRoutePreferences, groups, routePreferences, routes, users } from '../db/schema'
@@ -13,8 +13,37 @@ import { isBanned } from '../utils/moderation'
 import { Roblox } from '../utils/roblox'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { presentDiscord, Session } from '../auth/service'
+import { validHomeLayout } from './homeLayout'
 import { UserModel } from './model'
 import { presentTranslations } from '../utils/translations'
+
+function prepareCustomPreferences() {
+    return db
+        .select({
+            routeId: routes.id,
+            groupId: routes.groupId,
+            name: routes.name,
+            translations: routes.translations,
+            color: routes.color,
+            preference: routePreferences.preference
+        })
+        .from(routePreferences)
+        .innerJoin(routes, eq(routePreferences.routeId, routes.id))
+        .where(eq(routePreferences.userId, sql.placeholder('userId')))
+        .prepare('trptools_custom_preferences')
+}
+let customPreferenceQuery: ReturnType<typeof prepareCustomPreferences> | undefined
+function prepareGlobalPreferences() {
+    return db
+        .select({
+            name: globalRoutePreferences.routeName,
+            preference: globalRoutePreferences.preference
+        })
+        .from(globalRoutePreferences)
+        .where(eq(globalRoutePreferences.userId, sql.placeholder('userId')))
+        .prepare('trptools_global_preferences')
+}
+let globalPreferenceQuery: ReturnType<typeof prepareGlobalPreferences> | undefined
 
 export abstract class UserService {
     static async getProfile(userId: string, session: session): Promise<UserModel.publicProfile> {
@@ -173,6 +202,9 @@ export abstract class UserService {
 
         const [user] = await db
             .select({
+                instantRedirects: users.instantRedirects,
+                homeMode: users.homeMode,
+                homeLayout: users.homeLayout,
                 theme: users.theme,
                 locale: users.locale,
                 timezone: users.timezone,
@@ -209,6 +241,8 @@ export abstract class UserService {
         // somebody remembered to redeploy the API too. A tag that is
         // well-formed but not shipped is harmless: the frontend's `isLocale`
         // rejects it at render and falls back, exactly as it does for null.
+        if (body.homeLayout && !validHomeLayout(body.homeLayout)) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
+
         if (body.locale != null && !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(body.locale)) {
             throw status(400, 'Bad Request' satisfies globalModel.badRequest)
         }
@@ -233,25 +267,8 @@ export abstract class UserService {
         const userId = session.user.userId
 
         const [custom, global] = await Promise.all([
-            db
-                .select({
-                    routeId: routes.id,
-                    groupId: routes.groupId,
-                    name: routes.name,
-                    translations: routes.translations,
-                    color: routes.color,
-                    preference: routePreferences.preference
-                })
-                .from(routePreferences)
-                .innerJoin(routes, eq(routePreferences.routeId, routes.id))
-                .where(eq(routePreferences.userId, userId)),
-            db
-                .select({
-                    name: globalRoutePreferences.routeName,
-                    preference: globalRoutePreferences.preference
-                })
-                .from(globalRoutePreferences)
-                .where(eq(globalRoutePreferences.userId, userId))
+            (customPreferenceQuery ??= prepareCustomPreferences()).execute({ userId }),
+            (globalPreferenceQuery ??= prepareGlobalPreferences()).execute({ userId })
         ])
 
         return [

@@ -1,6 +1,6 @@
 import { sha256 } from '@oslojs/crypto/sha2'
 import { encodeBase32LowerCaseNoPadding, encodeHexLowerCase } from '@oslojs/encoding'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import db from '../db'
 import { apiKeys, sessions, users, type User } from '../db/schema'
 import { isBanned } from './moderation'
@@ -24,12 +24,15 @@ export type SessionUser = {
 }
 
 export type SessionProfile = Pick<User,
+    | 'instantRedirects' | 'homeMode' | 'homeLayout'
     | 'createdAt' | 'primaryGroupId' | 'cachedUsername' | 'cachedDisplayName'
     | 'cachedAvatar' | 'cachedAt' | 'theme' | 'locale' | 'timezone'
     | 'discordId' | 'discordUsername' | 'discordAvatar' | 'discordLinkedAt'
 >
 
 const profileColumns = {
+    instantRedirects: users.instantRedirects,
+    homeMode: users.homeMode, homeLayout: users.homeLayout,
     createdAt: users.createdAt,
     primaryGroupId: users.primaryGroupId,
     cachedUsername: users.cachedUsername,
@@ -47,11 +50,11 @@ const profileColumns = {
 
 function profileFrom(row: SessionProfile): SessionProfile {
     const {
-        createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
+        instantRedirects, homeMode, homeLayout, createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
         theme, locale, timezone, discordId, discordUsername, discordAvatar, discordLinkedAt
     } = row
     return {
-        createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
+        instantRedirects, homeMode, homeLayout, createdAt, primaryGroupId, cachedUsername, cachedDisplayName, cachedAvatar, cachedAt,
         theme, locale, timezone, discordId, discordUsername, discordAvatar, discordLinkedAt
     }
 }
@@ -79,13 +82,10 @@ export function hashToken(token: string): string {
 const SESSION_TTL_MS = env.SESSION_TTL_DAYS * 24 * 60 * 60 * 1000
 const SESSION_REFRESH_MS = SESSION_TTL_MS / 2
 
-/** Resolves a raw session token into a session. Never throws. */
-export default async function GetSession(token: string | undefined): Promise<session> {
-    if (!token) return anonymous
-
-    const sessionId = hashToken(token)
-
-    const [row] = await db
+// Cache query compilation only. Rows are always read afresh, so demotions,
+// suspension and admin-mode changes still apply on the very next request.
+function prepareCookieQuery() {
+    return db
         .select({
             sessionId: sessions.sessionId,
             expiresAt: sessions.expiresAt,
@@ -99,9 +99,19 @@ export default async function GetSession(token: string | undefined): Promise<ses
         })
         .from(sessions)
         .innerJoin(users, eq(sessions.userId, users.id))
-        .where(eq(sessions.sessionId, sessionId))
+        .where(eq(sessions.sessionId, sql.placeholder('sessionId')))
         .limit(1)
-        .catch(() => [])
+        .prepare('trptools_session')
+}
+let cookieQuery: ReturnType<typeof prepareCookieQuery> | undefined
+
+/** Resolves a raw session token into a session. Never throws. */
+export default async function GetSession(token: string | undefined): Promise<session> {
+    if (!token) return anonymous
+
+    const sessionId = hashToken(token)
+
+    const [row] = await (cookieQuery ??= prepareCookieQuery()).execute({ sessionId }).catch(() => [])
 
     if (!row) return anonymous
 

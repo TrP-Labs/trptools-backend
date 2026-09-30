@@ -5,6 +5,10 @@ import { env } from './utils/env'
 import { clientKey, rateLimit, RateLimitError } from './utils/ratelimit'
 import { isBotServiceRequest } from './utils/requestIdentity'
 
+import { authorizedBackgroundJob } from './background/auth'
+import { background } from './background/controller'
+import { statistics, statisticsCollector } from './statistics/controller'
+import { notifications } from './notifications/controller'
 import { auth } from './auth/controller'
 import { adminUsers, users } from './users/controller'
 import { group } from './groups/controller'
@@ -47,7 +51,7 @@ export const app = new Elysia()
     .onRequest(async ({ request }) => {
         // The Worker uses Cloudflare's native rate-limit bindings before this
         // route tree runs. Keep Redis here for the standalone Bun deployment.
-        if (env.isCloudflareWorker) return
+        if (env.isCloudflareWorker || authorizedBackgroundJob(request)) return
         // A broad safety net so no single client can saturate the API. Routes
         // that are individually expensive apply their own tighter limits on
         // top of this.
@@ -110,8 +114,12 @@ export const app = new Elysia()
     .get('/', () => ({ message: 'TrP Tools API', docs: `${env.BASE_URL}/docs` }), { detail: { hide: true } })
     .get('/health', () => ({ status: 'ok' }), { detail: { hide: true } })
 
+    .use(statisticsCollector)
+    .use(statistics)
     .use(auth)
     .use(users)
+    .use(notifications)
+    .use(background)
     .use(group)
     .use(dashboard)
     .use(ranks)
@@ -170,6 +178,8 @@ export const app = new Elysia()
 export type App = typeof app
 
 if (import.meta.main) {
+    const { startBackgroundRunner } = await import('./background/runner')
+    startBackgroundRunner()
     app.listen({ port: env.PORT, hostname: env.HOST })
     console.log(`TrP Tools API listening on http://${env.HOST}:${env.PORT}`)
 }

@@ -50,3 +50,46 @@ The API supports Garage, R2, and other S3 services; `S3_ENDPOINT` is for uploads
 2. With Redis installed, run `bun run test:dispatch` to exercise both Redis clients.
 
 MIT — see [LICENSE](./LICENSE).
+
+### Browser shift reminders
+
+Generate VAPID keys with `bun run scripts/generate-vapid.ts`, set
+`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, a real `VAPID_SUBJECT` contact, and a
+random `BACKGROUND_JOB_TOKEN`. Keep the private key stable: changing it requires
+browsers to subscribe again. Push subscriptions are encrypted with
+`ENCRYPTION_KEY`; rotating it also requires re-enabling devices.
+
+Workers runs the minute cron in `wrangler.jsonc`. Each of up to twenty due series
+and each delivery is dispatched to a separate authenticated Worker request,
+keeping encryption and recurrence out of page loads and bounding work per
+invocation. The queue drains in batches of 25, with at most 15 chained batches
+per cron run; remaining jobs wait for the next minute. `BASE_URL` must resolve to this Worker. Docker/Bun uses the same
+planner and outbox from a minute timer in the API process. Multiple replicas are
+safe: delivery leases and unique occurrence keys prevent ordinary duplicate
+sends. A provider timeout after acceptance can cause a retry; browsers collapse
+it using the occurrence notification tag.
+
+Reminders arrive about ten minutes before a public shift starts. Following and
+reminders are separate opt-ins; neither grants access to private shifts or staff
+sheets. Push needs HTTPS (localhost works for development). iOS/iPadOS needs a
+Home Screen install. Unconfigured instances show an explanatory disabled control.
+Delivery retries are bounded to five attempts and fifteen minutes after the
+occurrence starts; 404/410 removes an expired device. History is pruned after a
+week. No notification job calls Roblox or Redis.
+
+
+## Following, homepages, join links and statistics
+
+Personal feeds use explicit group follows rather than Roblox group discovery.
+Following is a reading preference and grants no access. User/host widget layouts
+and optional instant join redirects are saved in account preferences; defaults
+keep the join confirmation visible. Group managers configure a canonical Discord
+invite and the Roblox join-link toggle through group settings.
+
+Anonymous page counters are queued outside the response path and folded by the
+minute background runner. Statistics requires VIEW_DASHBOARD. Route preference
+breakdowns are aggregated with a five-vote minimum; built-in route preferences
+remain global. Apply migrations through 0031 for these features.
+
+See [engagement verification](docs/engagement-verification.md) for API/runtime
+coverage, browser screenshots and the measured limits of the 10 ms CPU target.

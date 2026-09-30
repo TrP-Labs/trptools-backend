@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { UserModel } from '../users/model'
 import { ApplicationModel } from '../applications/model'
 import { RouteModel } from '../groups/routes/model'
 import { AuthModel } from '../auth/model'
@@ -105,6 +106,9 @@ export namespace DashboardModel {
     export type dashboardGroup = typeof dashboardGroup.static
 
     export const dashboardResponse = t.Object({
+        mode: t.Union([t.Literal('user'), t.Literal('host')]),
+        routePreferences: UserModel.routePreferenceList,
+        signedUpShifts: t.Array(upcomingShift),
         /**
          * The group this person pinned, if they still hold a rank in it.
          *

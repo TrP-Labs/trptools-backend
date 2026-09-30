@@ -36,3 +36,17 @@ describe('old recurring shifts', () => {
         )
     })
 })
+
+
+test('cached recurrence parsing respects edits and keeps caller dates independent', () => {
+    const start = new Date('2026-09-29T12:00:00Z'), end = new Date('2026-10-10T12:00:00Z')
+    const daily = 'FREQ=DAILY;COUNT=5'
+    const first = occurrenceStartsBetween(daily, start, start, end, 2)
+    expect(first).toEqual([new Date('2026-09-29T12:00:00Z'), new Date('2026-09-30T12:00:00Z')])
+    first[0]!.setUTCFullYear(2000)
+    expect(occurrenceStartsBetween(daily, start, start, end, 1)[0]).toEqual(start)
+    expect(occurrenceStartsBetween('FREQ=WEEKLY;COUNT=5', start, start, end, 2)[1]).toEqual(new Date('2026-10-06T12:00:00Z'))
+    const edited = new Date('2026-09-30T12:00:00Z')
+    expect(occurrenceStartsBetween(daily, edited, start, end, 1)[0]).toEqual(edited)
+    expect(occurrenceStartsBetween(daily, start, start, end, 10)).toHaveLength(5)
+})

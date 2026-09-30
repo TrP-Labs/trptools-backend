@@ -14,6 +14,7 @@ process.env.NODE_ENV = 'test'
 
 const group = {
     id: '00000000-0000-4000-8000-000000000002', robloxId: '123', slug: 'test-group',
+    discordInvite: '', robloxJoinEnabled: true,
     name: null, cachedName: 'Test Group', cachedAt: new Date(), cachedIcon: null,
     cachedDescription: '', cachedMembers: 10, visibility: 'PUBLIC', tagline: '', about: '',
     sourceLocale: 'en', translations: {}, accentColor: '#4287f5', bannerMediaId: null,
@@ -42,6 +43,7 @@ mock.module('../src/db', () => ({ default: {
         const rows = () => {
             queries.push(table)
             switch (table) {
+                case 'group_follows': return group.visibility === 'PRIVATE' ? [] : [{ group }]
                 case 'groups':
                     if (fields) throw new Error('Unexpected group credentials read')
                     return [group]
@@ -70,6 +72,7 @@ mock.module('../src/db', () => ({ default: {
             from(value: Parameters<typeof getTableName>[0]) { table = getTableName(value); return this },
             where() { return this }, innerJoin() { return this }, leftJoin() { return this },
             orderBy() { return this }, groupBy() { return this }, limit() { return this },
+            prepare() { return { execute: () => Promise.resolve().then(rows) } },
             then(resolve: (value: unknown[]) => unknown, reject?: (error: unknown) => unknown) {
                 return Promise.resolve().then(rows).then(resolve, reject)
             }
@@ -97,6 +100,7 @@ const { DashboardModel } = await import('../src/dashboard/model')
 beforeEach(() => {
     grants = PERM.VIEW_DASHBOARD
     rank = 5
+    event.visibility = 'PRIVATE'
     group.visibility = 'PUBLIC'
     group.showShifts = true
     queries.length = 0
@@ -139,16 +143,19 @@ test('elevated admin sees the full authorized summary', async () => {
     expect(result.overview.openRoomId).toBe('live-room')
 })
 
-test('global shifts includes ordinary drivers even with no dashboard grants', async () => {
+test('followed shifts includes readers without Roblox membership or dashboard grants', async () => {
     grants = 0
+    rank = -1
+    event.visibility = 'PUBLIC'
     const result = await Dashboard.shifts(viewer)
     expect(result.groups[0].permissionLevel).toBe(0)
-    expect(result.occurrences[0]).toMatchObject({ name: 'Member Shift', capacity: 3, filled: 1 })
-    expect(redisReads).toBe(1)
+    expect(result.occurrences[0]).toMatchObject({ name: 'Member Shift', capacity: 0, filled: 0, signedUp: true })
+    expect(redisReads).toBe(0)
+    expect(queries).not.toContain('signup_sheets')
     expect(queries.filter((table) => table === 'events')).toHaveLength(1)
 })
 
-test('group discovery cannot authorize a departed member to read private shifts', async () => {
+test('following cannot publish a private group or hidden shifts', async () => {
     grants = 0
     rank = -1
     group.visibility = 'PRIVATE'

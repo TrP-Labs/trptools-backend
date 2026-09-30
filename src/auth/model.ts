@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { USER_WIDGETS, HOST_WIDGETS } from '../users/homeLayout'
 
 export namespace AuthModel {
     /** A linked Discord account, as every surface that shows one reads it. */
@@ -26,6 +27,12 @@ export namespace AuthModel {
     export type OauthCallbackQuery = typeof OauthCallbackQuery.static
 
     export const SessionUser = t.Object({
+        instantRedirects: t.Boolean(),
+        homeMode: t.Union([t.Literal('user'), t.Literal('host')]),
+        homeLayout: t.Object({
+            user: t.Array(t.Object({ id: t.String({ pattern: `^(${USER_WIDGETS.join('|')})$` }), width: t.Number() })),
+            host: t.Array(t.Object({ id: t.String({ pattern: `^(${HOST_WIDGETS.join('|')})$` }), width: t.Number() }))
+        }),
         userId: t.String(),
         robloxId: t.Number(),
         /**

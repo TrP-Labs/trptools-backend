@@ -111,6 +111,13 @@ export namespace PublicModel {
     })
     export type shiftPage = typeof shiftPage.static
 
+    export const joinPage = t.Object({
+        group: groupHeader,
+        destination: t.Union([t.Literal('roblox'), t.Literal('discord')]),
+        url: t.String()
+    })
+    export type joinPage = typeof joinPage.static
+
     /** Everything the public group page needs, in one request. */
     export const groupPage = t.Object({
         id: t.String(),
@@ -127,6 +134,8 @@ export namespace PublicModel {
         accentColor: t.String(),
         members: t.Number(),
         robloxId: t.String(),
+        robloxJoinEnabled: t.Boolean(),
+        hasDiscordInvite: t.Boolean(),
 
         showRoutes: t.Boolean(),
         showShifts: t.Boolean(),

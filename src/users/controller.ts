@@ -1,4 +1,6 @@
 import { Elysia, t } from 'elysia'
+import { Follows } from './follows'
+import { GroupModel } from '../groups/model'
 import { UserModel } from './model'
 import { UserModeration, UserService } from './service'
 import { globalModel } from '../utils/globalModel'
@@ -7,6 +9,15 @@ import { clientKey, rateLimit } from '../utils/ratelimit'
 
 export const users = new Elysia({ prefix: '/users', tags: ['Users'] })
     .use(sessionPlugin)
+
+    .get('/me/follows', ({ session }) => Follows.list(session), {
+        response: { 200: GroupModel.groupList, 401: globalModel.unauthorized }
+    })
+    .put('/me/follows/:groupId', ({ params, body, session }) => Follows.set(params.groupId, body.following, session), {
+        params: t.Object({ groupId: t.String({ format: 'uuid' }) }),
+        body: t.Object({ following: t.Boolean() }),
+        response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized, 404: globalModel.notFound, 409: t.Literal('Conflict') }
+    })
 
     .get('/me/preferences', async ({ session }) => UserService.getPreferences(session), {
         response: {

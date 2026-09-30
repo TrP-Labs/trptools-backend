@@ -3,6 +3,10 @@ import { translationsResponse } from '../utils/translations'
 import { AuthModel } from '../auth/model'
 
 export namespace UserModel {
+    export const homeLayout = t.Object({
+        user: t.Array(t.Object({ id: t.String({ maxLength: 24 }), width: t.Integer({ minimum: 1, maximum: 2 }) }), { maxItems: 12 }),
+        host: t.Array(t.Object({ id: t.String({ maxLength: 24 }), width: t.Integer({ minimum: 1, maximum: 2 }) }), { maxItems: 13 })
+    })
     /**
      * A route as it appears on somebody's profile.
      *
@@ -85,6 +89,9 @@ export namespace UserModel {
      * silently republish a profile its owner had hidden.
      */
     export const preferencesBody = t.Object({
+        instantRedirects: t.Optional(t.Boolean()),
+        homeMode: t.Optional(t.Union([t.Literal('user'), t.Literal('host')])),
+        homeLayout: t.Optional(homeLayout),
         theme: t.Optional(t.Union([t.Literal('dim'), t.Literal('midnight'), t.Literal('light')])),
         /** Null clears the preference back to following the browser. */
         locale: t.Optional(t.Union([t.String({ maxLength: 8 }), t.Null()])),
@@ -99,6 +106,9 @@ export namespace UserModel {
     export type preferencesBody = typeof preferencesBody.static
 
     export const preferencesResponse = t.Object({
+        instantRedirects: t.Boolean(),
+        homeMode: t.Union([t.Literal('user'), t.Literal('host')]),
+        homeLayout,
         theme: t.String(),
         locale: t.Union([t.String(), t.Null()]),
         /** Null means nobody has chosen one; the browser's answer stands. */

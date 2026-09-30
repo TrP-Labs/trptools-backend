@@ -1,0 +1,2 @@
+ALTER TABLE "users" ADD COLUMN "home_mode" text DEFAULT 'user' NOT NULL;--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "home_layout" jsonb DEFAULT '{"user":[{"id":"next","width":2},{"id":"my-shifts","width":1},{"id":"following","width":2},{"id":"shifts","width":1},{"id":"favorites","width":1},{"id":"tools","width":1}],"host":[{"id":"next","width":2},{"id":"summary","width":1},{"id":"reviews","width":2},{"id":"live-rooms","width":1},{"id":"groups","width":2},{"id":"shifts","width":1}]}'::jsonb NOT NULL;
