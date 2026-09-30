@@ -1,3 +1,4 @@
+import { normalizeDiscordInvite } from '../utils/joinLinks'
 import { status } from 'elysia'
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm'
 import type { NeonHttpDatabase } from 'drizzle-orm/neon-http'
@@ -86,6 +87,8 @@ function present(group: Group, membership: Membership, images: Map<string, strin
         icon: group.cachedIcon,
         members: group.cachedMembers ?? 0,
 
+        discordInvite: group.discordInvite,
+        robloxJoinEnabled: group.robloxJoinEnabled,
         visibility: group.visibility,
         tagline: group.tagline,
         about: group.about,
@@ -406,7 +409,7 @@ export abstract class Group_ {
             await assertGroupPermission(session, groupId, PERM.MANAGE_BOT)
         }
 
-        if (touches('slug', 'name', 'tagline', 'about', 'sourceLocale', 'translations', 'accentColor')) {
+        if (touches('discordInvite', 'robloxJoinEnabled', 'slug', 'name', 'tagline', 'about', 'sourceLocale', 'translations', 'accentColor')) {
             await assertGroupPermission(session, groupId, PERM.MANAGE_GROUP)
         }
 
@@ -428,12 +431,15 @@ export abstract class Group_ {
             if (clash.length > 0) throw status(409, 'slug is unavailable' satisfies GroupModel.slugTaken)
         }
 
-        const { translations, name, ...fields } = body
+        const { translations, name, discordInvite, ...fields } = body
+        const invite = discordInvite === undefined ? undefined : normalizeDiscordInvite(discordInvite)
+        if (invite === null) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
 
         await db
             .update(groups)
             .set({
                 ...fields,
+                ...(invite !== undefined ? { discordInvite: invite } : {}),
                 ...translationUpdate('GROUP', group.translations, translations),
                 // A blank box is not an empty name, it is "go back to
                 // following Roblox" — which is the state a group starts in.

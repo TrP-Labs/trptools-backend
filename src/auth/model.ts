@@ -27,6 +27,7 @@ export namespace AuthModel {
     export type OauthCallbackQuery = typeof OauthCallbackQuery.static
 
     export const SessionUser = t.Object({
+        instantRedirects: t.Boolean(),
         homeMode: t.Union([t.Literal('user'), t.Literal('host')]),
         homeLayout: t.Object({
             user: t.Array(t.Object({ id: t.String({ pattern: `^(${USER_WIDGETS.join('|')})$` }), width: t.Number() })),

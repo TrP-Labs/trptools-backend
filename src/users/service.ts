@@ -174,6 +174,7 @@ export abstract class UserService {
 
         const [user] = await db
             .select({
+                instantRedirects: users.instantRedirects,
                 homeMode: users.homeMode,
                 homeLayout: users.homeLayout,
                 theme: users.theme,

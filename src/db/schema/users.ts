@@ -66,6 +66,7 @@ export const users = pgTable(
         bannedBy: uuid('banned_by').references((): AnyPgColumn => users.id, { onDelete: 'set null' }),
 
         // Preferences
+        instantRedirects: boolean('instant_redirects').notNull().default(false),
         homeMode: text('home_mode').$type<'user' | 'host'>().notNull().default('user'),
         homeLayout: jsonb('home_layout').$type<HomeLayout>().notNull().default(DEFAULT_HOME_LAYOUT),
         theme: text('theme').notNull().default('dim'),

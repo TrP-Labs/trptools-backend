@@ -128,3 +128,24 @@ test('homepage layouts round-trip per account and reject privilege-shaped or dup
     // Host mode is a view preference, never a permission grant.
     expect((await call('/dashboard/home?mode=host')).data.dashboard.groups).toEqual([])
 })
+
+test('join links have fixed destinations, respect visibility and grants, and redirects are opt-in per account', async () => {
+    const slug = 'fixture-' + group
+    expect((await call(`/public/groups/${slug}/join/roblox`, 'GET', undefined, null)).data.url).toBe(`https://www.roblox.com/groups/fixture-${group}`)
+    expect((await call(`/public/groups/${slug}/join/discord`, 'GET', undefined, null)).status).toBe(404)
+    expect((await call(`/public/groups/fixture-${hidden}/join/roblox`, 'GET', undefined, null)).status).toBe(404)
+    expect((await call('/groups/' + group, 'PATCH', { discordInvite: 'abcdef' })).status).toBe(403)
+    await db.update(users).set({ siteRank: 'admin' }).where(eq(users.id, id))
+    await db.update(sessions).set({ adminMode: true }).where(eq(sessions.sessionId, hashToken(token)))
+    expect((await call('/groups/' + group, 'PATCH', { discordInvite: 'https://evil.example/abc' })).status).toBe(400)
+    expect((await call('/groups/' + group, 'PATCH', { discordInvite: 'https://discord.com/invite/abcdef' })).status).toBe(200)
+    expect((await call(`/public/groups/${slug}/join/discord`, 'GET', undefined, null)).data.url).toBe('https://discord.gg/abcdef')
+    expect((await call('/groups/' + group, 'PATCH', { robloxJoinEnabled: false })).status).toBe(200)
+    expect((await call(`/public/groups/${slug}/join/roblox`, 'GET', undefined, null)).status).toBe(404)
+    expect((await call('/users/me/preferences')).data.instantRedirects).toBe(false)
+    expect((await call('/users/me/preferences', 'PATCH', { instantRedirects: true })).status).toBe(200)
+    expect((await call('/auth/session')).data.user.instantRedirects).toBe(true)
+    expect((await call('/users/me/preferences', 'GET', undefined, otherToken)).data.instantRedirects).toBe(false)
+    await db.update(users).set({ siteRank: 'user' }).where(eq(users.id, id))
+    await db.update(sessions).set({ adminMode: false }).where(eq(sessions.sessionId, hashToken(token)))
+})

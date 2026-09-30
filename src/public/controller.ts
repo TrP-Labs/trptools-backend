@@ -12,6 +12,12 @@ export const publicPages = new Elysia({ prefix: '/public', tags: ['Public'] })
         set.headers['cache-control'] = 'public, max-age=30, s-maxage=120, stale-while-revalidate=600'
     })
 
+    .get('/groups/:slug/join/:destination', ({ params }) => PublicPages.joinPage(params.slug, params.destination), {
+        params: t.Object({ slug: t.String({ maxLength: 48 }), destination: t.Union([t.Literal('roblox'), t.Literal('discord')]) }),
+        response: { 200: PublicModel.joinPage, 404: globalModel.notFound },
+        detail: { summary: 'Read a group’s external join destination' }
+    })
+
     .get('/groups', async ({ query }) => PublicPages.directory(query), {
         query: PublicModel.directoryQuery,
         response: { 200: PublicModel.directory },

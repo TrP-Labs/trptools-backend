@@ -17,6 +17,8 @@ export const groups = pgTable(
 
         // Public presence
         slug: text('slug').notNull().unique(),
+        discordInvite: text('discord_invite').notNull().default(''),
+        robloxJoinEnabled: boolean('roblox_join_enabled').notNull().default(true),
         visibility: visibilityEnum('visibility').notNull().default('PRIVATE'),
         /**
          * What the group calls itself here, when that differs from Roblox.

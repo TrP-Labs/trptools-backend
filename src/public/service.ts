@@ -103,6 +103,15 @@ function presentDepot(
 }
 
 export abstract class PublicPages {
+    static async joinPage(slug: string, destination: 'roblox' | 'discord'): Promise<PublicModel.joinPage> {
+        const group = await publishedGroup(slug)
+        const url = destination === 'roblox' && group.robloxJoinEnabled
+            ? `https://www.roblox.com/groups/${group.robloxId}`
+            : destination === 'discord' ? group.discordInvite : ''
+        if (!url) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        return { group: header(group), destination, url }
+    }
+
     static async directory(query: PublicModel.directoryQuery): Promise<PublicModel.directory> {
         const limit = Math.min(Math.max(Number(query.limit ?? 60) || 60, 1), 100)
         const search = query.search?.trim()
@@ -232,6 +241,8 @@ export abstract class PublicPages {
             accentColor: group.accentColor,
             members: group.cachedMembers ?? 0,
             robloxId: group.robloxId,
+            robloxJoinEnabled: group.robloxJoinEnabled,
+            hasDiscordInvite: Boolean(group.discordInvite),
 
             showRoutes: group.showRoutes,
             showShifts: group.showShifts,

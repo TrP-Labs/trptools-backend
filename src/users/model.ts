@@ -89,6 +89,7 @@ export namespace UserModel {
      * silently republish a profile its owner had hidden.
      */
     export const preferencesBody = t.Object({
+        instantRedirects: t.Optional(t.Boolean()),
         homeMode: t.Optional(t.Union([t.Literal('user'), t.Literal('host')])),
         homeLayout: t.Optional(homeLayout),
         theme: t.Optional(t.Union([t.Literal('dim'), t.Literal('midnight'), t.Literal('light')])),
@@ -105,6 +106,7 @@ export namespace UserModel {
     export type preferencesBody = typeof preferencesBody.static
 
     export const preferencesResponse = t.Object({
+        instantRedirects: t.Boolean(),
         homeMode: t.Union([t.Literal('user'), t.Literal('host')]),
         homeLayout,
         theme: t.String(),

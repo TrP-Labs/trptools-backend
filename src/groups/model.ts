@@ -25,6 +25,8 @@ export namespace GroupModel {
         createdAt: t.Date(),
 
         robloxId: t.String(),
+        discordInvite: t.String(),
+        robloxJoinEnabled: t.Boolean(),
         /** What the group is called here, which may not be its Roblox name. */
         name: t.String(),
         /**
@@ -114,6 +116,8 @@ export namespace GroupModel {
     export type creatableGroupList = typeof creatableGroupList.static
 
     export const updateGroupBody = t.Object({
+        discordInvite: t.Optional(t.String({ maxLength: 200 })),
+        robloxJoinEnabled: t.Optional(t.Boolean()),
         visibility: t.Optional(globalModel.visibility),
         slug: t.Optional(t.String({ minLength: 3, maxLength: 48 })),
         /**

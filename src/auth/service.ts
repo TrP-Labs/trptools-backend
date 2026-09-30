@@ -181,6 +181,7 @@ export abstract class Session {
                 // standing is the account's, using it is this session's.
                 adminMode: session.user.adminMode,
                 primaryGroupId: user.primaryGroupId,
+                instantRedirects: user.instantRedirects,
                 homeMode: user.homeMode, homeLayout: user.homeLayout,
                 username: user.cachedUsername,
                 displayName: user.cachedDisplayName,
