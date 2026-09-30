@@ -59,10 +59,11 @@ random `BACKGROUND_JOB_TOKEN`. Keep the private key stable: changing it requires
 browsers to subscribe again. Push subscriptions are encrypted with
 `ENCRYPTION_KEY`; rotating it also requires re-enabling devices.
 
-Workers runs the minute cron in `wrangler.jsonc`. Each of up to five due series
-and twenty deliveries is dispatched to a separate authenticated Worker request,
+Workers runs the minute cron in `wrangler.jsonc`. Each of up to twenty due series
+and each delivery is dispatched to a separate authenticated Worker request,
 keeping encryption and recurrence out of page loads and bounding work per
-invocation. `BASE_URL` must resolve to this Worker. Docker/Bun uses the same
+invocation. The queue drains in batches of 25, with at most 15 chained batches
+per cron run; remaining jobs wait for the next minute. `BASE_URL` must resolve to this Worker. Docker/Bun uses the same
 planner and outbox from a minute timer in the API process. Multiple replicas are
 safe: delivery leases and unique occurrence keys prevent ordinary duplicate
 sends. A provider timeout after acceptance can cause a retry; browsers collapse

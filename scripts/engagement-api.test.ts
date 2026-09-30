@@ -20,7 +20,7 @@ const { app } = await import('../src/index')
 const { default: db, client } = await import('../src/db')
 const { users, groups, events, sessions, pushSubscriptions, notificationDeliveries } = await import('../src/db/schema')
 const { hashToken } = await import('../src/utils/sessionVerifier')
-const { planNotification } = await import('../src/notifications/scheduler')
+const { planNotification, drainNotificationBatch } = await import('../src/notifications/scheduler')
 const { deliverNotification } = await import('../src/notifications/delivery')
 const { decryptSecret } = await import('../src/utils/crypto')
 const id = crypto.randomUUID(), other = crypto.randomUUID(), group = crypto.randomUUID(), hidden = crypto.randomUUID(), event = crypto.randomUUID()
@@ -57,6 +57,10 @@ test('following requires authentication, rejects CSRF and private targets, and i
     expect((await call('/users/me/follows')).data).toHaveLength(1)
     expect((await call('/users/me/follows', 'GET', undefined, otherToken)).data).toEqual([])
     expect((await call('/dashboard/shifts')).data.occurrences[0].eventId).toBe(event)
+    const home = await call('/dashboard/home?mode=user')
+    expect(home.status).toBe(200)
+    expect(home.data.dashboard.mode).toBe('user')
+    expect(home.data.dashboard.groups[0].permissions).toBe(0)
 })
 test('push subscription validates provider URLs and curve keys, encrypts credentials, and isolates removal', async () => {
     expect((await call('/notifications/subscription', 'PUT', { ...subscription, endpoint: 'http://127.0.0.1/secret' })).status).toBe(400)
@@ -137,6 +141,7 @@ test('join links have fixed destinations, respect visibility and grants, and red
     expect((await call('/groups/' + group, 'PATCH', { discordInvite: 'abcdef' })).status).toBe(403)
     await db.update(users).set({ siteRank: 'admin' }).where(eq(users.id, id))
     await db.update(sessions).set({ adminMode: true }).where(eq(sessions.sessionId, hashToken(token)))
+    expect((await call('/dashboard/home?mode=host')).status).toBe(200)
     expect((await call('/groups/' + group, 'PATCH', { discordInvite: 'https://evil.example/abc' })).status).toBe(400)
     expect((await call('/groups/' + group, 'PATCH', { discordInvite: 'https://discord.com/invite/abcdef' })).status).toBe(200)
     expect((await call(`/public/groups/${slug}/join/discord`, 'GET', undefined, null)).data.url).toBe('https://discord.gg/abcdef')
@@ -202,14 +207,53 @@ test('route votes stay aggregate and scoped while built-ins use the shared prefe
     } finally { for (const userId of voters) await db.delete(users).where(eq(users.id, userId)) }
 })
 
-test('device caps withstand concurrent registration and reassignment invalidates old deliveries', async () => {
+test('device caps withstand concurrent registration and reassignment isolates ownership', async () => {
     const devices = Array.from({ length: 11 }, () => ({ ...subscription, endpoint: 'https://fcm.googleapis.com/fcm/send/' + crypto.randomUUID() }))
     const results = await Promise.all(devices.map(device => call('/notifications/subscription', 'PUT', device)))
     expect(results.filter(result => result.status === 200)).toHaveLength(10)
     expect(results.filter(result => result.status === 409)).toHaveLength(1)
     const accepted = devices[results.findIndex(result => result.status === 200)]!
     expect((await call('/notifications/subscription', 'PUT', accepted)).status).toBe(200)
+    const [device] = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpointHash, hashToken(accepted.endpoint)))
+    const [oldJob] = await db.insert(notificationDeliveries).values({ subscriptionId: device!.id, eventId: event, occurrence: start }).returning()
     expect((await call('/notifications/subscription', 'PUT', accepted, otherToken)).status).toBe(200)
+    const before = sent
+    await deliverNotification(oldJob!.id)
+    expect(sent).toBe(before)
+    expect((await db.select().from(notificationDeliveries).where(eq(notificationDeliveries.id, oldJob!.id)))[0]!.deliveredAt).not.toBeNull()
     expect(await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, other))).toHaveLength(1)
     expect(await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, id))).toHaveLength(9)
+})
+
+
+test('late watches and devices replan an imminent shift, and drains are bounded without dropping the remainder', async () => {
+    await call('/notifications/groups/' + group, 'PUT', { enabled: false })
+    await call('/notifications/groups/' + group, 'PUT', { enabled: false, eventId: event })
+    const lateEvent = crypto.randomUUID()
+    await db.insert(events).values({ eventId: lateEvent, groupId: group, name: 'Late reminder', slug: 'late-reminder', startTime: start, rrule: 'FREQ=DAILY;COUNT=1', notificationAt: null })
+    expect((await call('/notifications/groups/' + group, 'PUT', { enabled: true, eventId: lateEvent }, otherToken)).status).toBe(200)
+    expect((await db.select().from(events).where(eq(events.eventId, lateEvent)))[0]!.notificationAt).not.toBeNull()
+    await planNotification(lateEvent)
+    expect(await db.select().from(notificationDeliveries).where(eq(notificationDeliveries.eventId, lateEvent))).toHaveLength(1)
+    await db.update(events).set({ notificationAt: null }).where(eq(events.eventId, lateEvent))
+    const lateDevice = { ...subscription, endpoint: 'https://fcm.googleapis.com/fcm/send/' + crypto.randomUUID() }
+    expect((await call('/notifications/subscription', 'PUT', lateDevice, otherToken)).status).toBe(200)
+    expect((await db.select().from(events).where(eq(events.eventId, lateEvent)))[0]!.notificationAt).not.toBeNull()
+    await planNotification(lateEvent)
+    const jobs = await db.select().from(notificationDeliveries).where(eq(notificationDeliveries.eventId, lateEvent))
+    expect(jobs).toHaveLength(2)
+    // Restrict this drain test to its own fixtures; no unrelated jobs are deleted.
+    await db.update(notificationDeliveries).set({ deliveredAt: new Date() }).where(eq(notificationDeliveries.eventId, event))
+    await db.delete(notificationDeliveries).where(eq(notificationDeliveries.eventId, lateEvent))
+    await db.insert(notificationDeliveries).values(Array.from({ length: 30 }, (_, i) => ({ subscriptionId: jobs[0]!.subscriptionId, eventId: lateEvent, occurrence: new Date(start.getTime() + i * 1000) })))
+    const delivered = new Set<string>()
+    const dispatch = async (_kind: 'plan' | 'send', jobId: string) => {
+        expect(delivered.has(jobId)).toBe(false)
+        delivered.add(jobId)
+        await db.update(notificationDeliveries).set({ deliveredAt: new Date() }).where(eq(notificationDeliveries.id, jobId))
+    }
+    expect(await drainNotificationBatch(dispatch)).toBe(true)
+    expect(delivered.size).toBe(25)
+    expect(await drainNotificationBatch(dispatch)).toBe(false)
+    expect(delivered.size).toBe(30)
 })

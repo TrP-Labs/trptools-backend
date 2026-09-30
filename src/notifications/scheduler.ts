@@ -6,18 +6,26 @@ import { upcomingOccurrences } from '../utils/recurrence'
 import { notificationsConfigured } from './service'
 
 /** Each plan and send is a separate Worker invocation; the cron only dispatches bounded I/O. */
-export async function runNotificationTick(dispatch: (kind: 'plan' | 'send', id: string) => Promise<unknown>, now = new Date()) {
+export async function runNotificationTick(dispatch: (kind: 'plan' | 'send', id: string) => Promise<unknown>, now = new Date(), drain?: () => Promise<unknown>) {
     if (!notificationsConfigured()) return
     if (now.getUTCMinutes() === 0) {
         await db.execute(sql`DELETE FROM notification_deliveries WHERE occurrence < ${new Date(now.getTime() - 7 * 86_400_000).toISOString()}`)
     }
     const due = await db.select({ id: events.eventId }).from(events)
-        .where(lte(events.notificationAt, now)).orderBy(events.notificationAt).limit(5)
+        .where(and(lte(events.notificationAt, now), sql`EXISTS (SELECT 1 FROM notification_watches w WHERE w.group_id = ${events.groupId} AND (w.event_id IS NULL OR w.event_id = ${events.eventId}))`)).orderBy(events.notificationAt).limit(20)
     await Promise.all(due.map((event) => dispatch('plan', event.id)))
+    if (drain) await drain()
+    else for (let batch = 0; batch < 20; batch++) { if (!await drainNotificationBatch(dispatch, now)) break }
+}
+
+/** 25 sends leave room below the free Worker's 50-subrequest limit. */
+export async function drainNotificationBatch(dispatch: (kind: 'plan' | 'send', id: string) => Promise<unknown>, now = new Date()) {
     const jobs = await db.execute(sql`SELECT id FROM notification_deliveries
         WHERE delivered_at IS NULL AND attempts < 5 AND available_at <= ${now.toISOString()}
-        AND occurrence > ${new Date(now.getTime() - 15 * 60_000).toISOString()} ORDER BY available_at LIMIT 20`)
+        AND occurrence > ${new Date(now.getTime() - 15 * 60_000).toISOString()} ORDER BY available_at LIMIT 25`)
     await Promise.all(databaseRows(jobs).map((job) => dispatch('send', String(job.id))))
+    return databaseRows(jobs).length === 25
+
 }
 
 export async function planNotification(eventId: string, now = new Date()) {

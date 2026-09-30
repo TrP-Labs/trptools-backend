@@ -52,6 +52,11 @@ export abstract class Notifications {
             if (databaseLimitReached(error, 'notification watch limit')) throw status(409, 'Conflict')
             throw error
         }
+        // A watch enabled shortly before departure may arrive after this event
+        // was already planned. Replan once; the delivery uniqueness prevents repeats.
+        await db.update(events).set({ notificationAt: new Date() }).where(and(
+            eq(events.groupId, groupId), body.eventId ? eq(events.eventId, body.eventId) : undefined
+        ))
         return 'Success' as const
     }
 
@@ -72,6 +77,10 @@ export abstract class Notifications {
             if (databaseLimitReached(error, 'push device limit')) throw status(409, 'Conflict')
             throw error
         }
+        // Also cover adding a device after a watch was saved on another browser.
+        await db.execute(sql`UPDATE events e SET notification_at = now() WHERE EXISTS (
+            SELECT 1 FROM notification_watches w WHERE w.user_id = ${user.userId}
+            AND w.group_id = e.group_id AND (w.event_id IS NULL OR w.event_id = e.event_id))`)
         return 'Success' as const
     }
 
