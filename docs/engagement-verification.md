@@ -29,7 +29,21 @@ Counter submission acknowledges before its one background SQL write. Aggregation
 
 Homepage identity and widget data use one backend bootstrap request. User mode uses six batched SQL reads with followed groups present (session, follows, two existing preference lists, events, own signups), zero Redis reads and zero Roblox discovery requests. Query compilation is reused without caching user rows or authorization. Host mode retains the existing permission cache and batched room/sheet/review reads. Parsing caches at most 128 recurrence rules, keyed by both rule text and start time; result windows are not cached.
 
-`engagement-worker-cpu-results.json` retains ten warm local workerd V8 samples per operation, after five warm-ups, excluding idle/root samples. The final reminder planner averaged 6.03 ms (max 9.11), encrypted sender 6.55 ms (max 7.96), reminder state 4.05 ms (max 7.15), and counter submission 1.99 ms (max 2.95). The user home averaged 9.26 ms with a 14.14 ms outlier; host home averaged 8.17 ms with a 10.28 ms outlier. Other runs also had homepage/statistics outliers. **Strict 10 ms compliance for every homepage request is not confirmed.** These local sampling estimates are not Cloudflare CPU billing, do not cover cold or maximum-size workloads, and must not be advertised as a production free-tier guarantee. Review production CPU telemetry before releasing on the 10 ms tier. [Cloudflare limits](https://developers.cloudflare.com/workers/platform/limits/) distinguish CPU time from network waiting.
+`engagement-worker-cpu-results.json` retains the earlier V8 sampling estimates for function profiling. Those estimates included homepage outliers (14.14 ms user, 10.28 ms host). Summing profiler sample intervals can include process descheduling and is unsuitable as proof of billed CPU usage. The independently measured page CPU results below supersede those page estimates. Reminder samples remain function-profile estimates, not Cloudflare billing measurements.
+
+### Independent homepage/statistics CPU recheck
+
+`engagement-page-cpu-results.json` records scheduled user + system CPU from each isolated local workerd process across its complete HTTP response. This excludes network/database waits and OS descheduling, while including native workerd process overhead. Frontend and API invocations are measured separately, as the 10 ms budget applies per Worker invocation. macOS libproc counters use Mach ticks; `mach_timebase_info` converts them to milliseconds. The conversion was checked against POSIX CPU accounting in the measuring process (67.54 vs 67.51 ms; see recorded calibration). [Apple's task accounting](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/kern/task.c) defines the source counter in Mach time.
+
+Both runs enabled all 12 user and 13 host widgets, with six owned users and two followed public groups in isolated test storage. Each of six routes had 15 warmups and 50 measured requests. The second run restarted both Workers before testing, retaining each route's first render and maximum warmup CPU as well. All 600 measured requests and the second run's 90 warmups stayed below 10 ms. The fresh-run one-second idle baseline was 0.19 ms for the API and zero for the frontend; no baseline was subtracted from request measurements.
+
+| Route | API maximum, fresh run | SSR maximum, fresh run | First SSR render |
+| --- | ---: | ---: | ---: |
+| User home | 1.35 ms | 1.94 ms | 2.99 ms |
+| Host home | 1.93 ms | 1.92 ms | 1.28 ms |
+| Statistics | 1.80 ms | 2.06 ms | 1.67 ms |
+
+The slowest measured request across both runs was **5.28 ms**, in host homepage SSR. Local page verification passes; production Cloudflare CPU telemetry and maximum-size workloads remain unverified. This is not a production free-tier guarantee. [Cloudflare limits](https://developers.cloudflare.com/workers/platform/limits/) distinguish CPU time from network waiting.
 
 ## Reproduction and configuration
 
@@ -40,5 +54,13 @@ Use disposable `trptools_engagement_test` storage on local ports 5432/6379. Neve
 3. Run `engagement-worker-notifications.ts`, `engagement-worker-cpu.ts` and `engagement-worker-batch.ts` sequentially; they share one owned device fixture. The CPU sampler needs the DATABASE_URL test guard and inspector on 54102.
 4. Build Docker images and run the isolated API/frontend on 54101/54100 with the test database and matching FRONTEND_URL/ORIGIN. Run frontend `scripts/test-engagement-ui.ts` with ENGAGEMENT_UI_ORIGIN, ENGAGEMENT_API_ORIGIN and ENGAGEMENT_PUSH_CONFIGURED=false for an unconfigured Docker API. Run `test-engagement-push-ui.ts` with the configured Worker to exercise the optional push browser flow.
 5. Run frontend `test:runtime <image>` and `test:worker`. Save screenshots from `/tmp/trptools-engagement-visual`, and remove only the owned fixtures with `engagement-fixture.ts --clean`.
+
+For the independent page CPU recheck on macOS, keep the isolated API on 54002
+and run the compiled frontend with `wrangler dev --env local --port 54000
+--inspector-port 54103 --var PUBLIC_API_URL:http://localhost:54002 --var
+INTERNAL_API_URL:http://localhost:54002` (disable dotenv loading). Run
+`bun run scripts/engagement-page-cpu.ts`. It sets only the owned fixture's home
+layout, makes sequential requests and writes `/tmp/trptools-page-cpu-results.json`.
+The fixture and running Workers are required; the test does not deploy anything.
 
 Production browser push requires HTTPS, stable VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY, a contact VAPID_SUBJECT and ENCRYPTION_KEY. Workers additionally needs BACKGROUND_JOB_TOKEN and BASE_URL pointing back to the API Worker; the minute cron is declared in wrangler.jsonc. Set the new ANALYTICS_RATE_LIMIT binding. Compose/setup examples include these settings. Existing browsers must resubscribe after VAPID/encryption-key rotation. Unsupported browsers and unconfigured instances get an explanatory control. Push arrival is best-effort and may be delayed by the browser/provider; iOS requires a Home Screen installation.
