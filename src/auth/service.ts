@@ -17,6 +17,7 @@ import { avatarUrl, Discord, discordConfigured, displayName } from '../bot/disco
 import { adoptDiscordSignups } from '../schedule/identity'
 import { BotModel } from '../bot/model'
 import { robloxCreationDate } from '../utils/robloxProfile'
+import { robloxWriteScopes } from '../utils/robloxOAuthScopes'
 import { API_SCOPES, AuthModel } from './model'
 
 /**
@@ -25,7 +26,7 @@ import { API_SCOPES, AuthModel } from './model'
  * A refusal is not an error the browser should see as one — the callback is a
  * top-level navigation, so it has to end at a page that explains itself.
  */
-export type OAuthOutcome = { token: string } | { reverified: true } | { wrongAccount: true } | { scopeDenied: true } | { banned: { until: Date | null } }
+export type OAuthOutcome = { token: string } | { reverified: true } | { wrongAccount: true } | { scopeDenied: true } | { scopeCheckFailed: true } | { banned: { until: Date | null } }
 
 interface RobloxOAuthClaims {
     sub: string
@@ -92,7 +93,12 @@ export abstract class Session {
         let tokens: OAuth2Tokens
         try {
             tokens = await robloxOAuth.validateAuthorizationCode(code, storedCode)
-        } catch {
+        } catch (error) {
+            if (expectedUserId) {
+                const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+                const known = ['invalid_client', 'invalid_grant', 'invalid_request', 'unauthorized_client', 'server_error']
+                console.warn('[claimables:oauth] token exchange failed', { reason: typeof code === 'string' && known.includes(code) ? code : 'exchange-failed' })
+            }
             throw status(400, 'Bad Request' satisfies globalModel.badRequest)
         }
 
@@ -108,8 +114,14 @@ export abstract class Session {
             const [expected] = await db.select().from(users).where(eq(users.id, expectedUserId)).limit(1)
             if (!expected || expected.robloxId !== robloxId) return { wrongAccount: true }
             if (isBanned(expected)) return { banned: { until: expected.banExpiresAt } }
-            if (!tokens.hasScopes() || !tokens.scopes().includes('group:write')) return { scopeDenied: true }
-            await storeUserTokens(expected.id, tokens, [], true)
+            const grants = await robloxWriteScopes(tokens, env.ROBLOX_CLIENT_ID, env.ROBLOX_CLIENT_SECRET, robloxId)
+            if (grants.state === 'UNAVAILABLE') return { scopeCheckFailed: true }
+            if (grants.state === 'DENIED') return { scopeDenied: true }
+            try { await storeUserTokens(expected.id, tokens, grants.scopes, true) }
+            catch (error) {
+                console.error('[claimables:oauth] authorization storage failed')
+                throw error
+            }
             const created = await robloxCreationDate(tokens.accessToken(), robloxId)
             if (created) await db.update(users).set({ robloxCreatedAt: created }).where(eq(users.id, expected.id))
             return { reverified: true }

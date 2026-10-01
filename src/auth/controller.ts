@@ -57,7 +57,7 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
         roblox_oauth_state.set({ ...baseCookie, value: state, expires })
         roblox_code_verifier.set({ ...baseCookie, value: codeVerifier, expires })
         roblox_return_to.set({ ...baseCookie, value: next, expires })
-        return { url }
+        return Response.json({ url })
     }, { body: t.Object({ groupId: t.String() }), response: { 200: AuthModel.LoginUrlResponse, 401: globalModel.unauthorized, 403: globalModel.forbidden, 404: globalModel.notFound } })
 
     .get(
@@ -72,7 +72,7 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
             roblox_code_verifier.set({ ...baseCookie, value: codeVerifier, expires })
             roblox_return_to.set({ ...baseCookie, value: safeReturnPath(query.next, '/'), expires })
 
-            if (query.json === 'true') return { url } satisfies AuthModel.LoginUrlResponse
+            if (query.json === 'true') return Response.json({ url } satisfies AuthModel.LoginUrlResponse)
 
             return redirect(url, 303)
         },
@@ -90,32 +90,64 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
             const next = safeReturnPath(roblox_return_to.value as string | undefined, '/')
             roblox_return_to.remove()
             const retry = `&next=${encodeURIComponent(next)}`
-            const raw = query.state && query.state === roblox_oauth_state.value
-                ? await dataRedis.get(`roblox:reverify:${query.state}`) : null
-            const reverification = raw ? JSON.parse(raw) as { userId: string; next: string } : null
-            if (query.state && reverification) await dataRedis.del(`roblox:reverify:${query.state}`)
+            const storedState = roblox_oauth_state.value as string | undefined
+            const storedCode = roblox_code_verifier.value as string | undefined
+            const isReverification = Boolean(query.state?.startsWith('claimables-') || storedState?.startsWith('claimables-'))
+            const clearVerification = () => {
+                for (const cookie of [roblox_oauth_state, roblox_code_verifier, roblox_return_to]) {
+                    cookie.set({ ...baseCookie, value: '', maxAge: 0, expires: new Date(0) })
+                }
+            }
+            const failed = (reason: string) => {
+                // No codes, tokens, cookie values or provider error descriptions.
+                console.warn('[claimables:oauth] callback failed', { reason, worker: env.isCloudflareWorker })
+                clearVerification()
+                return redirect(`${FRONTEND_URL}${next}?roblox=${reason}`, 303)
+            }
+            if (isReverification && !storedState) return failed('state-missing')
+            if (isReverification && query.state !== storedState) return failed('state-mismatch')
+            if (isReverification && !storedCode) return failed('verifier-missing')
+            let raw: string | null = null
+            try {
+                if (query.state && query.state === storedState) raw = await dataRedis.get(`roblox:reverify:${query.state}`)
+            } catch (error) {
+                if (isReverification) return failed('state-store-failed')
+                throw error
+            }
+            let reverification: { userId: string; next: string } | null = null
+            try {
+                reverification = raw ? JSON.parse(raw) as { userId: string; next: string } : null
+                if (query.state && reverification) await dataRedis.del(`roblox:reverify:${query.state}`)
+            } catch (error) {
+                if (isReverification) return failed('state-store-failed')
+                throw error
+            }
 
             // The user declined, or Roblox refused the authorization.
             if (query.error || !query.code || !query.state) {
-                return redirect(reverification ? `${FRONTEND_URL}${next}?roblox=denied` : `${FRONTEND_URL}/login?error=denied${retry}`, 303)
+                if (isReverification) return failed(query.error ? 'denied' : 'callback-incomplete')
+                return redirect(`${FRONTEND_URL}/login?error=denied${retry}`, 303)
             }
 
-            if (query.state.startsWith('claimables-') && !reverification) return redirect(`${FRONTEND_URL}${next}?roblox=expired`, 303)
+            if (isReverification && !reverification) return failed('expired')
 
-            const outcome = await Session.VerifyOAuth(
-                query.code,
-                query.state,
-                roblox_code_verifier.value as string | undefined,
-                roblox_oauth_state.value as string | undefined,
-                reverification?.userId
-            )
+            let outcome: Awaited<ReturnType<typeof Session.VerifyOAuth>>
+            try {
+                outcome = await Session.VerifyOAuth(query.code, query.state, storedCode, storedState, reverification?.userId)
+            } catch (error) {
+                if (isReverification) return failed('verification-failed')
+                throw error
+            }
 
-            roblox_oauth_state.remove()
-            roblox_code_verifier.remove()
+            clearVerification()
 
-            if ('scopeDenied' in outcome) return redirect(`${FRONTEND_URL}${next}?roblox=denied`, 303)
-            if ('wrongAccount' in outcome) return redirect(`${FRONTEND_URL}${next}?roblox=wrong-account`, 303)
-            if ('reverified' in outcome) return redirect(`${FRONTEND_URL}${next}?roblox=verified`, 303)
+            if ('scopeDenied' in outcome) return failed('scope-denied')
+            if ('scopeCheckFailed' in outcome) return failed('scope-check-failed')
+            if ('wrongAccount' in outcome) return failed('wrong-account')
+            if ('reverified' in outcome) {
+                console.info('[claimables:oauth] callback verified', { worker: env.isCloudflareWorker })
+                return redirect(`${FRONTEND_URL}${next}?roblox=verified`, 303)
+            }
 
             if ('banned' in outcome) {
                 // Only when it lifts, never why — a suspension reason is
