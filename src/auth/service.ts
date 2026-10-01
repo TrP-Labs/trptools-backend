@@ -69,7 +69,14 @@ export abstract class Session {
 
         const state = write ? `claimables-${generateState()}` : generateState()
         const codeVerifier = generateCodeVerifier()
-        const url = robloxOAuth.createAuthorizationURL(state, codeVerifier, write ? [...OAUTH_SCOPES, 'group:write'] : OAUTH_SCOPES).toString()
+        const authorization = robloxOAuth.createAuthorizationURL(state, codeVerifier, write ? [...OAUTH_SCOPES, 'group:write'] : OAUTH_SCOPES)
+        if (write) {
+            authorization.searchParams.set('prompt', 'consent')
+            console.info('[claimables:oauth] fresh consent requested', {
+                clientId: env.ROBLOX_CLIENT_ID, scopes: [...OAUTH_SCOPES, 'group:write'], prompt: 'consent'
+            })
+        }
+        const url = authorization.toString()
 
         return { url, state, codeVerifier }
     }
@@ -117,7 +124,7 @@ export abstract class Session {
             const grants = await robloxWriteScopes(tokens, env.ROBLOX_CLIENT_ID, env.ROBLOX_CLIENT_SECRET, robloxId)
             if (grants.state === 'UNAVAILABLE') return { scopeCheckFailed: true }
             if (grants.state === 'DENIED') return { scopeDenied: true }
-            try { await storeUserTokens(expected.id, tokens, grants.scopes, true) }
+            try { await storeUserTokens(expected.id, tokens, grants.scopes, true, grants.scopes) }
             catch (error) {
                 console.error('[claimables:oauth] authorization storage failed')
                 throw error

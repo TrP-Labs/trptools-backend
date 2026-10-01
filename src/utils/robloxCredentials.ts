@@ -5,6 +5,7 @@ import { groups, users } from '../db/schema'
 import { decryptSecret, encryptSecret } from './crypto'
 import { env, robloxConfigured } from './env'
 import { dataRedis } from './redis'
+import { robloxWriteScopes } from './robloxOAuthScopes'
 import type { RobloxCredentials } from './roblox'
 
 export const robloxOAuth = robloxConfigured
@@ -50,6 +51,7 @@ export async function userCredentials(userId: string, write = false): Promise<Ro
             accessToken: write ? users.robloxWriteAccessToken : users.robloxAccessToken,
             refreshToken: write ? users.robloxWriteRefreshToken : users.robloxRefreshToken,
             expiresAt: write ? users.robloxWriteTokenExpiresAt : users.robloxTokenExpiresAt,
+            robloxId: users.robloxId,
             scopes: write ? users.robloxWriteScopes : users.robloxScopes
         })
         .from(users)
@@ -101,7 +103,14 @@ export async function userCredentials(userId: string, write = false): Promise<Ro
             ).where(eq(users.id, userId))
             return {}
         }
-        await storeUserTokens(userId, tokens, user.scopes.split(' '), write)
+        let verifiedScopes: string[] | undefined
+        if (write) {
+            const grants = await robloxWriteScopes(tokens, env.ROBLOX_CLIENT_ID, env.ROBLOX_CLIENT_SECRET, user.robloxId)
+            verifiedScopes = grants.state === 'UNAVAILABLE' ? [] : grants.scopes
+        }
+        // Persist the rotated refresh token even when permission verification
+        // failed; an unconfirmed token must not be used for rank changes.
+        await storeUserTokens(userId, tokens, user.scopes.split(' '), write, verifiedScopes)
         return { accessToken: tokens.accessToken() }
     } finally {
         await dataRedis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [lockKey], [owner]).catch(() => undefined)
@@ -109,7 +118,7 @@ export async function userCredentials(userId: string, write = false): Promise<Ro
 }
 
 /** Persists a fresh OAuth token set, encrypted. */
-export async function storeUserTokens(userId: string, tokens: OAuth2Tokens, fallbackScopes: string[] = OAUTH_SCOPES, write = false) {
+export async function storeUserTokens(userId: string, tokens: OAuth2Tokens, fallbackScopes: string[] = OAUTH_SCOPES, write = false, verifiedScopes?: string[]) {
     let refreshToken: string | null = null
     try {
         refreshToken = tokens.refreshToken()
@@ -126,7 +135,7 @@ export async function storeUserTokens(userId: string, tokens: OAuth2Tokens, fall
 
     const access = await encryptSecret(tokens.accessToken())
     const refresh = refreshToken ? await encryptSecret(refreshToken) : null
-    const scopes = (tokens.hasScopes() ? tokens.scopes() : fallbackScopes).join(' ')
+    const scopes = (verifiedScopes ?? (tokens.hasScopes() ? tokens.scopes() : fallbackScopes)).join(' ')
     await db.update(users).set(write
         ? { robloxWriteAccessToken: access, robloxWriteRefreshToken: refresh, robloxWriteTokenExpiresAt: expiresAt, robloxWriteScopes: scopes }
         : { robloxAccessToken: access, robloxRefreshToken: refresh, robloxTokenExpiresAt: expiresAt, robloxScopes: scopes }

@@ -15,6 +15,7 @@ const memberships = new Map<number, string[]>([[1, ['255']], [2, ['1', '20']], [
 let observed = structuredClone(memberships), delayed = false, writes: string[] = [], failReads = false, rejectWrites = false
 let oauthSub = '1', oauthScope = 'openid profile group:read group:write', refreshes = 0, omitScope = false
 let introspectionFails = false
+let introspectionScope: string | null = null
 const rolePath = (id: string) => `groups/99900001/roles/${id}`
 const jwt = () => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: oauthSub, preferred_username: 'TestOwner' })).toString('base64url')}.test`
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -30,7 +31,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     if (url.hostname === 'apis.roblox.com' && url.pathname === '/oauth/v1/userinfo') return Response.json({ sub: oauthSub, created_at: Math.floor((Date.now() - 90 * 86400_000) / 1000) })
     if (url.hostname === 'apis.roblox.com' && url.pathname === '/oauth/v1/token/introspect') {
         return introspectionFails ? new Response('', { status: 503 })
-            : Response.json({ active: true, sub: oauthSub, client_id: 'claimable-test', scope: oauthScope })
+            : Response.json({ active: true, sub: oauthSub, client_id: 'claimable-test', scope: introspectionScope ?? oauthScope })
     }
     if (url.hostname !== 'apis.roblox.com') throw new Error('External provider disabled in the claimable fixture')
     if (failReads && (!init?.method || init.method === 'GET')) return new Response('', { status: 429 })
@@ -131,6 +132,7 @@ try {
     const loginData = typeof login.data === 'string' ? JSON.parse(login.data) : login.data
     assert.ok(login.headers.get('content-type')?.includes('application/json'))
     assert.equal(new URL(loginData.url).searchParams.get('scope'), 'openid profile group:read')
+    assert.equal(new URL(loginData.url).searchParams.has('prompt'), false)
     await storeUserTokens(userId, new OAuth2Tokens({ access_token: 'mock-read-new', expires_in: 900, scope: 'openid profile group:read' }))
     assert.equal((await userCredentials(userId, true)).accessToken, 'mock-write-refreshed')
     assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
@@ -140,6 +142,7 @@ try {
     assert.ok(reverify.headers.get('content-type')?.includes('application/json'))
     const authUrl = new URL(reverify.data.url), state = authUrl.searchParams.get('state')!
     assert.ok(authUrl.searchParams.get('scope')?.includes('group:write'))
+    assert.equal(authUrl.searchParams.get('prompt'), 'consent')
     oauthSub = '2'
     assert.deepEqual(await Session.VerifyOAuth('mock-code', state, 'mock-verifier', state, userId), { wrongAccount: true })
     oauthSub = '1'; oauthScope = 'openid profile group:read'
@@ -179,6 +182,14 @@ try {
         assert.equal((await db.select().from(users).where(eq(users.id, userId)))[0]!.robloxWriteAccessToken, priorToken)
     }
     omitScope = false; introspectionFails = false; oauthScope = 'openid profile group:read group:write'
+    // The authoritative grant must survive storage and later token rotation.
+    const conflicting = await call('/auth/claimables/reverify', 'POST', { groupId })
+    const conflictingState = new URL(conflicting.data.url).searchParams.get('state')!
+    const conflictingCookies = conflicting.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ') + `; access_token=${ownerToken}`
+    introspectionScope = oauthScope; oauthScope = 'openid profile group:read'
+    const conflictingCallback = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${conflictingState}`, { headers: { cookie: conflictingCookies } }))
+    assert.equal(new URL(conflictingCallback.headers.get('location')!).searchParams.get('roblox'), 'verified')
+    assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
     // A missing parked reverification can never silently become a new login.
     const expired = await call('/auth/claimables/reverify', 'POST', { groupId })
     const expiredState = new URL(expired.data.url).searchParams.get('state')!
@@ -198,6 +209,8 @@ try {
     await db.update(users).set({ robloxWriteTokenExpiresAt: new Date(0), robloxWriteRefreshToken: await encryptSecret('mock-refresh') }).where(eq(users.id, userId))
     const refreshed = await Promise.all([userCredentials(userId, true), userCredentials(userId, true), userCredentials(userId, true)])
     assert.equal(refreshes, 1); assert.ok(refreshed.every(result => result.accessToken === 'mock-write-refreshed'))
+    assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
+    oauthScope = introspectionScope!; introspectionScope = null
     // Privileged grants never substitute for Roblox membership/age qualifications.
     failReads = true
     assert.equal((await expectStatus(path + '/me', 200, 'GET', undefined, memberToken)).canClaim, false)
