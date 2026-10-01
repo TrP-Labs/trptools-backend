@@ -30,6 +30,12 @@ export const users = pgTable(
         robloxRefreshToken: text('roblox_refresh_token'),
         robloxTokenExpiresAt: timestamp('roblox_token_expires_at', { withTimezone: true }),
         robloxScopes: text('roblox_scopes').notNull().default(''),
+        robloxCreatedAt: timestamp('roblox_created_at', { withTimezone: true }),
+        // Rank-change consent survives an ordinary read-only sign-in.
+        robloxWriteAccessToken: text('roblox_write_access_token'),
+        robloxWriteRefreshToken: text('roblox_write_refresh_token'),
+        robloxWriteTokenExpiresAt: timestamp('roblox_write_token_expires_at', { withTimezone: true }),
+        robloxWriteScopes: text('roblox_write_scopes').notNull().default(''),
 
         /**
          * A linked Discord account, so a sign-up taken from a Discord sheet

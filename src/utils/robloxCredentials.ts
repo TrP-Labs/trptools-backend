@@ -4,6 +4,7 @@ import db from '../db'
 import { groups, users } from '../db/schema'
 import { decryptSecret, encryptSecret } from './crypto'
 import { env, robloxConfigured } from './env'
+import { dataRedis } from './redis'
 import type { RobloxCredentials } from './roblox'
 
 export const robloxOAuth = robloxConfigured
@@ -43,12 +44,13 @@ export async function groupCredentials(groupId: string): Promise<RobloxCredentia
  * Roblox refresh tokens last 90 days and are single use — each refresh returns
  * a new pair, so the replacement is written straight back.
  */
-export async function userCredentials(userId: string): Promise<RobloxCredentials> {
+export async function userCredentials(userId: string, write = false): Promise<RobloxCredentials> {
     const [user] = await db
         .select({
-            accessToken: users.robloxAccessToken,
-            refreshToken: users.robloxRefreshToken,
-            expiresAt: users.robloxTokenExpiresAt
+            accessToken: write ? users.robloxWriteAccessToken : users.robloxAccessToken,
+            refreshToken: write ? users.robloxWriteRefreshToken : users.robloxRefreshToken,
+            expiresAt: write ? users.robloxWriteTokenExpiresAt : users.robloxTokenExpiresAt,
+            scopes: write ? users.robloxWriteScopes : users.robloxScopes
         })
         .from(users)
         .where(eq(users.id, userId))
@@ -65,28 +67,49 @@ export async function userCredentials(userId: string): Promise<RobloxCredentials
     const refreshToken = await decryptSecret(user.refreshToken)
     if (!refreshToken) return {}
 
-    let tokens: OAuth2Tokens
-    try {
-        tokens = await robloxOAuth.refreshAccessToken(refreshToken)
-    } catch {
-        // The refresh token is spent or revoked. Drop it so we stop retrying
-        // and fall back to the other credential tiers.
-        await db
-            .update(users)
-            .set({ robloxAccessToken: null, robloxRefreshToken: null, robloxTokenExpiresAt: null })
-            .where(eq(users.id, userId))
-            .catch(() => undefined)
+    const lockKey = `roblox:refresh:${write ? 'write' : 'read'}:${userId}`
+    const owner = crypto.randomUUID()
+    const acquired = await dataRedis.set(lockKey, owner, 'EX', 30, 'NX').catch(() => null)
+    if (!acquired) {
+        // A single-use refresh token must never be spent by two requests.
+        for (let attempt = 0; attempt < 40; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 250))
+            const held = await dataRedis.exists(lockKey).catch(() => null)
+            if (held === null) return {}
+            if (!held) return userCredentials(userId, write)
+        }
         return {}
     }
-
-    const accessToken = tokens.accessToken()
-    await storeUserTokens(userId, tokens)
-
-    return { accessToken }
+    try {
+        // A preceding refresh may have finished just before this lock was won.
+        const [current] = await db.select({
+            access: write ? users.robloxWriteAccessToken : users.robloxAccessToken,
+            refresh: write ? users.robloxWriteRefreshToken : users.robloxRefreshToken,
+            expires: write ? users.robloxWriteTokenExpiresAt : users.robloxTokenExpiresAt
+        }).from(users).where(eq(users.id, userId)).limit(1)
+        if (current?.expires && current.expires.getTime() - 60_000 > Date.now() && current.access) {
+            return { accessToken: await decryptSecret(current.access) }
+        }
+        const secret = current?.refresh ? await decryptSecret(current.refresh) : null
+        if (!secret) return {}
+        let tokens: OAuth2Tokens
+        try { tokens = await robloxOAuth.refreshAccessToken(secret) }
+        catch {
+            await db.update(users).set(write
+                ? { robloxWriteAccessToken: null, robloxWriteRefreshToken: null, robloxWriteTokenExpiresAt: null, robloxWriteScopes: '' }
+                : { robloxAccessToken: null, robloxRefreshToken: null, robloxTokenExpiresAt: null, robloxScopes: '' }
+            ).where(eq(users.id, userId))
+            return {}
+        }
+        await storeUserTokens(userId, tokens, user.scopes.split(' '), write)
+        return { accessToken: tokens.accessToken() }
+    } finally {
+        await dataRedis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", [lockKey], [owner]).catch(() => undefined)
+    }
 }
 
 /** Persists a fresh OAuth token set, encrypted. */
-export async function storeUserTokens(userId: string, tokens: OAuth2Tokens) {
+export async function storeUserTokens(userId: string, tokens: OAuth2Tokens, fallbackScopes: string[] = OAUTH_SCOPES, write = false) {
     let refreshToken: string | null = null
     try {
         refreshToken = tokens.refreshToken()
@@ -101,16 +124,13 @@ export async function storeUserTokens(userId: string, tokens: OAuth2Tokens) {
         expiresAt = new Date(Date.now() + 15 * 60 * 1000)
     }
 
-    await db
-        .update(users)
-        .set({
-            robloxAccessToken: await encryptSecret(tokens.accessToken()),
-            robloxRefreshToken: refreshToken ? await encryptSecret(refreshToken) : null,
-            robloxTokenExpiresAt: expiresAt,
-            robloxScopes: OAUTH_SCOPES.join(' ')
-        })
-        .where(eq(users.id, userId))
-        .catch(() => undefined)
+    const access = await encryptSecret(tokens.accessToken())
+    const refresh = refreshToken ? await encryptSecret(refreshToken) : null
+    const scopes = (tokens.hasScopes() ? tokens.scopes() : fallbackScopes).join(' ')
+    await db.update(users).set(write
+        ? { robloxWriteAccessToken: access, robloxWriteRefreshToken: refresh, robloxWriteTokenExpiresAt: expiresAt, robloxWriteScopes: scopes }
+        : { robloxAccessToken: access, robloxRefreshToken: refresh, robloxTokenExpiresAt: expiresAt, robloxScopes: scopes }
+    ).where(eq(users.id, userId))
 }
 
 /**

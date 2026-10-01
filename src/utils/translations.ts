@@ -26,6 +26,7 @@ export const TRANSLATABLE = {
     /** One slot on a sheet. */
     SLOT: ['name', 'description'],
     APPLICATION: ['name', 'description'],
+    CLAIMABLE: ['name', 'description'],
     /**
      * A question, a section heading, or an image.
      *

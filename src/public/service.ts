@@ -18,6 +18,7 @@ import { Roblox } from '../utils/roblox'
 import { mediaForOwners, mediaUrls } from '../media/service'
 import type { MediaModel } from '../media/model'
 import type { RouteModel } from '../groups/routes/model'
+import { publicClaimablesFor } from '../claimables/service'
 import { openApplicationsFor } from '../applications/service'
 import { groupName } from '../groups/service'
 import { presentTranslations } from '../utils/translations'
@@ -192,7 +193,7 @@ export abstract class PublicPages {
             .where(and(publishedDepot(group.id), eq(depots.showOnGroupPage, true)))
             .orderBy(asc(depots.order), asc(depots.number))
 
-        const [depotLinks, routeImages, depotImages, roster, upcomingShifts, openApplications] = await Promise.all([
+        const [depotLinks, routeImages, depotImages, roster, upcomingShifts, openApplications, claimableRanks] = await Promise.all([
             publicRoutes.length > 0
                 ? db.select().from(routeDepots).where(
                       inArray(
@@ -211,7 +212,8 @@ export abstract class PublicPages {
             ),
             group.showRoster ? this.roster(group.id, group.robloxId) : Promise.resolve([]),
             group.showShifts ? this.upcomingShifts(group.id) : Promise.resolve([]),
-            openApplicationsFor(group.id)
+            openApplicationsFor(group.id),
+            publicClaimablesFor(group.id)
         ])
 
         const depotsByRoute = new Map<string, string[]>()
@@ -252,7 +254,8 @@ export abstract class PublicPages {
             depots: publicDepots.map((depot) => presentDepot(depot, depotImages, icons)),
             roster,
             upcomingShifts,
-            openApplications
+            openApplications,
+            claimableRanks
         }
     }
 

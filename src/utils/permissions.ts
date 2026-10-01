@@ -85,6 +85,7 @@ export const PERM = {
      */
     EDIT_SIGNUPS: 1 << 18,
     /** End an active room early. Deliberately absent from the Host preset. */
+    MANAGE_CLAIMABLES: 1 << 20,
     CLOSE_ROOM: 1 << 19
 } as const
 
