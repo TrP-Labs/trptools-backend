@@ -5,7 +5,7 @@ import { groups, users } from '../db/schema'
 import { decryptSecret, encryptSecret } from './crypto'
 import { env, robloxConfigured } from './env'
 import { dataRedis } from './redis'
-import { robloxWriteScopes } from './robloxOAuthScopes'
+import { normalizeRobloxScopes, robloxWriteScopes } from './robloxOAuthScopes'
 import type { RobloxCredentials } from './roblox'
 
 export const robloxOAuth = robloxConfigured
@@ -135,7 +135,7 @@ export async function storeUserTokens(userId: string, tokens: OAuth2Tokens, fall
 
     const access = await encryptSecret(tokens.accessToken())
     const refresh = refreshToken ? await encryptSecret(refreshToken) : null
-    const scopes = (verifiedScopes ?? (tokens.hasScopes() ? tokens.scopes() : fallbackScopes)).join(' ')
+    const scopes = normalizeRobloxScopes(verifiedScopes ?? (tokens.hasScopes() ? tokens.scopes() : fallbackScopes)).join(' ')
     await db.update(users).set(write
         ? { robloxWriteAccessToken: access, robloxWriteRefreshToken: refresh, robloxWriteTokenExpiresAt: expiresAt, robloxWriteScopes: scopes }
         : { robloxAccessToken: access, robloxRefreshToken: refresh, robloxTokenExpiresAt: expiresAt, robloxScopes: scopes }

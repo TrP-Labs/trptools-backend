@@ -42,6 +42,8 @@ The API supports Garage, R2, and other S3 services; `S3_ENDPOINT` is for uploads
 
 Claimables request `group:write` and `prompt=select_account consent` only when a manager reverifies from the dashboard. Roblox requires account selection alongside explicit consent for third-party apps; `prompt=consent` alone is rejected. Normal login keeps its read-only scopes and default consent behavior. Write consent is stored separately. If a successful token exchange omits `scope` or does not list write access, the API confirms the token's actual grants through `/oauth/v1/token/introspect` before saving it. The confirmed grants are preserved through token rotation.
 
+Roblox returns combined actions such as `group:read,write` in token responses and introspection. These are normalized to `group:read group:write` before verifying and storing permissions. Checking only for a separate `group:write` entry would incorrectly refuse a valid authorization.
+
 Callback failures produce a specific toast and a `[claimables:oauth]` entry in Worker logs and the browser console. The reason distinguishes missing/mismatched verification cookies, expired Redis state, denied write access, and unavailable scope verification. Worker logs include the public OAuth client ID, requested scopes, response scopes and introspected scopes so an old read-only grant can be distinguished from a parsing or deployment mismatch. These diagnostics contain no tokens, authorization codes, client secrets, or cookie values.
 
 Run the integration regression against an isolated database named `trptools_claimable_test` with migrations applied and a temporary Redis on port 54132:

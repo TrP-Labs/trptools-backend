@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { OAuth2Tokens } from 'arctic'
-import { robloxWriteScopes } from './robloxOAuthScopes'
+import { normalizeRobloxScopes, robloxWriteScopes } from './robloxOAuthScopes'
 
 describe('Roblox write consent', () => {
     const token = (scope?: string) => new OAuth2Tokens({ access_token: 'test-access', ...(scope === undefined ? {} : { scope }) })
@@ -8,6 +8,23 @@ describe('Roblox write consent', () => {
     test('an explicit grant needs no additional provider request', async () => {
         const result = await robloxWriteScopes(token(info.scope), 'test-client', 'test-secret', 42, async () => { throw new Error('Should not fetch') })
         expect(result.state).toBe('VERIFIED')
+    })
+    test('the live Roblox combined read/write response grants write access', async () => {
+        expect(await robloxWriteScopes(token('group:read,write openid profile'), 'test-client', 'test-secret', 42,
+            async () => { throw new Error('Should not fetch') })).toEqual({ state: 'VERIFIED', scopes: ['group:read', 'group:write', 'openid', 'profile'] })
+    })
+    test('combined introspection grants are normalized too', async () => {
+        expect(await robloxWriteScopes(token(), 'test-client', 'test-secret', 42,
+            async () => Response.json({ ...info, scope: 'group:read,write openid profile' })))
+            .toEqual({ state: 'VERIFIED', scopes: ['group:read', 'group:write', 'openid', 'profile'] })
+    })
+    test('combined actions cannot cross resource namespaces or invent write permission', async () => {
+        expect(normalizeRobloxScopes(['group:read user.advanced:read,write openid profile group:read']))
+            .toEqual(['group:read', 'user.advanced:read', 'user.advanced:write', 'openid', 'profile'])
+        for (const scope of ['group:read user.advanced:read,write', 'group:read write', 'group:read,other:write', 'group:read,write-other']) {
+            expect((await robloxWriteScopes(token(scope), 'test-client', 'test-secret', 42,
+                async () => Response.json({ ...info, scope }))).state).toBe('DENIED')
+        }
     })
     test('missing optional scope is verified and persisted from introspection', async () => {
         const result = await robloxWriteScopes(token(), 'test-client', 'test-secret', 42, async (url, init) => {
