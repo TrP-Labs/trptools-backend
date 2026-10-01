@@ -21,9 +21,15 @@ describe('Roblox write consent', () => {
         })
         expect(result).toEqual({ state: 'VERIFIED', scopes: info.scope.split(' ') })
     })
-    test('an explicit denied scope is never replaced by requested permissions', async () => {
+    test('read-only response scopes are checked against the actual token', async () => {
         expect(await robloxWriteScopes(token('openid profile group:read'), 'test-client', 'test-secret', 42,
-            async () => { throw new Error('Should not fetch') })).toEqual({ state: 'DENIED', scopes: ['openid', 'profile', 'group:read'] })
+            async () => Response.json({ ...info, scope: 'openid profile group:read' }))).toEqual({ state: 'DENIED', scopes: ['openid', 'profile', 'group:read'] })
+        expect(await robloxWriteScopes(token('openid profile group:read'), 'test-client', 'test-secret', 42,
+            async () => Response.json(info))).toEqual({ state: 'VERIFIED', scopes: info.scope.split(' ') })
+    })
+    test('scope parsing handles all OAuth whitespace separators', async () => {
+        expect((await robloxWriteScopes(token('openid\tprofile\ngroup:write'), 'test-client', 'test-secret', 42,
+            async () => { throw new Error('Should not fetch') })).state).toBe('VERIFIED')
     })
     test('introspection can confirm that write access was not granted', async () => {
         expect((await robloxWriteScopes(token(), 'test-client', 'test-secret', 42,
