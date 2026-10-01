@@ -38,6 +38,21 @@ For Cloudflare Builds, use `bun install --frozen-lockfile` as the build command 
 
 The API supports Garage, R2, and other S3 services; `S3_ENDPOINT` is for uploads and `S3_PUBLIC_URL` is the full browser-facing image base. Group Open Cloud keys are optional and must be user-owned.
 
+### Claimable rank authorization
+
+Claimables request `group:write` only when a manager reverifies from the dashboard. Normal login keeps its read-only scopes. Write consent is stored separately. If Roblox omits the optional `scope` field from a successful token exchange, the API confirms the token's actual grants through `/oauth/v1/token/introspect` before saving it.
+
+Callback failures produce a specific toast and a `[claimables:oauth]` entry in Worker logs and the browser console. The reason distinguishes missing/mismatched verification cookies, expired Redis state, denied write access, and unavailable scope verification. These diagnostics contain no tokens, authorization codes, or cookie values.
+
+Run the integration regression against an isolated database named `trptools_claimable_test` with migrations applied and a temporary Redis on port 54132:
+
+```bash
+DATABASE_URL=postgresql://localhost/trptools_claimable_test REDIS_URL=redis://localhost:54132 bun --no-env-file scripts/claimables-api.test.ts
+DATABASE_URL=postgresql://localhost/trptools_claimable_test REDIS_URL=redis://localhost:54132 bun --no-env-file scripts/claimables-api.test.ts --worker
+```
+
+The Worker variant runs the deployed entry in `workerd` with local Neon/Upstash bridges. Every Roblox response is mocked; it never authorizes or changes a real group.
+
 ## Discord (optional)
 
 1. Set `DISCORD_APP_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, and `BOT_SERVICE_TOKEN`.

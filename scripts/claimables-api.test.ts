@@ -13,18 +13,25 @@ const roles = [{ id: '1', displayName: 'Member', rank: 1 }, { id: '10', displayN
     { id: '20', displayName: 'Mechanic', rank: 20 }, { id: '100', displayName: 'Host', rank: 100 }, { id: '255', displayName: 'Owner', rank: 255 }]
 const memberships = new Map<number, string[]>([[1, ['255']], [2, ['1', '20']], [4, ['100']]])
 let observed = structuredClone(memberships), delayed = false, writes: string[] = [], failReads = false, rejectWrites = false
-let oauthSub = '1', oauthScope = 'openid profile group:read group:write', refreshes = 0
+let oauthSub = '1', oauthScope = 'openid profile group:read group:write', refreshes = 0, omitScope = false
+let introspectionFails = false
 const rolePath = (id: string) => `groups/99900001/roles/${id}`
 const jwt = () => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: oauthSub, preferred_username: 'TestOwner' })).toString('base64url')}.test`
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url)
     if (['localhost', '127.0.0.1'].includes(url.hostname)) return realFetch(input, init)
+    if (input instanceof Request) init = { method: input.method, headers: input.headers,
+        ...(!['GET', 'HEAD'].includes(input.method) ? { body: await input.clone().text() } : {}), ...init }
     if (url.hostname === 'apis.roblox.com' && url.pathname === '/oauth/v1/token') {
         const body = input instanceof Request ? await input.clone().text() : String(init?.body)
         if (body.includes('refresh_token')) { refreshes++; await Bun.sleep(100) }
-        return Response.json({ access_token: 'mock-write-refreshed', refresh_token: 'mock-refresh-next', expires_in: 900, token_type: 'Bearer', scope: oauthScope, id_token: jwt() })
+        return Response.json({ access_token: 'mock-write-refreshed', refresh_token: 'mock-refresh-next', expires_in: 900, token_type: 'Bearer', ...(!omitScope ? { scope: oauthScope } : {}), id_token: jwt() })
     }
     if (url.hostname === 'apis.roblox.com' && url.pathname === '/oauth/v1/userinfo') return Response.json({ sub: oauthSub, created_at: Math.floor((Date.now() - 90 * 86400_000) / 1000) })
+    if (url.hostname === 'apis.roblox.com' && url.pathname === '/oauth/v1/token/introspect') {
+        return introspectionFails ? new Response('', { status: 503 })
+            : Response.json({ active: true, sub: oauthSub, client_id: 'claimable-test', scope: oauthScope })
+    }
     if (url.hostname !== 'apis.roblox.com') throw new Error('External provider disabled in the claimable fixture')
     if (failReads && (!init?.method || init.method === 'GET')) return new Response('', { status: 429 })
     if (url.pathname.endsWith('/roles')) return Response.json({ groupRoles: roles })
@@ -48,6 +55,9 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     throw new Error(`Unexpected mock provider request ${url.pathname}`)
 }) as typeof fetch
 const { app } = await import('../src/index')
+const worker = process.argv.includes('--worker')
+    ? await (await import('./claimables-worker-fixture')).startClaimableWorker(realFetch, globalThis.fetch) : null
+const handle = (request: Request) => worker ? worker.handle(request) : app.handle(request)
 const { default: db, client } = await import('../src/db')
 const { users, groups, rankRelations, sessions, claimableRanks, auditMessages, claimableConnections } = await import('../src/db/schema')
 const { encryptSecret } = await import('../src/utils/crypto')
@@ -58,7 +68,7 @@ const { Session } = await import('../src/auth/service')
 const userId = crypto.randomUUID(), memberId = crypto.randomUUID(), outsiderId = crypto.randomUUID(), narrowId = crypto.randomUUID(), groupId = crypto.randomUUID()
 const ownerToken = crypto.randomUUID(), memberToken = crypto.randomUUID(), outsiderToken = crypto.randomUUID(), narrowToken = crypto.randomUUID()
 async function call(path: string, method = 'GET', body?: unknown, token: string | null = ownerToken, origin = 'http://localhost:54100') {
-    const response = await app.handle(new Request('http://localhost:54101' + path, { method, headers: {
+    const response = await handle(new Request('http://localhost:54101' + path, { method, headers: {
         ...(token ? { cookie: `access_token=${token}` } : {}), origin, ...(body ? { 'content-type': 'application/json' } : {})
     }, ...(body ? { body: JSON.stringify(body) } : {}) }))
     const text = await response.text()
@@ -118,13 +128,16 @@ try {
     assert.equal(audit.filter(row => row.action === 'claimable.claim').length, 1)
     // Ordinary login is read-only and leaves explicit write consent untouched.
     const login = await call('/auth/login?json=true')
-    assert.equal(new URL(login.data.url).searchParams.get('scope'), 'openid profile group:read')
+    const loginData = typeof login.data === 'string' ? JSON.parse(login.data) : login.data
+    assert.ok(login.headers.get('content-type')?.includes('application/json'))
+    assert.equal(new URL(loginData.url).searchParams.get('scope'), 'openid profile group:read')
     await storeUserTokens(userId, new OAuth2Tokens({ access_token: 'mock-read-new', expires_in: 900, scope: 'openid profile group:read' }))
     assert.equal((await userCredentials(userId, true)).accessToken, 'mock-write-refreshed')
     assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
     // Reverification verifies identity before storing any privileged token.
     const reverify = await call('/auth/claimables/reverify', 'POST', { groupId })
     assert.equal(reverify.status, 200)
+    assert.ok(reverify.headers.get('content-type')?.includes('application/json'))
     const authUrl = new URL(reverify.data.url), state = authUrl.searchParams.get('state')!
     assert.ok(authUrl.searchParams.get('scope')?.includes('group:write'))
     oauthSub = '2'
@@ -136,18 +149,49 @@ try {
     await db.update(users).set({ siteRank: 'admin' }).where(eq(users.id, userId))
     await db.update(sessions).set({ adminMode: true }).where(eq(sessions.sessionId, hashToken(ownerToken)))
     const cookies = reverify.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ') + `; access_token=${ownerToken}`
-    const callback = await app.handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${state}`, { headers: { cookie: cookies } }))
+    const callback = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${state}`, { headers: { cookie: cookies } }))
     assert.equal(callback.status, 303)
     assert.equal(new URL(callback.headers.get('location')!).searchParams.get('roblox'), 'verified')
     assert.ok(!callback.headers.getSetCookie().some(cookie => cookie.startsWith('access_token=')))
     assert.equal((await expectStatus('/auth/session', 200)).user.adminMode, true)
+    // OAuth may omit scope when the granted set is identical to the request.
+    const noScope = await call('/auth/claimables/reverify', 'POST', { groupId })
+    const noScopeState = new URL(noScope.data.url).searchParams.get('state')!
+    const noScopeCookies = noScope.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ') + `; access_token=${ownerToken}`
+    omitScope = true
+    const noScopeCallback = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${noScopeState}`, { headers: { cookie: noScopeCookies } }))
+    assert.equal(new URL(noScopeCallback.headers.get('location')!).searchParams.get('roblox'), 'verified')
+    assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
+    // Omitted scopes still fail closed when Roblox cannot verify the token.
+    introspectionFails = true
+    assert.deepEqual(await Session.VerifyOAuth('mock-code', state, 'mock-verifier', state, userId), { scopeCheckFailed: true })
+    introspectionFails = false
+    omitScope = false
+    const priorToken = (await db.select().from(users).where(eq(users.id, userId)))[0]!.robloxWriteAccessToken
+    for (const reason of ['scope-denied', 'scope-check-failed'] as const) {
+        const attempt = await call('/auth/claimables/reverify', 'POST', { groupId })
+        const attemptState = new URL(attempt.data.url).searchParams.get('state')!
+        const attemptCookies = attempt.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ') + `; access_token=${ownerToken}`
+        oauthScope = reason === 'scope-denied' ? 'openid profile group:read' : 'openid profile group:read group:write'
+        omitScope = reason === 'scope-check-failed'; introspectionFails = omitScope
+        const response = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${attemptState}`, { headers: { cookie: attemptCookies } }))
+        assert.equal(new URL(response.headers.get('location')!).searchParams.get('roblox'), reason)
+        assert.equal((await db.select().from(users).where(eq(users.id, userId)))[0]!.robloxWriteAccessToken, priorToken)
+    }
+    omitScope = false; introspectionFails = false; oauthScope = 'openid profile group:read group:write'
     // A missing parked reverification can never silently become a new login.
     const expired = await call('/auth/claimables/reverify', 'POST', { groupId })
     const expiredState = new URL(expired.data.url).searchParams.get('state')!
     await dataRedis.del(`roblox:reverify:${expiredState}`)
     const expiredCookies = expired.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ') + `; access_token=${ownerToken}`
-    const expiredCallback = await app.handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${expiredState}`, { headers: { cookie: expiredCookies } }))
+    const expiredCallback = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${expiredState}`, { headers: { cookie: expiredCookies } }))
     assert.equal(new URL(expiredCallback.headers.get('location')!).searchParams.get('roblox'), 'expired')
+    const missingCookie = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${expiredState}`,
+        { headers: { cookie: `access_token=${ownerToken}; roblox_return_to=${encodeURIComponent('/dashboard/claimable-test/claimables')}` } }))
+    assert.equal(new URL(missingCookie.headers.get('location')!).searchParams.get('roblox'), 'state-missing')
+    const mismatch = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${expiredState}`,
+        { headers: { cookie: expiredCookies.replace(expiredState, 'claimables-another-state') } }))
+    assert.equal(new URL(mismatch.headers.get('location')!).searchParams.get('roblox'), 'state-mismatch')
     await db.update(users).set({ siteRank: 'user' }).where(eq(users.id, userId))
     await db.update(sessions).set({ adminMode: false }).where(eq(sessions.sessionId, hashToken(ownerToken)))
     // Token rotation has one winner, and preserves actually granted scopes.
@@ -194,6 +238,7 @@ try {
         await new Promise(() => {})
     }
 } finally {
+    await worker?.stop()
     globalThis.fetch = realFetch
     await db.delete(groups).where(eq(groups.id, groupId))
     for (const id of [userId, memberId, outsiderId, narrowId]) await db.delete(users).where(eq(users.id, id))
