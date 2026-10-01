@@ -1,0 +1,1 @@
+ALTER TABLE "claimable_ranks" ADD COLUMN "translations" jsonb DEFAULT '{}'::jsonb NOT NULL;

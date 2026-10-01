@@ -3,6 +3,8 @@ import { PublicModel } from './model'
 import { PublicPages } from './service'
 import { ApplicationModel } from '../applications/model'
 import { Applications } from '../applications/service'
+import { Claimables } from '../claimables/service'
+import { ClaimableModel } from '../claimables/model'
 import { globalModel } from '../utils/globalModel'
 
 export const publicPages = new Elysia({ prefix: '/public', tags: ['Public'] })
@@ -16,6 +18,11 @@ export const publicPages = new Elysia({ prefix: '/public', tags: ['Public'] })
         params: t.Object({ slug: t.String({ maxLength: 48 }), destination: t.Union([t.Literal('roblox'), t.Literal('discord')]) }),
         response: { 200: PublicModel.joinPage, 404: globalModel.notFound },
         detail: { summary: 'Read a group’s external join destination' }
+    })
+
+    .get('/groups/:slug/claimables/:claimSlug', ({ params }) => Claimables.publicPage(params.slug, params.claimSlug), {
+        params: t.Object({ slug: t.String(), claimSlug: t.String() }),
+        response: { 200: ClaimableModel.item, 404: ClaimableModel.invalid }
     })
 
     .get('/groups', async ({ query }) => PublicPages.directory(query), {

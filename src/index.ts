@@ -17,6 +17,7 @@ import { ranks } from './groups/rank/controller'
 import { route, depot } from './groups/routes/controller'
 import { schedule } from './schedule/controller'
 import { signups } from './signups/controller'
+import { claimables } from './claimables/controller'
 import { applicationRoutes } from './applications/controller'
 import { host } from './host/controller'
 import { rooms } from './rooms/controller'
@@ -128,6 +129,7 @@ export const app = new Elysia()
     .use(schedule)
     .use(signups)
     .use(applicationRoutes)
+    .use(claimables)
     .use(rooms)
     .use(host)
     .use(dispatch)

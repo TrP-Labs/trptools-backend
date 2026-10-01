@@ -16,6 +16,7 @@ import { FRONTEND_URL } from '../utils/env'
 import { avatarUrl, Discord, discordConfigured, displayName } from '../bot/discord'
 import { adoptDiscordSignups } from '../schedule/identity'
 import { BotModel } from '../bot/model'
+import { robloxCreationDate } from '../utils/robloxProfile'
 import { API_SCOPES, AuthModel } from './model'
 
 /**
@@ -24,7 +25,7 @@ import { API_SCOPES, AuthModel } from './model'
  * A refusal is not an error the browser should see as one — the callback is a
  * top-level navigation, so it has to end at a page that explains itself.
  */
-export type OAuthOutcome = { token: string } | { banned: { until: Date | null } }
+export type OAuthOutcome = { token: string } | { reverified: true } | { wrongAccount: true } | { scopeDenied: true } | { banned: { until: Date | null } }
 
 interface RobloxOAuthClaims {
     sub: string
@@ -60,14 +61,14 @@ export function presentDiscord(user: {
 }
 
 export abstract class Session {
-    static async GenerateLogin(): Promise<AuthModel.GeneratedLoginData> {
+    static async GenerateLogin(write = false): Promise<AuthModel.GeneratedLoginData> {
         if (!robloxOAuth) {
             throw status(503, 'Roblox OAuth is not configured' satisfies AuthModel.oauthUnavailable)
         }
 
-        const state = generateState()
+        const state = write ? `claimables-${generateState()}` : generateState()
         const codeVerifier = generateCodeVerifier()
-        const url = robloxOAuth.createAuthorizationURL(state, codeVerifier, OAUTH_SCOPES).toString()
+        const url = robloxOAuth.createAuthorizationURL(state, codeVerifier, write ? [...OAUTH_SCOPES, 'group:write'] : OAUTH_SCOPES).toString()
 
         return { url, state, codeVerifier }
     }
@@ -76,7 +77,8 @@ export abstract class Session {
         code: string,
         state: string,
         storedCode: string | undefined,
-        storedState: string | undefined
+        storedState: string | undefined,
+        expectedUserId?: string
     ): Promise<OAuthOutcome> {
         if (!robloxOAuth) {
             throw status(503, 'Roblox OAuth is not configured' satisfies AuthModel.oauthUnavailable)
@@ -102,6 +104,17 @@ export abstract class Session {
         }
 
         const robloxId = Number(robloxUserId)
+        if (expectedUserId) {
+            const [expected] = await db.select().from(users).where(eq(users.id, expectedUserId)).limit(1)
+            if (!expected || expected.robloxId !== robloxId) return { wrongAccount: true }
+            if (isBanned(expected)) return { banned: { until: expected.banExpiresAt } }
+            if (!tokens.hasScopes() || !tokens.scopes().includes('group:write')) return { scopeDenied: true }
+            await storeUserTokens(expected.id, tokens, [], true)
+            const created = await robloxCreationDate(tokens.accessToken(), robloxId)
+            if (created) await db.update(users).set({ robloxCreatedAt: created }).where(eq(users.id, expected.id))
+            return { reverified: true }
+        }
+
         const isSiteAdmin = env.SITE_ADMINS.includes(robloxUserId)
 
         const identity = {
@@ -137,6 +150,8 @@ export abstract class Session {
         // Hold on to the OAuth tokens — Open Cloud v2 needs a bearer token to
         // read group membership, and this is the only chance to capture them.
         await storeUserTokens(user.id, tokens)
+        const created = await robloxCreationDate(tokens.accessToken(), robloxId)
+        if (created) await db.update(users).set({ robloxCreatedAt: created }).where(eq(users.id, user.id))
 
         const sessionToken = generateSessionToken()
 

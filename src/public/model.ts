@@ -153,7 +153,8 @@ export namespace PublicModel {
          * opened it, which is already the decision to publish it. A closed one
          * is simply absent.
          */
-        openApplications: t.Array(ApplicationModel.publicApplicationSummary)
+        openApplications: t.Array(ApplicationModel.publicApplicationSummary),
+        claimableRanks: t.Array(t.Object({ id: t.String(), slug: t.String(), name: t.String(), description: t.String(), color: t.String(), translations: translationsResponse, rankName: t.Nullable(t.String()) }))
     })
     export type groupPage = typeof groupPage.static
 }

@@ -1,4 +1,8 @@
 import { Elysia, redirect, status, t } from 'elysia'
+import { dataRedis } from '../utils/redis'
+import { findGroup } from '../groups/service'
+import { assertGroupPermission } from '../utils/groupPermission'
+import { PERM } from '../utils/permissions'
 import { safeReturnPath } from '../utils/returnPath'
 import { AuthModel } from './model'
 import { ApiKeys, DiscordLink, Session } from './service'
@@ -39,6 +43,23 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
 
     .use(sessionPlugin)
 
+    .post('/claimables/reverify', async ({ session, body, cookie: { roblox_oauth_state, roblox_code_verifier, roblox_return_to }, request }) => {
+        const user = requireUser(session)
+        if (session.viaApiKey) throw status(403, 'Forbidden')
+        const group = await findGroup(body.groupId)
+        if (!group) throw status(404, 'Not Found')
+        await assertGroupPermission(session, group.id, PERM.MANAGE_CLAIMABLES)
+        await rateLimit('auth:login', clientKey(request), 20, 60)
+        const { url, state, codeVerifier } = await Session.GenerateLogin(true)
+        const next = `/dashboard/${group.slug}/claimables`
+        await dataRedis.set(`roblox:reverify:${state}`, JSON.stringify({ userId: user.userId, next }), 'EX', 600)
+        const expires = new Date(Date.now() + OAUTH_COOKIE_TTL_MS)
+        roblox_oauth_state.set({ ...baseCookie, value: state, expires })
+        roblox_code_verifier.set({ ...baseCookie, value: codeVerifier, expires })
+        roblox_return_to.set({ ...baseCookie, value: next, expires })
+        return { url }
+    }, { body: t.Object({ groupId: t.String() }), response: { 200: AuthModel.LoginUrlResponse, 401: globalModel.unauthorized, 403: globalModel.forbidden, 404: globalModel.notFound } })
+
     .get(
         '/login',
         async ({ cookie: { roblox_oauth_state, roblox_code_verifier, roblox_return_to }, query, request }) => {
@@ -69,21 +90,32 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
             const next = safeReturnPath(roblox_return_to.value as string | undefined, '/')
             roblox_return_to.remove()
             const retry = `&next=${encodeURIComponent(next)}`
+            const raw = query.state && query.state === roblox_oauth_state.value
+                ? await dataRedis.get(`roblox:reverify:${query.state}`) : null
+            const reverification = raw ? JSON.parse(raw) as { userId: string; next: string } : null
+            if (query.state && reverification) await dataRedis.del(`roblox:reverify:${query.state}`)
 
             // The user declined, or Roblox refused the authorization.
             if (query.error || !query.code || !query.state) {
-                return redirect(`${FRONTEND_URL}/login?error=denied${retry}`, 303)
+                return redirect(reverification ? `${FRONTEND_URL}${next}?roblox=denied` : `${FRONTEND_URL}/login?error=denied${retry}`, 303)
             }
+
+            if (query.state.startsWith('claimables-') && !reverification) return redirect(`${FRONTEND_URL}${next}?roblox=expired`, 303)
 
             const outcome = await Session.VerifyOAuth(
                 query.code,
                 query.state,
                 roblox_code_verifier.value as string | undefined,
-                roblox_oauth_state.value as string | undefined
+                roblox_oauth_state.value as string | undefined,
+                reverification?.userId
             )
 
             roblox_oauth_state.remove()
             roblox_code_verifier.remove()
+
+            if ('scopeDenied' in outcome) return redirect(`${FRONTEND_URL}${next}?roblox=denied`, 303)
+            if ('wrongAccount' in outcome) return redirect(`${FRONTEND_URL}${next}?roblox=wrong-account`, 303)
+            if ('reverified' in outcome) return redirect(`${FRONTEND_URL}${next}?roblox=verified`, 303)
 
             if ('banned' in outcome) {
                 // Only when it lifts, never why — a suspension reason is
