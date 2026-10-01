@@ -142,7 +142,8 @@ try {
     assert.ok(reverify.headers.get('content-type')?.includes('application/json'))
     const authUrl = new URL(reverify.data.url), state = authUrl.searchParams.get('state')!
     assert.ok(authUrl.searchParams.get('scope')?.includes('group:write'))
-    assert.equal(authUrl.searchParams.get('prompt'), 'consent')
+    // Third-party Roblox authorization requires select_account alongside explicit consent.
+    assert.equal(authUrl.searchParams.get('prompt'), 'select_account consent')
     oauthSub = '2'
     assert.deepEqual(await Session.VerifyOAuth('mock-code', state, 'mock-verifier', state, userId), { wrongAccount: true })
     oauthSub = '1'; oauthScope = 'openid profile group:read'

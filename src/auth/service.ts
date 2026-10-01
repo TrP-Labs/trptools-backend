@@ -71,9 +71,12 @@ export abstract class Session {
         const codeVerifier = generateCodeVerifier()
         const authorization = robloxOAuth.createAuthorizationURL(state, codeVerifier, write ? [...OAUTH_SCOPES, 'group:write'] : OAUTH_SCOPES)
         if (write) {
-            authorization.searchParams.set('prompt', 'consent')
+            // Roblox requires account selection for third-party apps when prompt is explicit.
+            // Consent alone is rejected before the user can grant the requested scopes.
+            const prompt = 'select_account consent'
+            authorization.searchParams.set('prompt', prompt)
             console.info('[claimables:oauth] fresh consent requested', {
-                clientId: env.ROBLOX_CLIENT_ID, scopes: [...OAUTH_SCOPES, 'group:write'], prompt: 'consent'
+                clientId: env.ROBLOX_CLIENT_ID, scopes: [...OAUTH_SCOPES, 'group:write'], prompt
             })
         }
         const url = authorization.toString()
