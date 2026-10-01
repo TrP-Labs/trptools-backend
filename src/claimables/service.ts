@@ -63,7 +63,11 @@ async function checkEditor(groupId: string, rankId: string, maximum: number, ses
     if (!rank || rank.cachedRank < 1 || rank.cachedRank >= 255) throw status(400, 'This claimable rank is unavailable')
     if (!isSiteAdmin(session)) {
         const group = await groupFor(groupId)
-        const { accessToken } = await userCredentials(requireUser(session).userId)
+        const editorId = requireUser(session).userId
+        // Reverification grants group:read alongside group:write. Prefer that
+        // current authorization when the editor's older read token is no longer usable.
+        const authorized = await userCredentials(editorId, true)
+        const { accessToken } = authorized.accessToken ? authorized : await userCredentials(editorId)
         if (!accessToken) throw status(503, 'The group needs to reconnect Roblox rank changes')
         const cloud = new RankCloud(accessToken)
         const roles = await cloud.roles(group.robloxId)

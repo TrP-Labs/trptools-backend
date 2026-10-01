@@ -104,9 +104,16 @@ try {
     assert.equal((await call('/claimables', 'POST', { groupId, name: 'Driver', rankId: driver.id }, ownerToken, 'https://evil.example')).status, 403)
     await expectStatus('/claimables/connection', 200, 'POST', { groupId })
     await expectStatus('/claimables', 400, 'POST', { groupId, name: 'Owner', rankId: owner.id })
+    // Reverification can leave only the new combined read/write authorization usable.
+    // Creating and editing must check this editor's live rank with that token.
+    await db.update(users).set({ robloxAccessToken: null, robloxRefreshToken: null, robloxTokenExpiresAt: null, robloxScopes: '' }).where(eq(users.id, userId))
     const claim = await expectStatus('/claimables', 200, 'POST', { groupId, name: 'Become a Driver', rankId: driver.id })
     const path = '/claimables/' + claim.id
     assert.equal(claim.enabled, false); assert.equal(claim.color, driver.color); assert.equal(claim.maximumRank, 10)
+    // Another editor without write consent still uses their own read authorization.
+    const hostOffer = await expectStatus('/claimables', 200, 'POST', { groupId, name: 'Host driver offer', rankId: driver.id }, narrowToken)
+    await expectStatus('/claimables/' + hostOffer.id, 200, 'PATCH', { name: 'Host driver offer updated' }, narrowToken)
+    await expectStatus('/claimables/' + hostOffer.id, 200, 'DELETE', undefined, narrowToken)
     await expectStatus('/public/groups/claimable-test/claimables/' + claim.slug, 404, 'GET', undefined, null)
     await expectStatus(path, 200, 'PATCH', { enabled: true, maximumRank: 20, minimumAccountAgeDays: 30, requireDiscord: true, translations: { name: { de: 'Fahrer werden' }, forbidden: { de: 'Hidden' } } })
     const translated = await expectStatus('/public/groups/claimable-test/claimables/' + claim.slug, 200, 'GET', undefined, null)
