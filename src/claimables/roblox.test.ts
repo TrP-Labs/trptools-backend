@@ -1,5 +1,14 @@
 import { expect, test } from 'bun:test'
 import { RankCloud, highestRank, membershipRoles } from './roblox'
+test('the default transport does not bind native fetch to the RankCloud instance', async () => {
+    const original = globalThis.fetch
+    globalThis.fetch = (function (this: unknown) {
+        if (this instanceof RankCloud) throw new TypeError('Illegal invocation')
+        return Promise.resolve(Response.json({ groupMemberships: [{ path: 'groups/5/memberships/abc', user: 'users/7', role: 'groups/5/roles/10' }] }))
+    }) as unknown as typeof fetch
+    try { expect((await new RankCloud('manager').membership(5, 7))?.path).toBe('groups/5/memberships/abc') }
+    finally { globalThis.fetch = original }
+})
 test('fresh reads authenticate with the manager token and filter the exact claimant', async () => {
     const request = (async (url: string | URL | Request, init?: RequestInit) => {
         expect(init?.cache).toBe('no-store')
