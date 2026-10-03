@@ -1,5 +1,9 @@
 # Host feature verification
 
+The follow-up to the 3.3.2 Workers bug reports is recorded separately in
+[the October 2 regression report](host-regression-2026-10-02.md), including
+the additional renderer failure and the limits of local service substitutes.
+
 All repositories remain on `dev`. No release, remote deployment, Discord command registration, or live Discord messages were made.
 
 ## Behavior and permissions

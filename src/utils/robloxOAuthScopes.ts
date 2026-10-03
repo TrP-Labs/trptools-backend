@@ -2,11 +2,20 @@ import type { OAuth2Tokens } from 'arctic'
 
 type ScopeResult = { state: 'VERIFIED' | 'DENIED'; scopes: string[] } | { state: 'UNAVAILABLE' }
 
+/** Roblox combines actions in responses, e.g. group:read,write.
+ * Expand only actions sharing an explicit resource prefix; a bare write is not a group grant. */
+export function normalizeRobloxScopes(values: readonly string[]): string[] {
+    return [...new Set(values.flatMap(value => value.split(/\s+/).filter(Boolean).flatMap(scope => {
+        const combined = /^([^:\s,]+):([\w.-]+(?:,[\w.-]+)+)$/.exec(scope)
+        return combined ? combined[2]!.split(',').map(action => `${combined[1]}:${action}`) : [scope]
+    })))]
+}
+
 /** Verify a missing write grant with Roblox's token introspection endpoint.
  * Never infer privileged consent from what we asked for. */
 export async function robloxWriteScopes(tokens: OAuth2Tokens, clientId: string, clientSecret: string, robloxId: number,
     request: (input: string, init?: RequestInit) => Promise<Response> = fetch): Promise<ScopeResult> {
-    const responseScopes = tokens.hasScopes() ? tokens.scopes().flatMap(scope => scope.split(/\s+/)).filter(Boolean) : null
+    const responseScopes = tokens.hasScopes() ? normalizeRobloxScopes(tokens.scopes()) : null
     if (responseScopes?.includes('group:write')) return { state: 'VERIFIED', scopes: responseScopes }
     let scopes: string[]
     {
@@ -25,7 +34,7 @@ export async function robloxWriteScopes(tokens: OAuth2Tokens, clientId: string, 
                 console.warn('[claimables:oauth] scope introspection could not validate the token', { clientId })
                 return { state: 'UNAVAILABLE' }
             }
-            scopes = result.scope.split(/\s+/).filter(Boolean)
+            scopes = normalizeRobloxScopes([result.scope])
         } catch {
             console.warn('[claimables:oauth] scope introspection request failed', { clientId })
             return { state: 'UNAVAILABLE' }

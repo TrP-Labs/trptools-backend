@@ -5,7 +5,8 @@ export interface CloudRole { id: string; displayName: string; rank: number }
 // Reads deliberately bypass the ordinary membership cache and its outage grace.
 // Neither is evidence that a rank change has reached Roblox.
 export class RankCloud {
-    constructor(private token: string, private request: (input: string, init?: RequestInit) => Promise<Response> = fetch) {}
+    // Workers' native fetch cannot be invoked with this RankCloud instance as its receiver.
+    constructor(private token: string, private request: (input: string, init?: RequestInit) => Promise<Response> = (input, init) => fetch(input, init)) {}
     private async json<T>(path: string, body?: object): Promise<T> {
         const response = await this.request(`${BASE}${path}`, {
             method: body ? 'POST' : 'GET',

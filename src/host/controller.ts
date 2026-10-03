@@ -7,23 +7,23 @@ export const host = new Elysia({ prefix: '/host', tags: ['Host'] })
     .use(sessionPlugin)
     .get(
         '/schedule/:groupId',
-        ({ params, session }) => Host.schedule(params.groupId, session),
+        async ({ params, session }) => Host.schedule(params.groupId, session),
         { response: { 200: HostModel.schedule } },
     )
     .put(
         '/schedule/:groupId',
-        ({ params, body, session }) =>
+        async ({ params, body, session }) =>
             Host.saveSchedule(params.groupId, body, session),
         { body: HostModel.schedule },
     )
     .get(
         '/:roomId',
-        ({ params, session }) => Host.get(params.roomId, session),
+        async ({ params, session }) => Host.get(params.roomId, session),
         { response: { 200: HostModel.snapshot } },
     )
     .post(
         '/:roomId/extend',
-        ({ params, body, session }) =>
+        async ({ params, body, session }) =>
             Host.extend(params.roomId, body.minutes, session),
         {
             body: t.Object({
@@ -39,7 +39,7 @@ export const host = new Elysia({ prefix: '/host', tags: ['Host'] })
     )
     .post(
         '/:roomId/events/:id',
-        ({ params, body, session }) =>
+        async ({ params, body, session }) =>
             Host.event(params.roomId, params.id, body, session),
         {
             body: HostModel.eventBody,
@@ -48,13 +48,13 @@ export const host = new Elysia({ prefix: '/host', tags: ['Host'] })
     )
     .put(
         '/:roomId/note',
-        ({ params, body, session }) => Host.note(params.roomId, body, session),
+        async ({ params, body, session }) => Host.note(params.roomId, body, session),
         { body: HostModel.noteBody, response: { 200: HostModel.snapshot } },
     )
 
     .put(
         '/:roomId/image',
-        ({ params, body, session }) =>
+        async ({ params, body, session }) =>
             Host.upload(params.roomId, body.file, session),
         {
             body: t.Object({ file: t.File({ maxSize: '6m' }) }),

@@ -104,9 +104,16 @@ try {
     assert.equal((await call('/claimables', 'POST', { groupId, name: 'Driver', rankId: driver.id }, ownerToken, 'https://evil.example')).status, 403)
     await expectStatus('/claimables/connection', 200, 'POST', { groupId })
     await expectStatus('/claimables', 400, 'POST', { groupId, name: 'Owner', rankId: owner.id })
+    // Reverification can leave only the new combined read/write authorization usable.
+    // Creating and editing must check this editor's live rank with that token.
+    await db.update(users).set({ robloxAccessToken: null, robloxRefreshToken: null, robloxTokenExpiresAt: null, robloxScopes: '' }).where(eq(users.id, userId))
     const claim = await expectStatus('/claimables', 200, 'POST', { groupId, name: 'Become a Driver', rankId: driver.id })
     const path = '/claimables/' + claim.id
     assert.equal(claim.enabled, false); assert.equal(claim.color, driver.color); assert.equal(claim.maximumRank, 10)
+    // Another editor without write consent still uses their own read authorization.
+    const hostOffer = await expectStatus('/claimables', 200, 'POST', { groupId, name: 'Host driver offer', rankId: driver.id }, narrowToken)
+    await expectStatus('/claimables/' + hostOffer.id, 200, 'PATCH', { name: 'Host driver offer updated' }, narrowToken)
+    await expectStatus('/claimables/' + hostOffer.id, 200, 'DELETE', undefined, narrowToken)
     await expectStatus('/public/groups/claimable-test/claimables/' + claim.slug, 404, 'GET', undefined, null)
     await expectStatus(path, 200, 'PATCH', { enabled: true, maximumRank: 20, minimumAccountAgeDays: 30, requireDiscord: true, translations: { name: { de: 'Fahrer werden' }, forbidden: { de: 'Hidden' } } })
     const translated = await expectStatus('/public/groups/claimable-test/claimables/' + claim.slug, 200, 'GET', undefined, null)
@@ -142,12 +149,14 @@ try {
     assert.ok(reverify.headers.get('content-type')?.includes('application/json'))
     const authUrl = new URL(reverify.data.url), state = authUrl.searchParams.get('state')!
     assert.ok(authUrl.searchParams.get('scope')?.includes('group:write'))
-    assert.equal(authUrl.searchParams.get('prompt'), 'consent')
+    // Third-party Roblox authorization requires select_account alongside explicit consent.
+    assert.equal(authUrl.searchParams.get('prompt'), 'select_account consent')
     oauthSub = '2'
     assert.deepEqual(await Session.VerifyOAuth('mock-code', state, 'mock-verifier', state, userId), { wrongAccount: true })
     oauthSub = '1'; oauthScope = 'openid profile group:read'
     assert.deepEqual(await Session.VerifyOAuth('mock-code', state, 'mock-verifier', state, userId), { scopeDenied: true })
-    oauthScope += ' group:write'
+    // Exact token scope format observed during live production authorization.
+    oauthScope = 'group:read,write openid profile'
     assert.deepEqual(await Session.VerifyOAuth('mock-code', state, 'mock-verifier', state, userId), { reverified: true })
     await db.update(users).set({ siteRank: 'admin' }).where(eq(users.id, userId))
     await db.update(sessions).set({ adminMode: true }).where(eq(sessions.sessionId, hashToken(ownerToken)))
@@ -157,6 +166,10 @@ try {
     assert.equal(new URL(callback.headers.get('location')!).searchParams.get('roblox'), 'verified')
     assert.ok(!callback.headers.getSetCookie().some(cookie => cookie.startsWith('access_token=')))
     assert.equal((await expectStatus('/auth/session', 200)).user.adminMode, true)
+    const [combinedGrant] = await db.select({ scopes: users.robloxWriteScopes }).from(users).where(eq(users.id, userId))
+    assert.equal(combinedGrant!.scopes, 'group:read group:write openid profile')
+    assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
+    oauthScope = 'openid profile group:read group:write'
     // OAuth may omit scope when the granted set is identical to the request.
     const noScope = await call('/auth/claimables/reverify', 'POST', { groupId })
     const noScopeState = new URL(noScope.data.url).searchParams.get('state')!
@@ -186,7 +199,7 @@ try {
     const conflicting = await call('/auth/claimables/reverify', 'POST', { groupId })
     const conflictingState = new URL(conflicting.data.url).searchParams.get('state')!
     const conflictingCookies = conflicting.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ') + `; access_token=${ownerToken}`
-    introspectionScope = oauthScope; oauthScope = 'openid profile group:read'
+    introspectionScope = 'group:read,write openid profile'; oauthScope = 'openid profile group:read'
     const conflictingCallback = await handle(new Request(`http://localhost:54101/auth/callback?code=mock-code&state=${conflictingState}`, { headers: { cookie: conflictingCookies } }))
     assert.equal(new URL(conflictingCallback.headers.get('location')!).searchParams.get('roblox'), 'verified')
     assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
@@ -210,6 +223,8 @@ try {
     const refreshed = await Promise.all([userCredentials(userId, true), userCredentials(userId, true), userCredentials(userId, true)])
     assert.equal(refreshes, 1); assert.ok(refreshed.every(result => result.accessToken === 'mock-write-refreshed'))
     assert.equal((await expectStatus('/claimables/connection' + query, 200)).hasWriteScope, true)
+    const [rotatedGrant] = await db.select({ scopes: users.robloxWriteScopes }).from(users).where(eq(users.id, userId))
+    assert.equal(rotatedGrant!.scopes, 'group:read group:write openid profile')
     oauthScope = introspectionScope!; introspectionScope = null
     // Privileged grants never substitute for Roblox membership/age qualifications.
     failReads = true

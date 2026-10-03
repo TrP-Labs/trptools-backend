@@ -2,7 +2,8 @@ import { manifestVersion, matchesManifestVersion } from './manifestVersion'
 import { eq, inArray } from 'drizzle-orm'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm'
-import satori, { type SatoriOptions } from 'satori'
+import satori, { init as initYoga, type SatoriOptions } from 'satori/standalone'
+import yogaWasm from 'satori/yoga.wasm'
 import interRegular from './assets/Inter-Regular.ttf'
 import interSemiBold from './assets/Inter-SemiBold.ttf'
 import db from '../db'
@@ -64,7 +65,11 @@ function rendererFonts(): Promise<SatoriOptions['fonts']> {
         initWasm(resvgWasm instanceof WebAssembly.Module
             ? resvgWasm : assetBytes(resvgWasm as unknown as string | ArrayBuffer)),
         assetBytes(interRegular as unknown as string | ArrayBuffer),
-        assetBytes(interSemiBold as unknown as string | ArrayBuffer)
+        assetBytes(interSemiBold as unknown as string | ArrayBuffer),
+        // Satori's default entry compiles embedded Yoga bytes at runtime,
+        // which Workers forbids. Import the module so Wrangler precompiles it.
+        initYoga(yogaWasm instanceof WebAssembly.Module
+            ? yogaWasm : assetBytes(yogaWasm as unknown as string | ArrayBuffer))
     ]).then(([, regular, semibold]) => [
         { name: 'Inter', data: regular, weight: 400 as const, style: 'normal' as const },
         { name: 'Inter', data: semibold, weight: 600 as const, style: 'normal' as const }

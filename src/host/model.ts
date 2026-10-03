@@ -57,6 +57,7 @@ export namespace HostModel {
     export type TimelineEntry = typeof timelineEntry.static
     export const snapshot = t.Object({
         roomId: t.String(),
+        revision: t.Number(),
         groupId: t.String(),
         eventId: t.String(),
         eventName: t.String(),
@@ -68,6 +69,9 @@ export namespace HostModel {
         note: t.String(),
         ownerRobloxId: t.Union([t.String(), t.Null()]),
         imageUrl: t.Union([t.String(), t.Null()]),
+        joinCode: t.Union([t.String(), t.Null()]),
+        announceJoinCode: t.Union([t.Boolean(), t.Null()]),
+        defaultAnnounceJoinCode: t.Boolean(),
     })
     export type Snapshot = typeof snapshot.static
     export const eventBody = t.Object({
@@ -89,6 +93,8 @@ export namespace HostModel {
         imageUrl: t.Optional(
             t.Union([t.String({ maxLength: 2048 }), t.Null()]),
         ),
+        joinCode: t.Optional(t.Union([t.String({ minLength: 4, maxLength: 12, pattern: '^[a-zA-Z0-9]+$' }), t.Null()])),
+        announceJoinCode: t.Optional(t.Union([t.Boolean(), t.Null()])),
     })
     export type Note = typeof noteBody.static
 }
