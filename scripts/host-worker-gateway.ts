@@ -1,7 +1,7 @@
 import postgres from 'postgres'
 import Redis from 'ioredis'
 const sql = postgres(
-    'postgresql://trptools:trptools@localhost:55432/trptools',
+    process.env.HOST_TEST_DATABASE_URL ?? 'postgresql://trptools:trptools@localhost:55432/trptools',
     {
         prepare: false,
         types: {

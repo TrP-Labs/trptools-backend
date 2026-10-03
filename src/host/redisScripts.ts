@@ -11,9 +11,14 @@ local start = tonumber(room.startAt)
 local finish = tonumber(room.expiresAt)
 `
 const SNAPSHOT = `
-local snapshot = {roomId=ARGV[2], groupId=room.groupId, eventId=room.eventId, eventName=room.eventName, occurrence=room.occurrence,
+local snapshot = {roomId=ARGV[2], revision=tonumber(room.revision or '0'), groupId=room.groupId, eventId=room.eventId, eventName=room.eventName, occurrence=room.occurrence,
 botConnected=room.botConnected == 'true', endsAt=finish, activeUntil=tonumber(room.activeUntil), timeline=timeline,
-note=room.note or '', ownerRobloxId=room.ownerRobloxId or '', imageUrl=room.imageUrl or ''}
+note=room.note or '', ownerRobloxId=room.ownerRobloxId or '', imageUrl=room.imageUrl or '',
+joinCode=redis.call('GET', 'botcode:' .. room.eventId .. ':' .. room.startAt) or cjson.null,
+announceJoinCode=cjson.null}
+snapshot.defaultAnnounceJoinCode = room.defaultAnnounceJoinCode ~= 'false'
+if room.announceJoinCode == 'true' then snapshot.announceJoinCode = true end
+if room.announceJoinCode == 'false' then snapshot.announceJoinCode = false end
 if snapshot.ownerRobloxId == '' then snapshot.ownerRobloxId = cjson.null end
 if snapshot.imageUrl == '' then snapshot.imageUrl = cjson.null end
 local encoded = cjson.encode(snapshot)
@@ -21,6 +26,7 @@ if #timeline == 0 then encoded = string.gsub(encoded, '"timeline":{}', '"timelin
 `
 const STORE = `
 redis.call('HSET', KEYS[1], 'timeline', cjson.encode(timeline))
+room.revision = tostring(redis.call('HINCRBY', KEYS[1], 'revision', 1))
 ${SNAPSHOT}
 redis.call('PUBLISH', ARGV[3], '{"event":"HOST","data":' .. encoded .. '}')
 return encoded
@@ -29,7 +35,7 @@ export const READ_HOST = `${PREAMBLE}${SNAPSHOT}return encoded`
 export const EXTEND_HOST = `${PREAMBLE}
 finish = finish + tonumber(ARGV[4]) * 60000
 room.activeUntil = tostring(finish + 1800000)
-redis.call('HSET', KEYS[1], 'needsRefresh', now)
+redis.call('HSET', KEYS[1], 'needsRefresh', redis.call('HINCRBY', KEYS[1], 'refreshVersion', 1))
 redis.call('HSET', KEYS[1], 'expiresAt', finish, 'activeUntil', room.activeUntil)
 local ttl = math.max(1, math.ceil((finish + 1800000 - now)/1000))
 if redis.call('HLEN', 'dispatchroom:' .. ARGV[2] .. ':users') > 0 then ttl = math.max(7200, ttl + 7200) end
@@ -78,9 +84,21 @@ local note = cjson.decode(ARGV[4])
 room.note = note.note
 room.ownerRobloxId = note.ownerRobloxId == cjson.null and '' or note.ownerRobloxId
 if note.imageUrl ~= nil then room.imageUrl = note.imageUrl == cjson.null and '' or note.imageUrl end
+if note.announceJoinCode ~= nil then
+    room.announceJoinCode = note.announceJoinCode == cjson.null and '' or tostring(note.announceJoinCode)
+    redis.call('HSET', KEYS[1], 'announceJoinCode', room.announceJoinCode)
+end
+if note.joinCode ~= nil then
+    local codeKey = 'botcode:' .. room.eventId .. ':' .. room.startAt
+    if note.joinCode == cjson.null then redis.call('DEL', codeKey)
+    else redis.call('SET', codeKey, note.joinCode, 'EX', 2592000) end
+end
 redis.call('HSET', KEYS[1], 'note', room.note, 'ownerRobloxId', room.ownerRobloxId, 'imageUrl', room.imageUrl or '')
-redis.call('SET', KEYS[2], cjson.encode({note=room.note, ownerRobloxId=room.ownerRobloxId == '' and cjson.null or room.ownerRobloxId, imageUrl=room.imageUrl or ''}), 'EX', 2592000)
-redis.call('HSET', KEYS[1], 'needsRefresh', now)
+local stored = {note=room.note, ownerRobloxId=room.ownerRobloxId == '' and cjson.null or room.ownerRobloxId, imageUrl=room.imageUrl or ''}
+if room.announceJoinCode == 'true' then stored.announceJoinCode = true end
+if room.announceJoinCode == 'false' then stored.announceJoinCode = false end
+redis.call('SET', KEYS[2], cjson.encode(stored), 'EX', 2592000)
+redis.call('HSET', KEYS[1], 'needsRefresh', redis.call('HINCRBY', KEYS[1], 'refreshVersion', 1))
 ${STORE}`
 
 // One read/settle/claim command per room, irrespective of the number of cards.
@@ -107,6 +125,7 @@ for index, item in ipairs(timeline) do
 end
 if changed then
     redis.call('HSET', KEYS[1], 'timeline', cjson.encode(timeline))
+    room.revision = tostring(redis.call('HINCRBY', KEYS[1], 'revision', 1))
     ${SNAPSHOT}
     redis.call('PUBLISH', ARGV[3], '{"event":"HOST","data":' .. encoded .. '}')
 end

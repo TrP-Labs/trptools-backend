@@ -31,7 +31,7 @@ import { presentConfig } from './present'
 const noteKey = (eventId: string, occurrence: Date) => `shiftnote:${eventId}:${occurrence.getTime()}`
 const NOTE_TTL = 60 * 60 * 24 * 30
 
-type StoredNote = { note: string; ownerRobloxId: string | null; imageUrl?: string | null }
+type StoredNote = { note: string; ownerRobloxId: string | null; imageUrl?: string | null; announceJoinCode?: boolean | null }
 
 async function readNote(eventId: string, occurrence: Date): Promise<StoredNote> {
     const raw = await dataRedis.get(noteKey(eventId, occurrence)).catch(() => null)
@@ -128,6 +128,8 @@ async function presentShift(
         note: note.note,
         ownerRobloxId: note.ownerRobloxId,
         imageUrl: note.imageUrl ?? null,
+        joinCode: await dataRedis.get(`botcode:${event.eventId}:${occurrence.start.getTime()}`),
+        announceJoinCode: note.announceJoinCode ?? null,
         signupsOpenAt: signupsOpenAt(occurrence.start, signupLeadMinutes),
         signupsOpen: signupsOpen(occurrence.start, occurrence.end, signupLeadMinutes)
     }
@@ -397,11 +399,13 @@ export abstract class BotService {
 
     static async staffAction(body: { guildId: string; eventId: string; occurrence: string; action: BotInternal.dueAction['action'] }) {
         const { group } = await requireGuild(body.guildId)
+        const occurrence = new Date(body.occurrence)
+        if (Number.isNaN(occurrence.getTime())) throw status(400, 'Bad Request')
         const [event] = await db.select({id:events.eventId}).from(events).where(and(eq(events.eventId, body.eventId),eq(events.groupId,group.id))).limit(1)
         if (!event) throw status(404, 'Not Found')
         const roomId = await dataRedis.get(groupIndexKey(group.id))
-        if (roomId) await dataRedis.eval(STAFF_ACTION, [roomKey(roomId)], [String(Date.now()),roomId,roomChannel(roomId),body.eventId,body.occurrence,body.action])
-        await dataRedis.set(`bot:done:${body.action}:${body.eventId}:${Date.parse(body.occurrence)}`, 'STAFF', 'EX', 86400)
+        if (roomId) await dataRedis.eval(STAFF_ACTION, [roomKey(roomId)], [String(Date.now()),roomId,roomChannel(roomId),body.eventId,occurrence.toISOString(),body.action])
+        await dataRedis.set(`bot:done:${body.action}:${body.eventId}:${occurrence.getTime()}`, 'STAFF', 'EX', 86400)
         return 'Success' as const
     }
     static async setNote(guildId: string, body: BotInternal.noteBody) {
@@ -421,6 +425,11 @@ export abstract class BotService {
         const previous = await readNote(body.eventId, occurrence)
         const value: StoredNote = { ...previous, ...body }
         await dataRedis.set(noteKey(body.eventId, occurrence), JSON.stringify(value), 'EX', NOTE_TTL)
+        if (body.joinCode !== undefined) {
+            const codeKey = `botcode:${body.eventId}:${occurrence.getTime()}`
+            if (body.joinCode === null) await dataRedis.del(codeKey)
+            else await dataRedis.set(codeKey, body.joinCode, 'EX', NOTE_TTL)
+        }
 
         return 'Success' as const
     }

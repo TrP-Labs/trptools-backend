@@ -66,6 +66,8 @@ export namespace BotInternal {
          * page that will not let anybody sign up.
          */
         imageUrl: t.Optional(t.Union([t.String(), t.Null()])),
+        joinCode: t.Optional(t.Union([t.String(), t.Null()])),
+        announceJoinCode: t.Optional(t.Union([t.Boolean(), t.Null()])),
         signupsOpenAt: t.Date(),
         signupsOpen: t.Boolean()
     })
@@ -149,7 +151,9 @@ export namespace BotInternal {
         occurrence: t.String(),
         note: t.String({ maxLength: 1000 }),
         ownerRobloxId: t.Union([t.String({ pattern: '^[0-9]{1,20}$' }), t.Null()]),
-        imageUrl: t.Optional(t.Union([t.String({ maxLength: 2048 }), t.Null()]))
+        imageUrl: t.Optional(t.Union([t.String({ maxLength: 2048 }), t.Null()])),
+        joinCode: t.Optional(t.Union([t.String({ minLength: 4, maxLength: 12, pattern: '^[a-zA-Z0-9]+$' }), t.Null()])),
+        announceJoinCode: t.Optional(t.Union([t.Boolean(), t.Null()]))
     })
     export type noteBody = typeof noteBody.static
 

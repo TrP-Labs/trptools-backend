@@ -97,6 +97,14 @@ export const app = new Elysia()
         // A body that fails to parse or validate is the caller's mistake, not
         // ours, and must not be reported as a server fault.
         if (code === 'VALIDATION' || code === 'PARSE') {
+            // A rejected response happens after the handler has run. Treating
+            // it as a malformed request hides a server defect and invites a
+            // retry of a write that may already have succeeded.
+            if (code === 'VALIDATION' && (error as { type?: string }).type === 'response') {
+                console.error('[error] response validation failed')
+                set.status = 500
+                return 'Internal Server Error'
+            }
             set.status = 400
             return 'Bad Request'
         }

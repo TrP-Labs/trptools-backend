@@ -93,7 +93,7 @@ export abstract class RoomControls {
         const [config] = await db.select().from(botConfigs).where(eq(botConfigs.groupId, event.groupId)).limit(1)
         const enabled = { STAFF_START: Boolean(config?.signupsEnabled && config.autoStaffStart), BEGIN: Boolean(config?.announcementsEnabled && config.autoBegin), COMPLETE: Boolean(config?.autoComplete) }
         const storedNote = await dataRedis.get(`shiftnote:${event.eventId}:${occurrence.start.getTime()}`)
-        let note: {note?:string;ownerRobloxId?:string|null;imageUrl?:string|null} = {}
+        let note: {note?:string;ownerRobloxId?:string|null;imageUrl?:string|null;announceJoinCode?:boolean|null} = {}
         try { note = storedNote ? JSON.parse(storedNote) : {} } catch { /* Old malformed notes must not prevent opening the room. */ }
         const timeline = makeTimeline(group?.hostSchedule ?? DEFAULT_SCHEDULE, occurrence.start.getTime(), occurrence.end.getTime(), enabled)
         const completed = await runBatches(dataRedis, timeline.map(item => pipeline => pipeline.eval("return redis.call('GET', KEYS[1])", [`bot:done:${item.action}:${event.eventId}:${occurrence.start.getTime()}`], [])))
@@ -102,6 +102,8 @@ export abstract class RoomControls {
         const info: RoomInfo & Record<string,string> = {
             botConnected: String(Boolean(config)),
             note: note.note ?? '', ownerRobloxId: note.ownerRobloxId ?? '', imageUrl: note.imageUrl ?? '',
+            announceJoinCode: note.announceJoinCode == null ? '' : String(note.announceJoinCode),
+            defaultAnnounceJoinCode: String(config?.announceJoinCode !== false),
             groupId: event.groupId,
             eventId: event.eventId,
             eventName: event.name,

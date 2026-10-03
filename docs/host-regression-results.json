@@ -1,0 +1,102 @@
+{
+  "http": [
+    {
+      "origin": "http://localhost:53001",
+      "requests": 52,
+      "liveSnapshots": 22,
+      "result": "passed"
+    },
+    {
+      "origin": "http://localhost:53002",
+      "requests": 52,
+      "liveSnapshots": 22,
+      "result": "passed"
+    },
+    {
+      "origin": "http://localhost:53004",
+      "requests": 52,
+      "liveSnapshots": 22,
+      "result": "passed"
+    }
+  ],
+  "bot": [
+    {
+      "origin": "http://localhost:53001",
+      "flow": "panel activation -> due action consumer -> completion",
+      "sends": 3,
+      "result": "passed"
+    },
+    {
+      "origin": "http://localhost:53001",
+      "commands": [
+        "staff-begin",
+        "begin",
+        "edit-shift",
+        "modal-submit"
+      ],
+      "sends": 3,
+      "edits": 2,
+      "result": "passed"
+    },
+    {
+      "origin": "http://localhost:53004",
+      "flow": "panel activation -> due action consumer -> completion",
+      "sends": 3,
+      "result": "passed"
+    },
+    {
+      "origin": "http://localhost:53004",
+      "commands": [
+        "staff-begin",
+        "begin",
+        "edit-shift",
+        "modal-submit"
+      ],
+      "sends": 3,
+      "edits": 2,
+      "result": "passed"
+    }
+  ],
+  "browser": {
+    "responses": [
+      {
+        "path": "/host/acbfabc28a364462c9eb/note",
+        "status": 200
+      },
+      {
+        "path": "/host/acbfabc28a364462c9eb/extend",
+        "status": 200
+      },
+      {
+        "path": "/host/acbfabc28a364462c9eb/events/complete",
+        "status": 200
+      },
+      {
+        "path": "/host/acbfabc28a364462c9eb/events/complete",
+        "status": 200
+      },
+      {
+        "path": "/host/acbfabc28a364462c9eb/image",
+        "status": 200
+      },
+      {
+        "path": "/host/acbfabc28a364462c9eb/note",
+        "status": 200
+      }
+    ],
+    "pageErrors": [],
+    "viewports": [
+      320,
+      375,
+      768,
+      1440
+    ],
+    "result": "passed"
+  },
+  "redis": {
+    "tests": 16,
+    "fuzzOperations": 1500,
+    "assertions": 1339,
+    "result": "passed"
+  }
+}
