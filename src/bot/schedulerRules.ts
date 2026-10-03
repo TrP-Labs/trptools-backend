@@ -96,3 +96,10 @@ export function dueCandidates(
     }
     return candidates
 }
+
+/** Redraw the public voting announcement once the decision has been sealed. */
+export function demandDecisionCandidates(rule: string, startTime: Date, lead: number, now: Date): DueCandidate[] {
+    const offset = lead * 60000
+    return occurrenceStartsBetween(rule, startTime, new Date(now.getTime() + offset - GRACE_MS), new Date(now.getTime() + offset), 200)
+        .map(occurrence => ({ action: 'REFRESH', occurrence, expiresAt: new Date(occurrence.getTime() - offset + GRACE_MS) }))
+}

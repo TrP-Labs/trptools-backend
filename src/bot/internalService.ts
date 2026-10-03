@@ -1,3 +1,6 @@
+import { ensureInstance, decideInstance, preparationAllowed } from '../schedule/instances'
+import { mediaForOwners } from '../media/service'
+import { shiftVotes } from '../db/schema'
 import { status } from 'elysia'
 import { and, eq } from 'drizzle-orm'
 import db from '../db'
@@ -116,22 +119,31 @@ async function presentShift(
     signupLeadMinutes: number
 ): Promise<BotInternal.shift> {
     const note = await readNote(event.eventId, occurrence.start)
+    const instance = await decideInstance(await ensureInstance(event, occurrence.start))
+    const votes = instance.onDemand ? await db.select().from(shiftVotes).where(eq(shiftVotes.occurrenceId, instance.id)) : []
+    const images = await mediaForOwners('SHIFT', [instance.id])
 
     return {
+        instanceId: instance.id,
+        onDemand: instance.onDemand, decision: instance.decision,
+        voteCount: votes.filter(v => v.attending).length, minimumVotes: instance.minimumVotes,
+        decisionAt: instance.decisionAt, voteOpensAt: instance.voteOpensAt,
+        voters: instance.showVoters ? votes.filter(v => v.attending).map(v => ({ name: v.name })) : [],
+        withdrawnVoters: instance.showVoters ? votes.filter(v => !v.attending).map(v => ({ name: v.name })) : [],
         eventId: event.eventId,
-        name: event.name,
+        name: instance.name,
         slug: event.slug,
-        description: event.description,
+        description: instance.description,
         color: event.color,
         start: occurrence.start,
         end: occurrence.end,
         note: note.note,
         ownerRobloxId: note.ownerRobloxId,
-        imageUrl: note.imageUrl ?? null,
+        imageUrl: images.get(instance.id)?.[0]?.url ?? note.imageUrl ?? null,
         joinCode: await dataRedis.get(`botcode:${event.eventId}:${occurrence.start.getTime()}`),
         announceJoinCode: note.announceJoinCode ?? null,
         signupsOpenAt: signupsOpenAt(occurrence.start, signupLeadMinutes),
-        signupsOpen: signupsOpen(occurrence.start, occurrence.end, signupLeadMinutes)
+        signupsOpen: signupsOpen(occurrence.start, occurrence.end, signupLeadMinutes) && ['SCHEDULED', 'CONFIRMED'].includes(instance.decision)
     }
 }
 
@@ -231,7 +243,7 @@ export abstract class BotService {
                 if (event) return presentShift(event, { start: new Date(room.occurrence), end: new Date(Number(room.expiresAt)) }, group.signupLeadMinutes)
             }
         }
-        const rows = await db.select().from(events).where(eq(events.groupId, group.id))
+        const rows = await db.select().from(events).where(and(eq(events.groupId, group.id), eq(events.archived, false)))
         if (rows.length === 0) return null
 
         const lead = group.roomOpenLeadMinutes ?? 10
@@ -327,7 +339,7 @@ export abstract class BotService {
             new Date(occurrence.getTime() + 1000),
             1
         )
-        if (matches.length === 0) throw status(400, 'Bad Request')
+        if (matches.length === 0 || matches[0]!.start.getTime() !== occurrence.getTime()) throw status(400, 'Bad Request')
 
         const sheets = await loadSheets(group.id)
         const sheet = sheets.find((candidate) => candidate.slots.some((slot) => slot.id === body.slotId))
@@ -361,6 +373,7 @@ export abstract class BotService {
             return { status: 'RELEASED', slotName: slot.name, previousSlotName: null, syncDelivered, changedSheetIds: [sheet.sheetId] }
         }
 
+        if (!await preparationAllowed(event, occurrence) || !signupsOpen(occurrence, matches[0]!.end, group.signupLeadMinutes)) return { status: 'GONE', slotName: slot.name, previousSlotName: null }
         const takenHere = existing.filter((row) => row.slotId === body.slotId)
         if (takenHere.length >= slot.capacity) {
             return { status: 'FULL', slotName: slot.name, previousSlotName: null }
@@ -413,7 +426,11 @@ export abstract class BotService {
         // Resolve the occurrence against its guild before accepting a write.
         await BotService.occurrence(guildId, { eventId: body.eventId, occurrence: body.occurrence })
         const occurrence = new Date(body.occurrence)
-        if (body.imageUrl) body = { ...body, imageUrl: await saveDiscordImage(group.id, body.eventId, body.imageUrl) }
+        if (body.imageUrl) {
+            const [event] = await db.select().from(events).where(eq(events.eventId, body.eventId)).limit(1)
+            const instance = await ensureInstance(event!, occurrence)
+            body = { ...body, imageUrl: await saveDiscordImage(group.id, instance.id, body.imageUrl) }
+        }
         const roomId = await dataRedis.get(groupIndexKey(group.id))
         if (roomId) {
             const info = await dataRedis.hgetall(roomKey(roomId)) as Partial<RoomInfo>

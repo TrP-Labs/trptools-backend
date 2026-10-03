@@ -49,6 +49,15 @@ export namespace BotInternal {
     export type sheet = typeof sheet.static
 
     export const shift = t.Object({
+        instanceId: t.Optional(t.String()),
+        onDemand: t.Optional(t.Boolean()),
+        decision: t.Optional(t.String()),
+        voteCount: t.Optional(t.Integer()),
+        minimumVotes: t.Optional(t.Integer()),
+        decisionAt: t.Optional(t.Date()),
+        voteOpensAt: t.Optional(t.Date()),
+        voters: t.Optional(t.Array(t.Object({ name: t.String() }))),
+        withdrawnVoters: t.Optional(t.Array(t.Object({ name: t.String() }))),
         eventId: t.String(),
         name: t.String(),
         slug: t.String(),

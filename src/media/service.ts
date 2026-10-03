@@ -1,9 +1,9 @@
 import { status } from 'elysia'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import db from '../db'
-import { applications, events, depots, groups, media, routes, type Media } from '../db/schema'
+import { applications, events, shiftOccurrences, depots, groups, media, routes, type Media } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
-import { assertGroupPermission } from '../utils/groupPermission'
+import { assertGroupPermission, assertAnyGroupPermission } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
 import {
     ALLOWED_IMAGE_TYPES,
@@ -177,6 +177,11 @@ function ownerGrant(ownerType: MediaModel.ownerType): number {
     }
 }
 
+async function assertMediaPermission(session: session, groupId: string, ownerType?: MediaModel.ownerType) {
+    if (ownerType === 'SHIFT') return assertAnyGroupPermission(session, groupId, [PERM.MANAGE_SHIFTS, PERM.START_ROOM])
+    return assertGroupPermission(session, groupId, ownerType ? ownerGrant(ownerType) : PERM.MANAGE_GROUP)
+}
+
 export abstract class MediaService {
     static async list(query: MediaModel.listQuery, session: session): Promise<MediaModel.list> {
         const group = await findGroup(query.groupId)
@@ -184,7 +189,7 @@ export abstract class MediaService {
 
         // Listing everything the group holds is a group-level read; listing
         // one owner's images is whatever that owner's grant is.
-        await assertGroupPermission(session, group.id, query.ownerType ? ownerGrant(query.ownerType) : PERM.MANAGE_GROUP)
+        await assertMediaPermission(session, group.id, query.ownerType)
 
         const filters = [eq(media.groupId, group.id)]
         if (query.ownerType) filters.push(eq(media.ownerType, query.ownerType))
@@ -209,7 +214,7 @@ export abstract class MediaService {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertGroupPermission(session, group.id, ownerGrant(body.ownerType))
+        await assertMediaPermission(session, group.id, body.ownerType)
 
         if (body.file.size > MAX_UPLOAD_BYTES) {
             throw status(413, 'that file is not a supported image' satisfies MediaModel.notAnImage)
@@ -225,9 +230,12 @@ export abstract class MediaService {
 
         // The owner must belong to this group, or a manager of group A could
         // attach images to group B's routes.
+        let recurringOwner = false
         if (body.ownerType === 'SHIFT') {
             const [owned] = await db.select({ id: events.eventId }).from(events).where(and(eq(events.eventId, body.ownerId!), eq(events.groupId, group.id))).limit(1)
-            if (!owned) throw status(404, 'Not Found' satisfies globalModel.notFound)
+            const [instance] = owned ? [] : await db.select({ id: shiftOccurrences.id }).from(shiftOccurrences).where(and(eq(shiftOccurrences.id, body.ownerId!), eq(shiftOccurrences.groupId, group.id))).limit(1)
+            recurringOwner = Boolean(owned)
+            if (!owned && !instance) throw status(404, 'Not Found' satisfies globalModel.notFound)
         } else if (body.ownerType !== 'GROUP') {
             if (!body.ownerId) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
 
@@ -247,7 +255,7 @@ export abstract class MediaService {
 
         // Shift images belong to dated announcements, rather than one bounded
         // gallery: a recurring shift must not stop accepting images after 12 weeks.
-        const existing = body.ownerType === 'SHIFT' ? [] : await db
+        const existing = await db
             .select({ id: media.id })
             .from(media)
             .where(
@@ -258,7 +266,7 @@ export abstract class MediaService {
                 )
             )
 
-        if (existing.length >= MAX_PER_OWNER) {
+        if (!recurringOwner && existing.length >= MAX_PER_OWNER) {
             throw status(409, 'Conflict' satisfies globalModel.conflict)
         }
 
@@ -306,7 +314,7 @@ export abstract class MediaService {
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertGroupPermission(session, group.id, ownerGrant(body.ownerType))
+        await assertMediaPermission(session, group.id, body.ownerType)
 
         const owner = await resolveIconOwner(group.id, body.ownerType, body.ownerId)
 
@@ -355,7 +363,7 @@ export abstract class MediaService {
         const group = await findGroup(query.groupId)
         if (!group) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertGroupPermission(session, group.id, ownerGrant(query.ownerType))
+        await assertMediaPermission(session, group.id, query.ownerType)
 
         const owner = await resolveIconOwner(group.id, query.ownerType, query.ownerId)
 
@@ -371,7 +379,7 @@ export abstract class MediaService {
         const [row] = await db.select().from(media).where(eq(media.id, id)).limit(1)
         if (!row) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertGroupPermission(session, row.groupId, ownerGrant(row.ownerType))
+        await assertMediaPermission(session, row.groupId, row.ownerType)
 
         const { translations, ...fields } = body
 
@@ -389,7 +397,7 @@ export abstract class MediaService {
         const [row] = await db.select().from(media).where(eq(media.id, id)).limit(1)
         if (!row) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        await assertGroupPermission(session, row.groupId, ownerGrant(row.ownerType))
+        await assertMediaPermission(session, row.groupId, row.ownerType)
 
         await db.delete(media).where(eq(media.id, id))
         await deleteObject(row.key)

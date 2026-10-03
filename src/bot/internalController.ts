@@ -1,3 +1,4 @@
+import { Instances } from '../schedule/instances'
 import { Elysia, status, t } from 'elysia'
 import { env } from '../utils/env'
 import { isBotServiceRequest } from '../utils/requestIdentity'
@@ -141,6 +142,10 @@ export const botInternal = new Elysia({ prefix: '/bot/internal', tags: ['Bot'] }
                 detail: { summary: 'One guild’s configuration and sheets' }
             })
 
+            .post('/vote', async ({ params, body }) => await Instances.discordVote(params.guildId, body.eventId, new Date(body.occurrence), body.discordUserId, body.name, body.attending), {
+                body: t.Object({ eventId: t.String({ format: 'uuid' }), occurrence: t.String({ format: 'date-time' }), discordUserId: t.String(), name: t.String({ maxLength: 100 }), attending: t.Boolean() }),
+                response: { 200: globalModel.genericSuccess }
+            })
             .get('/shift', async ({ params: { guildId }, query }) => BotService.shift(guildId, query.when ?? 'next'), {
                 query: BotInternal.shiftQuery,
                 response: { 200: BotInternal.shiftOrNull, 401: globalModel.unauthorized, 404: globalModel.notFound },

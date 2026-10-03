@@ -35,7 +35,7 @@ function prepareEvents() {
         })
         .from(events)
         .innerJoin(groups, eq(events.groupId, groups.id))
-        .where(sql`${events.groupId} = ANY(${sql.placeholder('groupIds')}::uuid[])`)
+        .where(sql`${events.groupId} = ANY(${sql.placeholder('groupIds')}::uuid[]) AND NOT ${events.archived}`)
         .prepare('trptools_dashboard_events')
 }
 let eventQuery: ReturnType<typeof prepareEvents> | undefined

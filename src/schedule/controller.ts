@@ -1,11 +1,31 @@
 import { Elysia, t } from 'elysia'
 import { ScheduleModel } from './model'
+import { Instances } from './instances'
 import { Schedule } from './service'
 import { globalModel } from '../utils/globalModel'
 import { sessionPlugin } from '../utils/authPlugin'
 
 export const schedule = new Elysia({ prefix: '/schedule', tags: ['Schedule'] })
     .use(sessionPlugin)
+
+    .get('/instance', async ({ query, session }) => await Instances.resolve(query.groupId, query.slug, query.occurrence, session), {
+        query: t.Object({ groupId: t.String(), slug: t.String({ maxLength: 48 }), occurrence: t.Date() }),
+        response: { 200: ScheduleModel.instanceResponse, 400: globalModel.badRequest, 404: globalModel.notFound }
+    })
+    .get('/instances', async ({ query, session }) => await Instances.list(query, session), {
+        query: ScheduleModel.instanceQuery, response: { 200: t.Array(ScheduleModel.instanceSummary), 401: globalModel.unauthorized, 403: globalModel.forbidden, 404: globalModel.notFound }
+    })
+    .get('/instances/:id', async ({ params, session }) => await Instances.get(params.id, session), {
+        params: t.Object({ id: t.String({ format: 'uuid' }) }), response: { 200: ScheduleModel.instanceResponse, 400: globalModel.badRequest, 404: globalModel.notFound }
+    })
+    .patch('/instances/:id', async ({ params, body, session }) => await Instances.update(params.id, body, session), {
+        params: t.Object({ id: t.String({ format: 'uuid' }) }), body: ScheduleModel.instancePatch,
+        response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized, 403: t.String(), 404: globalModel.notFound, 409: t.String() }
+    })
+    .post('/instances/:id/vote', async ({ params, body, session }) => await Instances.vote(params.id, body.attending, session), {
+        params: t.Object({ id: t.String({ format: 'uuid' }) }), body: ScheduleModel.voteBody,
+        response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized, 403: t.String(), 404: globalModel.notFound, 409: t.String() }
+    })
 
     .get('/', async ({ query, session }) => Schedule.getSchedules(query.groupId, session), {
         query: ScheduleModel.eventsRequest,

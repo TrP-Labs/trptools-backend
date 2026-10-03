@@ -1,3 +1,4 @@
+import { decideInstance, ensureInstance } from '../schedule/instances'
 import { and, eq, or } from 'drizzle-orm'
 import db from '../db'
 import { botConfigs, events, groups } from '../db/schema'
@@ -8,7 +9,7 @@ import { CLAIM_TIMELINE, FINISH_TIMELINE } from '../host/redisScripts'
 import { runBatches, assertResults } from '../rooms/dispatch/batch'
 import { timelineCandidates } from '../host/candidates'
 import { DEFAULT_SCHEDULE } from '../host/rules'
-import { dueCandidates } from './schedulerRules'
+import { dueCandidates, demandDecisionCandidates } from './schedulerRules'
 
 /**
  * Works out which automated actions are due and claims them for delivery.
@@ -64,16 +65,11 @@ export async function dueActions(
             groupId: groups.id,
             signupLeadMinutes: groups.signupLeadMinutes,
             hostSchedule: groups.hostSchedule,
-            shift: {
-                eventId: events.eventId,
-                startTime: events.startTime,
-                rrule: events.rrule,
-                duration: events.duration
-            }
+            shift: events
         })
         .from(botConfigs)
         .innerJoin(groups, eq(botConfigs.groupId, groups.id))
-        .innerJoin(events, eq(events.groupId, groups.id))
+        .innerJoin(events, and(eq(events.groupId, groups.id), eq(events.archived, false)))
 
 
     const due: BotInternal.dueActions = []
@@ -100,11 +96,22 @@ export async function dueActions(
 
     for (const { config, groupId, signupLeadMinutes, hostSchedule, shift } of rows) {
         for (const candidate of [
-            ...dueCandidates(shift.rrule, shift.startTime, shift.duration, config, signupLeadMinutes, now)
+            ...dueCandidates(shift.rrule, shift.startTime, shift.duration, shift.onDemand ? { ...config,
+                autoAnnounce: true, autoAnnounceLead: shift.voteLeadMinutes,
+                autoSignupsLead: Math.min(config.autoSignupsLead, shift.decisionLeadMinutes),
+                autoHostReminderLead: Math.min(config.autoHostReminderLead, shift.decisionLeadMinutes)
+            } : config, signupLeadMinutes, now)
                 .filter(item => !['STAFF_START','BEGIN','COMPLETE'].includes(item.action)),
-            ...timelineCandidates(shift.rrule, shift.startTime, shift.duration, hostSchedule ?? DEFAULT_SCHEDULE, config, now)
+            ...(shift.onDemand ? demandDecisionCandidates(shift.rrule, shift.startTime, shift.decisionLeadMinutes, now) : []),
+            ...timelineCandidates(shift.rrule, shift.startTime, shift.duration, shift.onDemand ? {
+                ...(hostSchedule ?? DEFAULT_SCHEDULE), entries: (hostSchedule ?? DEFAULT_SCHEDULE).entries.map(entry => ({ ...entry,
+                    offsetMinutes: Math.max(entry.offsetMinutes, -shift.decisionLeadMinutes - (entry.reference === 'END' ? shift.duration : 0))
+                }))
+            } : hostSchedule ?? DEFAULT_SCHEDULE, config, now)
         ]) {
             const { action, occurrence, expiresAt } = candidate
+            const instance = await decideInstance(await ensureInstance(shift, occurrence), now)
+            if (!['ANNOUNCE', 'REFRESH'].includes(action) && !['SCHEDULED', 'CONFIRMED'].includes(instance.decision)) continue
             const room = open.get(groupId)
             if (room?.info.eventId === shift.eventId && room.info.occurrence === occurrence.toISOString() && ['STAFF_START', 'BEGIN', 'COMPLETE'].includes(action)) continue
             if (await dataRedis.exists(doneKey(action, shift.eventId, occurrence))) continue

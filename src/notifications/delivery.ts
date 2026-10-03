@@ -19,7 +19,7 @@ export async function deliverNotification(id: string, now = new Date()) {
         RETURNING *
     ) SELECT d.*, p.subscription, e.name, e.slug, e.rrule, e.start_time, g.slug AS group_slug,
         coalesce(g.name, g.cached_name, 'Group') AS group_name,
-        (e.visibility = 'PUBLIC' AND g.visibility <> 'PRIVATE' AND g.moderation <> 'HIDDEN' AND g.show_shifts
+        (NOT e.archived AND e.visibility = 'PUBLIC' AND EXISTS (SELECT 1 FROM shift_occurrences so WHERE so.event_id = e.event_id AND so.start = d.occurrence AND so.visibility = 'PUBLIC' AND so.decision IN ('SCHEDULED', 'CONFIRMED')) AND g.visibility <> 'PRIVATE' AND g.moderation <> 'HIDDEN' AND g.show_shifts
           AND (u.banned_at IS NULL OR u.ban_expires_at <= ${now.toISOString()})
           AND EXISTS (SELECT 1 FROM notification_watches w WHERE w.user_id = p.user_id AND w.group_id = g.id
               AND (w.event_id IS NULL OR w.event_id = e.event_id))) AS allowed
@@ -45,7 +45,7 @@ export async function deliverNotification(id: string, now = new Date()) {
         response = await sendPush(subscription, {
             title: String(job.group_name), body: `${job.name} is starting soon.`,
             tag: `${job.event_id}:${occurrence}`,
-            url: `${FRONTEND_URL}/g/${encodeURIComponent(String(job.group_slug))}/shift/${encodeURIComponent(String(job.slug))}`
+            url: `${FRONTEND_URL}/g/${encodeURIComponent(String(job.group_slug))}/shift/${encodeURIComponent(String(job.slug))}/${occurrenceDate.getTime()}`
         })
         if (response.status === 404 || response.status === 410) {
             await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, String(job.subscription_id)))

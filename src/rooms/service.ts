@@ -1,3 +1,4 @@
+import { preparationAllowed } from '../schedule/instances'
 import { status } from 'elysia'
 import { eq } from 'drizzle-orm'
 import { encodeBase32LowerCaseNoPadding } from '@oslojs/encoding'
@@ -84,6 +85,7 @@ export abstract class RoomControls {
             throw status(409, 'this shift is not running right now' satisfies RoomModel.notScheduled)
         }
 
+        if (!await preparationAllowed(event, occurrence.start)) throw status(409, 'this shift is not running right now' satisfies RoomModel.notScheduled)
         const roomId = generateRoomId()
 
         // An empty room expires exactly when its occurrence's wrap-up ends.

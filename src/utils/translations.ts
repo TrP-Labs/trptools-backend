@@ -20,7 +20,7 @@ export const TRANSLATABLE = {
     GROUP: ['name', 'tagline', 'about'],
     ROUTE: ['name', 'description'],
     DEPOT: ['name', 'description'],
-    SHIFT: ['name', 'description'],
+    SHIFT: ['name', 'description', 'postDescription'],
     /** A rank's sign-up sheet. */
     SHEET: ['name', 'description'],
     /** One slot on a sheet. */

@@ -60,3 +60,11 @@ describe('dueCandidates', () => {
         )).toEqual([])
     })
 })
+
+test('on-demand cutoffs schedule a public redraw with the same bounded grace window', async () => {
+    const { demandDecisionCandidates } = await import('./schedulerRules')
+    const start = new Date('2026-10-10T18:00:00Z')
+    expect(demandDecisionCandidates('FREQ=DAILY', start, 60, new Date('2026-10-10T17:00:00Z'))[0]?.action).toBe('REFRESH')
+    expect(demandDecisionCandidates('FREQ=DAILY', start, 60, new Date('2026-10-10T16:59:59Z'))).toHaveLength(0)
+    expect(demandDecisionCandidates('FREQ=DAILY', start, 60, new Date('2026-10-10T17:11:00Z'))).toHaveLength(0)
+})

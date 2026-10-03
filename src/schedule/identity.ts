@@ -153,3 +153,12 @@ export async function adoptDiscordSignups(userId: string, discordUserId: string)
         : (result as unknown as { rows: Array<{ adopted: number }> }).rows
     return Number(rows[0]?.adopted ?? 0)
 }
+
+
+/** Connecting accounts merges pending public votes before the threshold is decided. */
+export async function adoptDiscordVotes(userId: string, discordUserId: string) {
+    const result = await db.execute<{ group_id: string; event_id: string; start: Date | string }>(sql`SELECT * FROM adopt_shift_votes(${userId}::uuid, ${discordUserId})`)
+    const { databaseRows } = await import('../db/rows')
+    const { publishSignupChange } = await import('./events')
+    await Promise.allSettled(databaseRows<{ group_id: string; event_id: string; start: Date | string }>(result).map(row => publishSignupChange(row.group_id, row.event_id, new Date(row.start), 'public-votes')))
+}

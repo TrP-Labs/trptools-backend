@@ -1,3 +1,4 @@
+import { preparationAllowed } from '../schedule/instances'
 import { and, eq, lte, sql } from 'drizzle-orm'
 import db from '../db'
 import { databaseRows } from '../db/rows'
@@ -30,11 +31,11 @@ export async function drainNotificationBatch(dispatch: (kind: 'plan' | 'send', i
 
 export async function planNotification(eventId: string, now = new Date()) {
     const [event] = await db.select().from(events).where(and(eq(events.eventId, eventId), lte(events.notificationAt, now))).limit(1)
-    if (!event) return
+    if (!event || event.archived) return
     // Include a recently-started shift after a short scheduler outage, never an old occurrence.
     const occurrences = upcomingOccurrences(event.rrule, event.startTime, event.duration, new Date(now.getTime() - 5 * 60_000), 2)
     const current = occurrences[0]
-    if (current && current.start.getTime() - 10 * 60_000 <= now.getTime()) {
+    if (current && current.start.getTime() - 10 * 60_000 <= now.getTime() && await preparationAllowed(event, current.start, now)) {
         await db.execute(sql`INSERT INTO notification_deliveries (subscription_id, event_id, occurrence)
             SELECT DISTINCT p.id, e.event_id, ${current.start.toISOString()}::timestamptz
             FROM events e JOIN groups g ON g.id = e.group_id

@@ -373,7 +373,7 @@ export abstract class PublicPages {
         const from = new Date()
         const to = new Date(from.getTime() + 60 * 24 * 60 * 60 * 1000)
 
-        const occurrences = occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, 20)
+        const occurrences = event.archived ? [] : occurrencesBetween(event.rrule, event.startTime, event.duration, from, to, 20)
 
         return {
             group: header(group),
@@ -382,7 +382,7 @@ export abstract class PublicPages {
                 slug: event.slug,
                 name: event.name,
                 description: event.description,
-                translations: presentTranslations('SHIFT', event.translations),
+                translations: presentTranslations('SHIFT', { ...event.translations, postDescription: {} }),
                 color: event.color,
                 duration: event.duration,
                 recurrenceText: describeRule(event.rrule, event.startTime)
@@ -392,7 +392,7 @@ export abstract class PublicPages {
                 slug: event.slug,
                 name: event.name,
                 description: event.description,
-                translations: presentTranslations('SHIFT', event.translations),
+                translations: presentTranslations('SHIFT', { ...event.translations, postDescription: {} }),
                 color: event.color,
                 start: occurrence.start,
                 end: occurrence.end
@@ -458,7 +458,7 @@ export abstract class PublicPages {
         const rows = await db
             .select()
             .from(events)
-            .where(and(eq(events.groupId, groupId), eq(events.visibility, 'PUBLIC')))
+            .where(and(eq(events.groupId, groupId), eq(events.archived, false), eq(events.visibility, 'PUBLIC')))
 
         if (rows.length === 0) return []
 
@@ -481,7 +481,7 @@ export abstract class PublicPages {
                 slug: event.slug,
                 name: event.name,
                 description: event.description,
-                translations: presentTranslations('SHIFT', event.translations),
+                translations: presentTranslations('SHIFT', { ...event.translations, postDescription: {} }),
                 color: event.color,
                 start: occurrence.start,
                 end: occurrence.end

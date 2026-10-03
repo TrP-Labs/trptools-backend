@@ -1,4 +1,5 @@
 import { t } from 'elysia'
+import { MediaModel } from '../media/model'
 import { globalModel } from '../utils/globalModel'
 import { translationsPatch, translationsResponse } from '../utils/translations'
 
@@ -24,6 +25,17 @@ export namespace ScheduleModel {
         /** Per-language versions of this row's text. See `utils/translations`. */
         translations: translationsResponse,
 
+        onDemand: t.Boolean(),
+        minimumVotes: t.Integer(),
+        voteLeadMinutes: t.Integer(),
+        decisionLeadMinutes: t.Integer(),
+        minimumRank: t.Integer(),
+        voteRequireDiscord: t.Boolean(),
+        websiteVoting: t.Boolean(),
+        showVoters: t.Boolean(),
+        postDescription: t.String(),
+        publicStaff: t.Boolean(),
+        publicDrivers: t.Boolean(),
         createdAt: t.Date(),
         updatedAt: t.Date()
     })
@@ -44,6 +56,17 @@ export namespace ScheduleModel {
         /** Per-language versions of the text fields above. */
         translations: t.Optional(translationsPatch),
 
+        onDemand: t.Optional(t.Boolean()),
+        minimumVotes: t.Optional(t.Integer({ minimum: 1, maximum: 10000 })),
+        voteLeadMinutes: t.Optional(t.Integer({ minimum: 1, maximum: 172800 })),
+        decisionLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 172799 })),
+        minimumRank: t.Optional(t.Integer({ minimum: 0, maximum: 255 })),
+        voteRequireDiscord: t.Optional(t.Boolean()),
+        websiteVoting: t.Optional(t.Boolean()),
+        showVoters: t.Optional(t.Boolean()),
+        postDescription: t.Optional(t.String({ maxLength: 10000 })),
+        publicStaff: t.Optional(t.Boolean()),
+        publicDrivers: t.Optional(t.Boolean()),
         hostLevel: t.Optional(t.Integer({ minimum: 1, maximum: 3 }))
     })
     export type createBody = typeof createBody.static
@@ -59,6 +82,17 @@ export namespace ScheduleModel {
         /** Per-language versions of the text fields above. */
         translations: t.Optional(translationsPatch),
 
+        onDemand: t.Optional(t.Boolean()),
+        minimumVotes: t.Optional(t.Integer({ minimum: 1, maximum: 10000 })),
+        voteLeadMinutes: t.Optional(t.Integer({ minimum: 1, maximum: 172800 })),
+        decisionLeadMinutes: t.Optional(t.Integer({ minimum: 0, maximum: 172799 })),
+        minimumRank: t.Optional(t.Integer({ minimum: 0, maximum: 255 })),
+        voteRequireDiscord: t.Optional(t.Boolean()),
+        websiteVoting: t.Optional(t.Boolean()),
+        showVoters: t.Optional(t.Boolean()),
+        postDescription: t.Optional(t.String({ maxLength: 10000 })),
+        publicStaff: t.Optional(t.Boolean()),
+        publicDrivers: t.Optional(t.Boolean()),
         hostLevel: t.Optional(t.Integer({ minimum: 1, maximum: 3 }))
     })
     export type updateBody = typeof updateBody.static
@@ -131,6 +165,7 @@ export namespace ScheduleModel {
 
     /** One concrete instance of a recurring shift, with who signed up. */
     export const occurrenceResponse = t.Object({
+        instanceId: t.Optional(t.String()),
         eventId: t.String(),
         groupId: t.String(),
         name: t.String(),
@@ -203,6 +238,52 @@ export namespace ScheduleModel {
         slotId: t.String({ format: 'uuid' })
     })
     export type moveSignupBody = typeof moveSignupBody.static
+
+    export const instanceSummary = t.Object({
+        id: t.String(), eventId: t.String(), groupId: t.String(), name: t.String(), slug: t.String(), color: t.String(),
+        start: t.Date(), end: t.Date(), decision: t.String()
+    })
+    export const instancePatch = t.Object({
+        description: t.Optional(t.String({ maxLength: 10000 })),
+        postDescription: t.Optional(t.String({ maxLength: 10000 })),
+        publicStaff: t.Optional(t.Boolean()),
+        publicDrivers: t.Optional(t.Boolean()),
+        showVoters: t.Optional(t.Boolean()),
+        visibility: t.Optional(globalModel.visibility),
+        translations: t.Optional(translationsPatch)
+    })
+    export type instancePatch = typeof instancePatch.static
+    export const instanceQuery = t.Object({ groupId: t.String(), past: t.Optional(t.String()), before: t.Optional(t.String()) })
+    export type instanceQuery = typeof instanceQuery.static
+    export const instanceResponse = t.Object({
+        ...occurrenceResponse.properties,
+        id: t.String(),
+        postDescription: t.String(),
+        visibility: globalModel.visibility,
+        publicStaff: t.Boolean(),
+        publicDrivers: t.Boolean(),
+        canManage: t.Boolean(),
+        images: t.Array(MediaModel.item),
+        drivers: t.Array(t.Object({ robloxId: t.String(), name: t.String() })),
+        staff: t.Array(t.Object({ name: t.String(), slot: t.String(), status: t.String() })),
+        onDemand: t.Boolean(),
+        decision: t.String(),
+        voteCount: t.Integer(),
+        minimumVotes: t.Integer(),
+        voteOpensAt: t.Date(),
+        decisionAt: t.Date(),
+        minimumRank: t.Integer(),
+        voteRequireDiscord: t.Boolean(),
+        websiteVoting: t.Boolean(),
+        showVoters: t.Boolean(),
+        voted: t.Boolean(),
+        canVote: t.Boolean(),
+        voters: t.Array(t.Object({ name: t.String() })),
+        withdrawnVoters: t.Array(t.Object({ name: t.String() }))
+    })
+    export type instanceResponse = typeof instanceResponse.static
+    export const voteBody = t.Object({ attending: t.Boolean() })
+    export type voteBody = typeof voteBody.static
 
     export const invalidRRule = t.Literal('invalid recurrence rule')
     export type invalidRRule = typeof invalidRRule.static
