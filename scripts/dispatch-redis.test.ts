@@ -102,6 +102,17 @@ mock.module('../src/utils/groupPermission', () => ({
     assertGroupPermission: async () => {},
     assertAnyGroupPermission: async () => {}
 }))
+// This suite measures real Redis operations with SQL dependencies stubbed.
+// Occurrence persistence is exercised against Postgres by shifts-api.test.ts;
+// the route-only database mock above cannot serve the driver's history queries.
+const driverWrites: Array<{ eventId: string; occurrence: Date; people: Array<{ robloxId: string; name: string }> }> = []
+const instances = await import('../src/schedule/instances')
+mock.module('../src/schedule/instances', () => ({
+    ...instances,
+    recordDrivers: async (eventId: string, occurrence: Date, people: Array<{ robloxId: string; name: string }>) => {
+        driverWrites.push({ eventId, occurrence, people })
+    }
+}))
 const { dataRedis } = await import('../src/utils/redis')
 const { DispatchControls } = await import('../src/rooms/dispatch/service')
 const { canDispatch, RoomControls } = await import('../src/rooms/service')
@@ -150,6 +161,7 @@ beforeEach(async () => {
     await redis.set('permission', String(PERM.DISPATCH))
     frames.length = 0
     sqlReads = 0
+    driverWrites.length = 0
     trips = 0
 })
 afterAll(async () => {
@@ -183,6 +195,10 @@ test('mixed read/write pipeline replies and per-command failures work on both cl
 test('50 new vehicles use four trips, preserve string fields and set expiry', async () => {
     const result = await DispatchControls.importVehicles('integration', info, Array.from({ length: 50 }, (_, i) => seed(i)))
     expect(result).toEqual({ added: 50, removed: 0, total: 50 })
+    expect(driverWrites).toHaveLength(1)
+    expect(driverWrites[0]?.eventId).toBe(info.eventId)
+    expect(driverWrites[0]?.occurrence.toISOString()).toBe(info.occurrence)
+    expect(driverWrites[0]?.people).toEqual(Array.from({ length: 50 }, () => ({ robloxId: '1', name: '1' })))
     expect(trips).toBe(4)
     expect(await redis.ttl(key(0))).toBeGreaterThan(0)
     expect(await redis.ttl(listKey)).toBeGreaterThan(0)
