@@ -14,3 +14,5 @@ export * from './media'
 export * from './reports'
 export * from './statistics'
 export * from './claimables'
+
+export * from './occurrences'

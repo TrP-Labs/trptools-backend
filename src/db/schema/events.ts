@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm'
-import { index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
 import { visibilityEnum } from './enums'
 import { groups } from './groups'
 import { translations } from './translations'
@@ -8,9 +8,8 @@ import { translations } from './translations'
  * A shift is a recurring scheduled event. `rrule` drives recurrence,
  * `startTime` anchors the series and `duration` closes each occurrence out.
  *
- * Shifts carry no slots of their own. Who may sign up for what is declared
- * once per rank in `rank_signups`, so adding a shift never means restating the
- * same set of staff roles.
+ * Staff slots belong to the group's sign-up sheets. Dated occurrences
+ * snapshot this rule's content and on-demand settings in `shift_occurrences`.
  */
 export const events = pgTable(
     'events',
@@ -36,6 +35,19 @@ export const events = pgTable(
         visibility: visibilityEnum('visibility').notNull().default('PUBLIC'),
         /** Minimum permission level required to host this shift. */
         hostLevel: integer('host_level').notNull().default(2),
+
+        archived: boolean('archived').notNull().default(false),
+        onDemand: boolean('on_demand').notNull().default(false),
+        minimumVotes: integer('minimum_votes').notNull().default(10),
+        voteLeadMinutes: integer('vote_lead_minutes').notNull().default(2880),
+        decisionLeadMinutes: integer('decision_lead_minutes').notNull().default(1440),
+        minimumRank: integer('minimum_rank').notNull().default(0),
+        voteRequireDiscord: boolean('vote_require_discord').notNull().default(false),
+        websiteVoting: boolean('website_voting').notNull().default(true),
+        showVoters: boolean('show_voters').notNull().default(false),
+        postDescription: text('post_description').notNull().default(''),
+        publicStaff: boolean('public_staff').notNull().default(false),
+        publicDrivers: boolean('public_drivers').notNull().default(false),
 
         createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
         notificationAt: timestamp('notification_at', { withTimezone: true }).defaultNow(),

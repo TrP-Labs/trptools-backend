@@ -110,3 +110,32 @@ remain global. Apply migrations through 0031 for these features.
 
 See [engagement verification](docs/engagement-verification.md) for API/runtime
 coverage, browser screenshots and the measured limits of the 10 ms CPU target.
+
+## Schedule and dated shifts
+
+**Schedule** edits recurring rules on their own pages, with General, Recurrence,
+On-demand, and Visibility tabs. **Shifts** lists future and past occurrences.
+Each occurrence has a permanent dated public address and its own descriptions,
+images, and participant visibility. Post-shift descriptions appear after the
+shift ends. Staff sign-ups and drivers observed in dispatch imports are retained
+when a sign-up sheet or recurring rule is removed; participant lists are private
+unless staff publish them. Removing a rule cancels its remaining future shifts.
+
+Enable **On-demand** on a recurring rule to collect public sign-ups before a
+configured cutoff. Votes on TrPTools and the Discord announcement button share
+an identity, including when accounts are linked later. The cutoff freezes the
+outcome: confirmed shifts continue preparation; unsuccessful shifts retain their
+page and a failure banner. Configure the minimum vote count, optional minimum
+Roblox rank, Discord requirement, website voting, and optional voter/withdrawal
+lists. Those lists are off by default. Staff dropdowns remain on private sheet
+messages. The public button uses the bot's announcement channel and requires
+announcements to be enabled.
+
+Apply backend migration `0035` before running this version. For isolated API
+integration checks, apply migrations to a disposable `trptools_shifts_test`
+database and start a temporary Redis on port 54233, then run:
+
+```bash
+DATABASE_URL=postgresql://localhost/trptools_shifts_test \
+REDIS_URL=redis://localhost:54233 bun scripts/shifts-api.test.ts
+```

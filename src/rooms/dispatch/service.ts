@@ -1,3 +1,4 @@
+import { recordDrivers } from '../../schedule/instances'
 import { status } from 'elysia'
 import { and, eq, inArray } from 'drizzle-orm'
 import db from '../../db'
@@ -166,6 +167,7 @@ export abstract class DispatchControls {
         info: RoomInfo,
         payload: Vehicles.importBody
     ): Promise<Vehicles.importResponse> {
+        if (info.eventId && info.occurrence) await recordDrivers(info.eventId, new Date(info.occurrence), payload.map(vehicle => ({ robloxId: vehicle.OwnerId.toString(), name: vehicle.OwnerId.toString() })))
         const incoming = new Map<string, Vehicles.seedVehicle>()
         for (const vehicle of payload) incoming.set(vehicle.Id.toString(), vehicle)
 

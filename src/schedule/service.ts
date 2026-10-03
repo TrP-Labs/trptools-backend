@@ -1,10 +1,10 @@
 import { status } from 'elysia'
-import { and, asc, count, eq } from 'drizzle-orm'
+import { and, asc, count, eq, gt, inArray } from 'drizzle-orm'
 import db from '../db'
-import { events, shiftSignups, signupSheets, signupSlots, type Event } from '../db/schema'
+import { events, shiftSignups, signupSheets, signupSlots, shiftOccurrences, type Event } from '../db/schema'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
-import { PERM } from '../utils/permissions'
+import { has, PERM } from '../utils/permissions'
 import { isGroupMember, NON_MEMBER } from '../utils/membershipRule'
 import { describeRule, isValidRule, occurrencesBetween } from '../utils/recurrence'
 import { childSlug, uniqueWithin } from '../utils/slug'
@@ -17,15 +17,17 @@ import { publishSignupChange } from './events'
 import { loadSheets, loadSignups, presentSheets, sheetsVisibleTo, signupsOpen, viewerFor } from './sheets'
 import { canEditSignups, canFillSlot } from './eligibility'
 import { actorForUser, ownedBy, ownsSignup } from './identity'
+import { materializeInstances, preparationAllowed, updateInstanceDefaults } from './instances'
 import { ScheduleModel } from './model'
 
 const MAX_HORIZON_DAYS = 120
 const MAX_SHIFTS_PER_GROUP = 100
 
-function presentEvent(event: Event): ScheduleModel.eventResponse {
+function presentEvent(event: Event, manager = false): ScheduleModel.eventResponse {
     return {
         ...event,
-        translations: presentTranslations('SHIFT', event.translations),
+        postDescription: manager ? event.postDescription : '',
+        translations: presentTranslations('SHIFT', manager ? event.translations : { ...event.translations, postDescription: {} }),
         recurrenceText: describeRule(event.rrule, event.startTime)
     }
 }
@@ -69,27 +71,27 @@ async function assertCanRead(groupIdOrSlug: string, session: session) {
 
 export abstract class Schedule {
     static async getSchedules(groupIdOrSlug: string, session: session): Promise<ScheduleModel.eventsResponse> {
-        const { group, isMember } = await assertCanRead(groupIdOrSlug, session)
+        const { group, membership, isMember } = await assertCanRead(groupIdOrSlug, session)
 
         const rows = await db
             .select()
             .from(events)
-            .where(eq(events.groupId, group.id))
+            .where(and(eq(events.groupId, group.id), eq(events.archived, false)))
             .orderBy(asc(events.startTime))
 
-        return rows.filter((event) => isMember || event.visibility === 'PUBLIC').map(presentEvent)
+        return rows.filter((event) => isMember || event.visibility === 'PUBLIC').map(event => presentEvent(event, isSiteAdmin(session) || has(membership.permissions, PERM.MANAGE_SHIFTS)))
     }
 
     static async getScheduleObject(eventId: string, session: session): Promise<ScheduleModel.eventResponse> {
         const [event] = await db.select().from(events).where(eq(events.eventId, eventId)).limit(1)
-        if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (!event || event.archived) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        const { isMember } = await assertCanRead(event.groupId, session)
+        const { membership, isMember } = await assertCanRead(event.groupId, session)
         if (!isMember && event.visibility !== 'PUBLIC') {
             throw status(404, 'Not Found' satisfies globalModel.notFound)
         }
 
-        return presentEvent(event)
+        return presentEvent(event, isSiteAdmin(session) || has(membership.permissions, PERM.MANAGE_SHIFTS))
     }
 
     /**
@@ -114,7 +116,7 @@ export abstract class Schedule {
 
         const limit = Math.min(Math.max(Number(query.limit ?? 100) || 100, 1), 200)
 
-        const rows = await db.select().from(events).where(eq(events.groupId, group.id))
+        const rows = await db.select().from(events).where(and(eq(events.groupId, group.id), eq(events.archived, false)))
 
         const visible = rows.filter(
             (event) =>
@@ -133,6 +135,7 @@ export abstract class Schedule {
         const window = expanded.slice(0, limit)
         if (window.length === 0) return []
 
+        const instances = await materializeInstances(window.map(({ event, occurrence }) => ({ event, start: occurrence.start })))
         // Sheets belong to the group, so they are loaded once for the whole
         // window rather than per occurrence.
         const viewer = viewerFor(membership, session)
@@ -149,19 +152,21 @@ export abstract class Schedule {
                   )
                 : new Map()
 
-        return window.map(({ event, occurrence }) => {
+        return window.filter(({ event, occurrence }) => isMember || instances.get(`${event.eventId}:${occurrence.start.getTime()}`)?.visibility === 'PUBLIC').map(({ event, occurrence }) => {
+            const instance = instances.get(`${event.eventId}:${occurrence.start.getTime()}`)!
             // An occurrence outside the window carries no sheets at all, so a
             // client never has to decide whether to render an empty form.
-            const open = signupsOpen(occurrence.start, occurrence.end, group.signupLeadMinutes)
+            const open = signupsOpen(occurrence.start, occurrence.end, group.signupLeadMinutes) && ['SCHEDULED', 'CONFIRMED'].includes(instance.decision)
 
             return {
+                instanceId: instance.id,
                 eventId: event.eventId,
                 groupId: event.groupId,
                 name: event.name,
                 slug: event.slug,
                 description: event.description,
                 color: event.color,
-                translations: presentTranslations('SHIFT', event.translations),
+                translations: presentTranslations('SHIFT', { ...event.translations, postDescription: {} }),
                 start: occurrence.start,
                 end: occurrence.end,
                 signupsOpen: open,
@@ -190,11 +195,12 @@ export abstract class Schedule {
         const [{ total }] = await db
             .select({ total: count() })
             .from(events)
-            .where(eq(events.groupId, group.id))
+            .where(and(eq(events.groupId, group.id), eq(events.archived, false)))
         if (total >= MAX_SHIFTS_PER_GROUP) {
             throw status(409, 'a group can have at most 100 shifts' satisfies ScheduleModel.tooManyShifts)
         }
 
+        if (body.onDemand && (body.voteLeadMinutes ?? 2880) <= (body.decisionLeadMinutes ?? 1440)) throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         const { groupId, translations, ...values } = body
 
         const [event] = await db
@@ -222,7 +228,7 @@ export abstract class Schedule {
 
     static async updateScheduleObject(eventId: string, body: ScheduleModel.updateBody, session: session) {
         const [event] = await db.select().from(events).where(eq(events.eventId, eventId)).limit(1)
-        if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (!event || event.archived) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         await assertGroupPermission(session, event.groupId, PERM.MANAGE_SHIFTS)
 
@@ -230,6 +236,8 @@ export abstract class Schedule {
             throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         }
 
+        const settings = { ...event, ...body }
+        if (settings.onDemand && settings.voteLeadMinutes <= settings.decisionLeadMinutes) throw status(400, 'invalid recurrence rule' satisfies ScheduleModel.invalidRRule)
         const { translations, ...fields } = body
 
         if (Object.keys(body).length > 0) {
@@ -247,6 +255,8 @@ export abstract class Schedule {
                 .where(eq(events.eventId, eventId))
         }
 
+        const [next] = await db.select().from(events).where(eq(events.eventId, eventId)).limit(1)
+        if (next) await updateInstanceDefaults(event, next, Object.keys(body))
         await recordAudit(event.groupId, session.user?.userId ?? null, 'shift.update', `Updated shift ${event.name}`)
 
         return 'Success' as globalModel.genericSuccess
@@ -254,11 +264,14 @@ export abstract class Schedule {
 
     static async deleteScheduleObject(eventId: string, session: session) {
         const [event] = await db.select().from(events).where(eq(events.eventId, eventId)).limit(1)
-        if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (!event || event.archived) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         await assertGroupPermission(session, event.groupId, PERM.MANAGE_SHIFTS)
 
-        await db.delete(events).where(eq(events.eventId, eventId))
+        const now = new Date()
+        await materializeInstances(occurrencesBetween(event.rrule, event.startTime, event.duration, new Date(now.getTime() - 120 * 86400000), now, 200).map(o => ({ event, start: o.start })))
+        await db.update(events).set({ archived: true, notificationAt: null }).where(eq(events.eventId, eventId))
+        await db.update(shiftOccurrences).set({ decision: 'CANCELED' }).where(and(eq(shiftOccurrences.eventId, eventId), gt(shiftOccurrences.start, now), inArray(shiftOccurrences.decision, ['SCHEDULED', 'PENDING', 'CONFIRMED'])))
 
         await recordAudit(event.groupId, session.user?.userId ?? null, 'shift.delete', `Deleted shift ${event.name}`)
 
@@ -276,7 +289,7 @@ export abstract class Schedule {
         if (!session.user) throw status(401, 'Unauthorized' satisfies globalModel.unauthorized)
 
         const [event] = await db.select().from(events).where(eq(events.eventId, body.eventId)).limit(1)
-        if (!event) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (!event || event.archived) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
         const membership = await GetMembership(session.user.userId, event.groupId)
 
@@ -315,7 +328,7 @@ export abstract class Schedule {
             1
         )
 
-        if (matches.length === 0) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
+        if (matches.length === 0 || matches[0]!.start.getTime() !== body.occurrence.getTime()) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
 
         // Enforced here as well as in the listing: hiding a form is a display
         // decision, and a client that kept a stale slot id must not be able to
@@ -323,7 +336,7 @@ export abstract class Schedule {
         const group = await findGroup(event.groupId)
         const lead = group?.signupLeadMinutes ?? 1440
 
-        if (!signupsOpen(matches[0]!.start, matches[0]!.end, lead)) {
+        if (!await preparationAllowed(event, body.occurrence) || !signupsOpen(matches[0]!.start, matches[0]!.end, lead)) {
             throw status(409, 'sign-ups are not open for that shift yet' satisfies ScheduleModel.signupsClosed)
         }
 

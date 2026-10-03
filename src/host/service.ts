@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { eq } from 'drizzle-orm'
 import db from '../db'
-import { groups, botConfigs } from '../db/schema'
+import { groups, botConfigs, events } from '../db/schema'
 import { findGroup, recordAudit } from '../groups/service'
 import {
     assertGroupPermission,
@@ -17,6 +17,7 @@ import {
     groupIndexKey,
     requireRoom,
 } from '../rooms/service'
+import { ensureInstance } from '../schedule/instances'
 import { MediaService } from '../media/service'
 import { HostModel } from './model'
 import { DEFAULT_SCHEDULE, validSchedule, BOT_ACTIONS } from './rules'
@@ -161,12 +162,14 @@ export abstract class Host {
     static async upload(roomId: string, file: File, session: session) {
         const info = await requireRoom(roomId)
         await assertGroupPermission(session, info.groupId, PERM.START_ROOM)
+        const [event] = await db.select().from(events).where(eq(events.eventId, info.eventId)).limit(1)
+        const instance = await ensureInstance(event!, new Date(info.occurrence))
         const image = await MediaService.upload(
             {
                 file,
                 groupId: info.groupId,
                 ownerType: 'SHIFT',
-                ownerId: info.eventId,
+                ownerId: instance.id,
             },
             session,
         )

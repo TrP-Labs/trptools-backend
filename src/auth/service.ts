@@ -14,7 +14,7 @@ import { dataRedis } from '../utils/redis'
 import { DEFAULT_RETURN_PATH, safeReturnPath } from '../utils/returnPath'
 import { FRONTEND_URL } from '../utils/env'
 import { avatarUrl, Discord, discordConfigured, displayName } from '../bot/discord'
-import { adoptDiscordSignups } from '../schedule/identity'
+import { adoptDiscordSignups, adoptDiscordVotes } from '../schedule/identity'
 import { BotModel } from '../bot/model'
 import { robloxCreationDate } from '../utils/robloxProfile'
 import { robloxWriteScopes } from '../utils/robloxOAuthScopes'
@@ -468,6 +468,7 @@ export abstract class DiscordLink {
          * account that is in fact connected.
          */
         await adoptDiscordSignups(userId, identity.id).catch(() => undefined)
+        await adoptDiscordVotes(userId, identity.id)
 
         return back('linked')
     }
