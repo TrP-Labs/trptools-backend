@@ -2,6 +2,23 @@
 
 TrPTools API: Elysia, Drizzle, Postgres, and Redis. Runs on Bun in Docker or on Cloudflare Workers with Neon and Upstash REST.
 
+## Security boundaries and audit regression
+
+API-key scopes are enforced before handlers, alongside the account's current group grants. `groups` covers groups, ranks, bot configuration, applications, claimables, statistics and media; `routes` covers routes and depots; `schedule` covers schedules and sign-up sheets; `dispatch` covers dispatch, rooms and host controls. Each namespace requires its exact `:read` or `:write` scope. Key management, account settings, elevation and other unscoped account features require a browser session. `/auth/session` can inspect either credential. Realtime connections recheck session/key validity and dispatch permission every 15 seconds; Roblox permission changes retain the existing 60-second cache window.
+
+On Bun, rate limits use the socket's peer address. Set `TRUST_PROXY_HEADERS=true` only if direct access to the API is blocked and your trusted proxy replaces client IP headers. Workers use Cloudflare's client IP. Production refuses the public development encryption key; retain an existing private encryption key to keep stored credentials readable.
+
+Migration `0036_signup_guards` serializes reservations per occurrence and enforces capacity and linked-identity duplicates in Postgres. It preserves existing rows, including commitments retained during Discord adoption. Apply migrations before serving the updated API.
+
+The audit fixture disables external providers and requires a disposable `trptools_audit_test` database on `127.0.0.1:54379`, plus isolated Redis on `127.0.0.1:54380`. It starts a fake object-storage endpoint on port 54383 and cleans its rows after running. With those services running:
+
+```bash
+DATABASE_URL=postgres://YOUR_USER@127.0.0.1:54379/trptools_audit_test bun run db:migrate
+DATABASE_URL=postgres://YOUR_USER@127.0.0.1:54379/trptools_audit_test REDIS_URL=redis://127.0.0.1:54380 bun --no-env-file scripts/security-audit.ts
+```
+
+Set `AUDIT_UI=true` on the second command to retain a synthetic browser session and serve the fixture API on 54381 until interrupted. No production records or provider accounts are used.
+
 ## Development
 
 1. Start infrastructure from the parent checkout: `docker compose up -d postgres valkey garage garage-init images`.

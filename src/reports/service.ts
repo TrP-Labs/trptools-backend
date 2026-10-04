@@ -1,5 +1,5 @@
 import { status } from 'elysia'
-import { and, count, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, ne, or } from 'drizzle-orm'
 import db from '../db'
 import { depots, groups, media, reports, routes, users } from '../db/schema'
 import type { ModerationStatus, ReportTarget } from '../db/schema'
@@ -56,20 +56,16 @@ async function loadTarget(targetType: ReportTarget, targetId: string) {
     }
 }
 
-async function setModeration(targetType: ReportTarget, targetId: string, value: ModerationStatus) {
+async function setModeration(targetType: ReportTarget, targetId: string, value: ModerationStatus, preserveApproval = false) {
     switch (targetType) {
         case 'GROUP':
-            await db.update(groups).set({ moderation: value }).where(eq(groups.id, targetId))
-            return
+            return (await db.update(groups).set({ moderation: value }).where(and(eq(groups.id, targetId), preserveApproval ? ne(groups.moderation, 'APPROVED') : undefined)).returning({ id: groups.id })).length > 0
         case 'ROUTE':
-            await db.update(routes).set({ moderation: value }).where(eq(routes.id, targetId))
-            return
+            return (await db.update(routes).set({ moderation: value }).where(and(eq(routes.id, targetId), preserveApproval ? ne(routes.moderation, 'APPROVED') : undefined)).returning({ id: routes.id })).length > 0
         case 'DEPOT':
-            await db.update(depots).set({ moderation: value }).where(eq(depots.id, targetId))
-            return
+            return (await db.update(depots).set({ moderation: value }).where(and(eq(depots.id, targetId), preserveApproval ? ne(depots.moderation, 'APPROVED') : undefined)).returning({ id: depots.id })).length > 0
         case 'MEDIA':
-            await db.update(media).set({ moderation: value }).where(eq(media.id, targetId))
-            return
+            return (await db.update(media).set({ moderation: value }).where(and(eq(media.id, targetId), preserveApproval ? ne(media.moderation, 'APPROVED') : undefined)).returning({ id: media.id })).length > 0
     }
 }
 
@@ -119,9 +115,9 @@ export abstract class Reports {
         if (!report) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
 
         const next = moderationAfterReport(target.moderation)
-        if (next !== target.moderation) await setModeration(body.targetType, body.targetId, next)
+        const changed = next !== target.moderation && await setModeration(body.targetType, body.targetId, next, true)
 
-        return { id: report.id, hidden: next === 'HIDDEN' }
+        return { id: report.id, hidden: next === 'HIDDEN' && (changed || target.moderation === 'HIDDEN') }
     }
 
     // ------------------------------------------------------------ site admin
@@ -144,42 +140,54 @@ export abstract class Reports {
             .orderBy(desc(reports.createdAt))
             .limit(limit)
 
-        // Snapshot each target so an admin can judge without opening the site.
+        // Batch snapshots: a 200-report page must not launch 600 database calls.
+        const ids = (type: ReportTarget) => rows.filter(row => row.report.targetType === type).map(row => row.report.targetId)
+        const [groupTargets, routeTargets, depotTargets, imageTargets] = await Promise.all([
+            ids('GROUP').length ? db.select().from(groups).where(inArray(groups.id, ids('GROUP'))) : [],
+            ids('ROUTE').length ? db.select().from(routes).where(inArray(routes.id, ids('ROUTE'))) : [],
+            ids('DEPOT').length ? db.select().from(depots).where(inArray(depots.id, ids('DEPOT'))) : [],
+            ids('MEDIA').length ? db.select().from(media).where(inArray(media.id, ids('MEDIA'))) : []
+        ])
+        const targets = new Map<string, NonNullable<Awaited<ReturnType<typeof loadTarget>>>>()
+        for (const row of groupTargets) targets.set(`GROUP:${row.id}`, { moderation: row.moderation, groupId: row.id, label: row.cachedName ?? `Group ${row.robloxId}`, description: [row.tagline, row.about].filter(Boolean).join(' — ').slice(0, 500) })
+        for (const row of routeTargets) targets.set(`ROUTE:${row.id}`, { moderation: row.moderation, groupId: row.groupId, label: `Route ${row.name}`, description: row.description.slice(0, 500) })
+        for (const row of depotTargets) targets.set(`DEPOT:${row.id}`, { moderation: row.moderation, groupId: row.groupId, label: `Depot ${row.number} — ${row.name}`, description: row.description.slice(0, 500) })
+        for (const row of imageTargets) targets.set(`MEDIA:${row.id}`, { moderation: row.moderation, groupId: row.groupId, label: row.caption || 'Uploaded image', description: row.contentType })
+        const groupIds = [...new Set([...targets.values()].map(target => target.groupId))]
+        const [groupRows, galleryRows] = await Promise.all([
+            groupIds.length ? db.select({ id: groups.id, slug: groups.slug, name: groups.cachedName }).from(groups).where(inArray(groups.id, groupIds)) : [],
+            ids('GROUP').length + ids('ROUTE').length + ids('DEPOT').length ? db.select().from(media).where(or(
+                ids('GROUP').length ? and(eq(media.ownerType, 'GROUP'), inArray(media.groupId, ids('GROUP'))) : undefined,
+                ids('ROUTE').length ? and(eq(media.ownerType, 'ROUTE'), inArray(media.ownerId, ids('ROUTE'))) : undefined,
+                ids('DEPOT').length ? and(eq(media.ownerType, 'DEPOT'), inArray(media.ownerId, ids('DEPOT'))) : undefined
+            )) : []
+        ])
+        const groupContexts = new Map(groupRows.map(group => [group.id, group]))
+        const galleries = new Map<string, string[]>()
+        for (const image of galleryRows) {
+            const key = image.ownerType === 'GROUP' ? `GROUP:${image.groupId}` : `${image.ownerType}:${image.ownerId}`
+            galleries.set(key, [...(galleries.get(key) ?? []), publicUrl(image.key)])
+        }
+        const directImages = new Map(imageTargets.map(image => [image.id, publicUrl(image.key)]))
         const enriched = await Promise.all(
             rows.map(async (row) => {
-                const target = await loadTarget(row.report.targetType, row.report.targetId)
+                const targetKey = `${row.report.targetType}:${row.report.targetId}`
+                const target = targets.get(targetKey)
 
                 let groupSlug: string | null = null
                 let groupName: string | null = null
                 let images: string[] = []
 
                 if (target) {
-                    const [group] = await db
-                        .select({ slug: groups.slug, name: groups.cachedName })
-                        .from(groups)
-                        .where(eq(groups.id, target.groupId))
-                        .limit(1)
+                    const group = groupContexts.get(target.groupId)
 
                     groupSlug = group?.slug ?? null
                     groupName = group?.name ?? null
 
                     // Reports are mostly about pictures, so bring them along.
-                    const imageRows =
-                        row.report.targetType === 'MEDIA'
-                            ? await db.select().from(media).where(eq(media.id, row.report.targetId))
-                            : await db
-                                  .select()
-                                  .from(media)
-                                  .where(
-                                      and(
-                                          eq(media.groupId, target.groupId),
-                                          row.report.targetType === 'GROUP'
-                                              ? eq(media.ownerType, 'GROUP')
-                                              : eq(media.ownerId, row.report.targetId)
-                                      )
-                                  )
-
-                    images = imageRows.map((image) => publicUrl(image.key))
+                    images = row.report.targetType === 'MEDIA'
+                        ? directImages.has(row.report.targetId) ? [directImages.get(row.report.targetId)!] : []
+                        : galleries.get(targetKey) ?? []
                 }
 
                 return {

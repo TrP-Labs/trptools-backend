@@ -31,9 +31,9 @@ export namespace MediaModel {
 
     export const uploadBody = t.Object({
         file: t.File({ maxSize: '6m' }),
-        groupId: t.String(),
+        groupId: t.String({ format: 'uuid' }),
         ownerType: ownerType,
-        ownerId: t.Optional(t.String()),
+        ownerId: t.Optional(t.String({ format: 'uuid' })),
         caption: t.Optional(t.String({ maxLength: 200 }))
     })
     export type uploadBody = typeof uploadBody.static
@@ -48,16 +48,16 @@ export namespace MediaModel {
      */
     export const iconBody = t.Object({
         file: t.File({ maxSize: '6m' }),
-        groupId: t.String(),
+        groupId: t.String({ format: 'uuid' }),
         ownerType: ownerType,
-        ownerId: t.Optional(t.String())
+        ownerId: t.Optional(t.String({ format: 'uuid' }))
     })
     export type iconBody = typeof iconBody.static
 
     export const iconTarget = t.Object({
-        groupId: t.String(),
+        groupId: t.String({ format: 'uuid' }),
         ownerType: ownerType,
-        ownerId: t.Optional(t.String())
+        ownerId: t.Optional(t.String({ format: 'uuid' }))
     })
     export type iconTarget = typeof iconTarget.static
 
@@ -68,9 +68,9 @@ export namespace MediaModel {
     export type iconResponse = typeof iconResponse.static
 
     export const listQuery = t.Object({
-        groupId: t.String(),
+        groupId: t.String({ format: 'uuid' }),
         ownerType: t.Optional(ownerType),
-        ownerId: t.Optional(t.String())
+        ownerId: t.Optional(t.String({ format: 'uuid' }))
     })
     export type listQuery = typeof listQuery.static
 

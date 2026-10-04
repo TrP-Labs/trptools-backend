@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Frequency, RRule } from 'rrule'
-import { activeOccurrence, occurrenceStartsBetween, upcomingOccurrences } from './recurrence'
+import { activeOccurrence, occurrenceStartsBetween, upcomingOccurrences, isValidRule } from './recurrence'
 
 describe('old recurring shifts', () => {
     const start = new Date('2019-01-31T18:30:00Z')
@@ -9,6 +9,7 @@ describe('old recurring shifts', () => {
 
     const cases: Array<[string, ConstructorParameters<typeof RRule>[0]]> = [
         ['daily', { freq: Frequency.DAILY }],
+        ['hourly', { freq: Frequency.HOURLY, interval: 3 }],
         ['weekdays', { freq: Frequency.WEEKLY, byweekday: [RRule.MO, RRule.TU, RRule.WE, RRule.TH, RRule.FR] }],
         ['fortnightly', { freq: Frequency.WEEKLY, interval: 2, byweekday: [RRule.MO, RRule.TH] }],
         ['monthly on the 31st', { freq: Frequency.MONTHLY }]
@@ -35,6 +36,14 @@ describe('old recurring shifts', () => {
             new Date('2026-09-20T18:30:00Z')
         )
     })
+})
+
+test('public recurrence expansion refuses abusive frequencies and fan-out', () => {
+    for (const rule of ['FREQ=SECONDLY', 'FREQ=MINUTELY', 'FREQ=DAILY;INTERVAL=0', 'FREQ=DAILY;COUNT=100000000', 'FREQ=DAILY;BYMINUTE=0,1,2,3,4;BYSECOND=0,1,2,3,4']) {
+        expect(isValidRule(rule)).toBe(false)
+        expect(occurrenceStartsBetween(rule, new Date('2000-01-01'), new Date('2026-01-01'), new Date('2026-01-02'))).toEqual([])
+    }
+    expect(isValidRule('FREQ=MONTHLY;BYDAY=1MO;COUNT=100')).toBe(true)
 })
 
 

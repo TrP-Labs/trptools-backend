@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { clientKey, isBotServiceRequest } from './requestIdentity'
+import { clientKey, isBotServiceRequest, registerPeerAddress } from './requestIdentity'
 
 test('Cloudflare IP takes precedence over a caller-supplied forwarded IP', () => {
     const request = new Request('https://apis.trptools.com/health', {
@@ -13,7 +13,16 @@ test('Worker requests without a trusted client IP cannot choose their own rate-l
         headers: { 'x-forwarded-for': '192.0.2.99' }
     })
     expect(clientKey(request, true)).toBe('unknown')
-    expect(clientKey(request, false)).toBe('192.0.2.99')
+    expect(clientKey(request, false)).toBe('unknown')
+    expect(clientKey(request, false, true)).toBe('192.0.2.99')
+})
+
+test('direct Bun callers cannot spoof their rate-limit address', () => {
+    const request = new Request('http://localhost/health', { headers: {
+        'cf-connecting-ip': '192.0.2.99', 'x-forwarded-for': '192.0.2.88', 'x-real-ip': '192.0.2.77'
+    } })
+    registerPeerAddress(request, '192.0.2.10')
+    expect(clientKey(request, false)).toBe('192.0.2.10')
 })
 
 test('only an authenticated internal bot request uses the service limit', () => {

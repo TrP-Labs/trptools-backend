@@ -12,6 +12,7 @@ import { isSiteAdmin, type session } from '../../utils/sessionVerifier'
 import { findGroup, recordAudit } from '../service'
 import { GroupModel } from '../model'
 import { RouteModel } from './model'
+import { publicItemReadable } from './visibility'
 
 /**
  * Target shares are stored to two decimal places.
@@ -175,14 +176,8 @@ export abstract class Route_ {
 
         const { group, isStaff } = await readContext(route.groupId, session)
 
-        if (!isStaff) {
-            const hidden =
-                group.visibility === 'PRIVATE' ||
-                !group.showRoutes ||
-                route.visibility !== 'PUBLIC' ||
-                route.moderation === 'HIDDEN'
-
-            if (hidden) throw status(404, 'Not Found' satisfies globalModel.notFound)
+        if (!isStaff && !publicItemReadable(group, route, 'ROUTE')) {
+            throw status(404, 'Not Found' satisfies globalModel.notFound)
         }
 
         const [decorated] = await decorateRoutes([route], isStaff)
@@ -341,9 +336,9 @@ export abstract class Depot_ {
         const [depot] = await db.select().from(depots).where(eq(depots.id, depotId)).limit(1)
         if (!depot) throw status(404, 'Not Found' satisfies globalModel.notFound)
 
-        const { isStaff } = await readContext(depot.groupId, session)
+        const { group, isStaff } = await readContext(depot.groupId, session)
 
-        if (!isStaff && (depot.visibility !== 'PUBLIC' || depot.moderation === 'HIDDEN')) {
+        if (!isStaff && !publicItemReadable(group, depot, 'DEPOT')) {
             throw status(404, 'Not Found' satisfies globalModel.notFound)
         }
 

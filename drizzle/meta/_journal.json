@@ -253,6 +253,13 @@
       "when": 1790998464396,
       "tag": "0035_shift_occurrences",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790998464397,
+      "tag": "0036_signup_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import type { VehicleCategory } from '../../db/schema'
+import { RE2JS } from 're2js'
 
 /**
  * Automatic route assignment — the decisions, with nothing behind them.
@@ -106,20 +107,29 @@ export function resolveDepotId(name: string, context: SolverContext): string | n
  * substring that follows it — which is precisely backwards. Patterns are still
  * honoured after that, so a group that wrote one keeps it.
  */
+const compiledPatterns = new Map<string, RE2JS | null>()
+function compiledPattern(pattern: string): RE2JS | null {
+    if (compiledPatterns.has(pattern)) return compiledPatterns.get(pattern)!
+    let compiled: RE2JS | null = null
+    try { compiled = RE2JS.compile(pattern, RE2JS.CASE_INSENSITIVE) } catch { /* Literal fallback. */ }
+    if (compiledPatterns.size >= 256) compiledPatterns.delete(compiledPatterns.keys().next().value!)
+    compiledPatterns.set(pattern, compiled)
+    return compiled
+}
+
 export function matchRule(name: string, context: SolverContext) {
     const exact = context.typesByName.get(name.trim().toLowerCase())
     if (exact) return exact
 
     for (const rule of context.rules) {
-        let matches = false
-
-        try {
-            // Patterns are authored by group managers, not the public, but a
-            // malformed one still must not throw.
-            matches = new RegExp(rule.pattern, 'i').test(name)
-        } catch {
-            matches = name.toLowerCase().includes(rule.pattern.toLowerCase())
-        }
+        // Group-authored patterns must not block the shared API with exponential
+        // backtracking. Unsupported expressions retain the literal fallback.
+        const pattern = compiledPattern(rule.pattern)
+        // Capture-aware search avoids retaining large per-pattern DFA histories
+        // across tenants; RE2's bounded engines still prevent exponential work.
+        const matches = pattern ? pattern.matcher(name).find() : name.toLowerCase().includes(rule.pattern.toLowerCase())
+        // Keep compilation while releasing reusable NFA machines after the input.
+        pattern?.reset()
 
         if (matches) return rule
     }

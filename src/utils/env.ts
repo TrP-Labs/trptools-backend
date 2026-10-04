@@ -22,6 +22,8 @@ export const env = {
 
     PORT: Number(optional('PORT', '3001')),
     HOST: optional('HOST', '0.0.0.0'),
+    /** Enable only when the API is reachable exclusively through a trusted proxy. */
+    TRUST_PROXY_HEADERS: optional('TRUST_PROXY_HEADERS', '') === 'true',
 
     DATABASE_URL: required('DATABASE_URL'),
     REDIS_URL: optional('REDIS_URL', 'redis://localhost:6379'),
@@ -104,5 +106,5 @@ export const cookieSecure = env.BASE_URL.startsWith('https://')
 export const robloxConfigured = Boolean(env.ROBLOX_CLIENT_ID && env.ROBLOX_CLIENT_SECRET)
 
 if (env.isProduction && env.ENCRYPTION_KEY === 'trptools-development-encryption-key') {
-    console.warn('[env] ENCRYPTION_KEY is unset — stored Roblox tokens are not protected. Set it before going live.')
+    throw new Error('Set a private ENCRYPTION_KEY before starting in production')
 }

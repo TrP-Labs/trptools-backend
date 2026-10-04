@@ -42,5 +42,5 @@ export async function rateLimit(bucket: string, identifier: string, limit: numbe
 
 /** Best-effort client identity for rate limiting. */
 export function clientKey(request: Request): string {
-    return identifyClient(request, env.isCloudflareWorker)
+    return identifyClient(request, env.isCloudflareWorker, env.TRUST_PROXY_HEADERS)
 }

@@ -3,7 +3,7 @@ import { cors } from '@elysiajs/cors'
 import openapi from '@elysiajs/openapi'
 import { env } from './utils/env'
 import { clientKey, rateLimit, RateLimitError } from './utils/ratelimit'
-import { isBotServiceRequest } from './utils/requestIdentity'
+import { isBotServiceRequest, registerPeerAddress } from './utils/requestIdentity'
 
 import { authorizedBackgroundJob } from './background/auth'
 import { background } from './background/controller'
@@ -49,7 +49,8 @@ export const app = new Elysia()
             allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
         })
     )
-    .onRequest(async ({ request }) => {
+    .onRequest(async ({ request, server }) => {
+        if (!env.isCloudflareWorker) registerPeerAddress(request, server?.requestIP(request)?.address)
         // The Worker uses Cloudflare's native rate-limit bindings before this
         // route tree runs. Keep Redis here for the standalone Bun deployment.
         if (env.isCloudflareWorker || authorizedBackgroundJob(request)) return

@@ -33,7 +33,7 @@ export const mediaRoutes = new Elysia({ prefix: '/media', tags: ['Media'] })
             type: 'multipart/form-data',
             response: {
                 200: MediaModel.item,
-                400: MediaModel.notAnImage,
+                400: t.Union([MediaModel.notAnImage, globalModel.badRequest]),
                 401: globalModel.unauthorized,
                 403: globalModel.forbidden,
                 404: globalModel.notFound,
