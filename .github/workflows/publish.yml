@@ -16,6 +16,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - name: Use Cloudflare's default Bun installer
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.15'
+      - name: Check Cloudflare frozen lockfile compatibility
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          git diff --exit-code -- package.json bun.lock
+          bun run test
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version

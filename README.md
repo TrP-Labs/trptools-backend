@@ -47,7 +47,7 @@ Use `bunx wrangler secret put NAME` for each secret; local Worker development re
 
 For Cloudflare Builds, use `bun install --frozen-lockfile` as the build command and `bun run worker:deploy` as the deploy command. Configure runtime secrets on the Worker and migrate the database before starting the build.
 
-Before the first build, set **`BUN_VERSION=1.4.2`** under **Settings → Build → Build Variables and Secrets** for this Worker (including preview builds if enabled), then retry the build. This is a build variable, not a Wrangler runtime variable. Cloudflare's automatic dependency install runs before the build command and does not read `.bun-version`; its default Bun 1.2.15 cannot parse this repository's version-3 lockfile. The [Cloudflare build image documentation](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/) documents the `BUN_VERSION` override. Keep this value in sync with `.bun-version`, which pins GitHub Actions and Docker builds.
+The version-1 lockfile supports Cloudflare's default Bun 1.2.15 for automatic dependency installation; CI also verifies a frozen install with that version. GitHub Actions and Docker use Bun 1.4.2 from `.bun-version`. You may set `BUN_VERSION=1.4.2` under Settings → Build → Build Variables and Secrets to use the same version on Cloudflare, but it is not required to read the lockfile. Cloudflare does not read `.bun-version`; see its [build image documentation](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/).
 
 ## Sign-in and storage
 
