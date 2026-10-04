@@ -24,6 +24,9 @@ Usability
 - Report failed settings/logout requests accurately and batch/retry imported owner profiles.
 
 Upgrade
+- In each Cloudflare Worker's Settings > Build > Build Variables and Secrets, set
+  BUN_VERSION=1.4.2 and retry. This must precede the automatic dependency install;
+  Cloudflare does not read .bun-version and its default Bun cannot read lockfile v3.
 - Apply backend migration 0036_signup_guards before serving the updated API.
   Docker startup applies migrations automatically; historical signups are preserved.
 - Keep the current private ENCRYPTION_KEY. Installations using the development key

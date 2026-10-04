@@ -47,6 +47,8 @@ Use `bunx wrangler secret put NAME` for each secret; local Worker development re
 
 For Cloudflare Builds, use `bun install --frozen-lockfile` as the build command and `bun run worker:deploy` as the deploy command. Configure runtime secrets on the Worker and migrate the database before starting the build.
 
+Before the first build, set **`BUN_VERSION=1.4.2`** under **Settings → Build → Build Variables and Secrets** for this Worker (including preview builds if enabled), then retry the build. This is a build variable, not a Wrangler runtime variable. Cloudflare's automatic dependency install runs before the build command and does not read `.bun-version`; its default Bun 1.2.15 cannot parse this repository's version-3 lockfile. The [Cloudflare build image documentation](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/) documents the `BUN_VERSION` override. Keep this value in sync with `.bun-version`, which pins GitHub Actions and Docker builds.
+
 ## Sign-in and storage
 
 1. Create a [Roblox OAuth app](https://create.roblox.com/dashboard/credentials) with `openid`, `profile`, and `group:read`.
