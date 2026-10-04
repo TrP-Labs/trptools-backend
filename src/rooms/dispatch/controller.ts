@@ -7,7 +7,7 @@ import { assertGroupPermission } from '../../utils/groupPermission'
 import { PERM } from '../../utils/permissions'
 import { globalModel } from '../../utils/globalModel'
 import { requireUser, sessionPlugin } from '../../utils/authPlugin'
-import { hasScope } from '../../utils/sessionVerifier'
+import { hasScope, ResolveSession } from '../../utils/sessionVerifier'
 
 export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
     .use(sessionPlugin)
@@ -77,8 +77,12 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                 }
             })
 
-            .get('/connect', async function* ({ roomId, room, user, request }) {
-                for await (const event of DispatchControls.stream(roomId, user.userId, room, request.signal, promise => finishRequestCleanup(request, promise))) {
+            .get('/connect', async function* ({ roomId, room, user, request, cookie }) {
+                const stillAuthorized = async () => {
+                    const current = await ResolveSession(cookie.access_token?.value as string | undefined, request.headers.get('authorization') ?? undefined)
+                    return current.authenticated && current.user?.userId === user.userId && hasScope(current, 'dispatch:read') && Boolean(await canDispatch(current.user, roomId))
+                }
+                for await (const event of DispatchControls.stream(roomId, user.userId, room, request.signal, promise => finishRequestCleanup(request, promise), stillAuthorized)) {
                     yield sse({ data: event })
                 }
             }, {

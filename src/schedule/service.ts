@@ -62,7 +62,7 @@ async function assertCanRead(groupIdOrSlug: string, session: session) {
 
     const isMember = isGroupMember(membership) || isSiteAdmin(session)
 
-    if (!isMember && (group.visibility === 'PRIVATE' || !group.showShifts)) {
+    if (!isMember && (group.visibility === 'PRIVATE' || group.moderation === 'HIDDEN' || !group.showShifts)) {
         throw status(404, 'Not Found' satisfies globalModel.notFound)
     }
 
@@ -398,12 +398,18 @@ export abstract class Schedule {
             throw status(409, 'that slot is full' satisfies ScheduleModel.slotFull)
         }
 
-        await db.insert(shiftSignups).values({
-            slotId: body.slotId,
-            eventId: body.eventId,
-            userId: session.user!.userId,
-            occurrence: body.occurrence
-        })
+        try {
+            await db.insert(shiftSignups).values({
+                slotId: body.slotId,
+                eventId: body.eventId,
+                userId: session.user!.userId,
+                occurrence: body.occurrence
+            })
+        } catch (error) {
+            if (databaseLimitReached(error, 'signup slot full')) throw status(409, 'that slot is full' satisfies ScheduleModel.slotFull)
+            if (databaseLimitReached(error, 'signup already held')) throw status(409, 'already signed up for this shift' satisfies ScheduleModel.alreadySignedUp)
+            throw error
+        }
 
         await publishSignupChange(event.groupId, body.eventId, body.occurrence, sheet.sheetId)
 
@@ -515,7 +521,12 @@ export abstract class Schedule {
             throw status(409, 'that slot is full' satisfies ScheduleModel.slotFull)
         }
 
-        await db.update(shiftSignups).set({ slotId: target.id }).where(eq(shiftSignups.id, row.id))
+        try {
+            await db.update(shiftSignups).set({ slotId: target.id }).where(eq(shiftSignups.id, row.id))
+        } catch (error) {
+            if (databaseLimitReached(error, 'signup slot full')) throw status(409, 'that slot is full' satisfies ScheduleModel.slotFull)
+            throw error
+        }
 
         await publishSignupChange(row.groupId, row.eventId, row.occurrence, row.sheetId)
         // Both sheets are redrawn when the move crosses one, or the sheet

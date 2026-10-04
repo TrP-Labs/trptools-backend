@@ -22,6 +22,7 @@ import { STAFF_ACTION } from '../host/redisScripts'
 import { completeClaim } from './scheduler'
 import { roomChannel } from '../rooms/service'
 import { presentConfig } from './present'
+import { databaseLimitReached } from '../utils/databaseLimit'
 
 /**
  * A host's note and server override for one occurrence.
@@ -387,14 +388,17 @@ export abstract class BotService {
             : undefined
         const previous = from?.slots.find((candidate) => candidate.id === held!.slotId)?.name ?? null
 
-        if (held) await db.delete(shiftSignups).where(eq(shiftSignups.id, held.id))
-
-        await db.insert(shiftSignups).values({
-            slotId: body.slotId,
-            eventId: body.eventId,
-            occurrence,
-            ...identity
-        })
+        try {
+            // A move is one write: a full destination must leave the old slot held.
+            if (held) await db.update(shiftSignups).set({ slotId: body.slotId }).where(eq(shiftSignups.id, held.id))
+            else await db.insert(shiftSignups).values({
+                slotId: body.slotId, eventId: body.eventId, occurrence, ...identity
+            })
+        } catch (error) {
+            if (databaseLimitReached(error, 'signup slot full')) return { status: 'FULL', slotName: slot.name, previousSlotName: previous }
+            if (databaseLimitReached(error, 'signup already held')) throw status(409, 'Conflict')
+            throw error
+        }
 
         const changedSheetIds = [sheet.sheetId]
         if (from && from.sheetId !== sheet.sheetId) changedSheetIds.push(from.sheetId)

@@ -62,6 +62,13 @@ function vehicle(id: string, extra: Partial<SolverVehicle> = {}): SolverVehicle 
     }
 }
 
+test('pathological manager patterns cannot block a dispatch import', () => {
+    const ctx = context({ rules: [{ pattern: '(a+)+$', category: 'STAFF', fixedRoute: null }] })
+    expect(matchRule('a'.repeat(120) + '!', ctx)).toBeNull()
+    expect(matchRule('a'.repeat(120), ctx)?.category).toBe('STAFF')
+    expect(matchRule('Boat rescue', context({ rules: [{ pattern: 'boat|rescue', category: 'SERVICE', fixedRoute: null }] }))?.category).toBe('SERVICE')
+})
+
 describe('classification', () => {
     test('an exact name beats a pattern that merely contains it', () => {
         // "ZiU-682 (ZiU-9)" as a regex happily claims the service vehicle whose

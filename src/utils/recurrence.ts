@@ -11,8 +11,14 @@ import { Frequency, RRule, rrulestr } from 'rrule'
 export function parseRule(rule: string, dtstart: Date): RRule | null {
     try {
         const parsed = rrulestr(rule, { dtstart, forceset: false, cache: false })
-        // rrulestr can hand back an RRuleSet; both expose the methods we use.
-        return parsed as RRule
+        // Shift recurrences are single rules. Sub-hourly schedules or large
+        // time expansions can replay millions of instants on a public read.
+        if (!(parsed instanceof RRule)) return null
+        const options = parsed.options
+        if (options.freq > Frequency.HOURLY || !Number.isInteger(options.interval) || options.interval < 1) return null
+        if (options.count !== null && (options.count < 1 || options.count > 10_000)) return null
+        if ((options.byhour?.length ?? 1) * (options.byminute?.length ?? 1) * (options.bysecond?.length ?? 1) > 24) return null
+        return parsed
     } catch {
         return null
     }
@@ -61,7 +67,7 @@ function calendarStarts(parsed: RRule, from: Date, to: Date, limit: number): Dat
 
     const { freq, interval = 1, dtstart } = original
     if (!dtstart || interval < 1 || !Number.isInteger(interval)) return null
-    if (freq !== Frequency.DAILY && freq !== Frequency.WEEKLY && freq !== Frequency.MONTHLY) return null
+    if (freq !== Frequency.HOURLY && freq !== Frequency.DAILY && freq !== Frequency.WEEKLY && freq !== Frequency.MONTHLY) return null
     if (freq !== Frequency.WEEKLY && original.byweekday !== undefined) return null
 
     const start = new Date(dtstart)
@@ -71,8 +77,8 @@ function calendarStarts(parsed: RRule, from: Date, to: Date, limit: number): Dat
     if (fromMs > toMs || limit <= 0) return []
 
     const result: Date[] = []
-    if (freq === Frequency.DAILY) {
-        const period = interval * DAY_MS
+    if (freq === Frequency.DAILY || freq === Frequency.HOURLY) {
+        const period = interval * (freq === Frequency.HOURLY ? 3_600_000 : DAY_MS)
         let next = startMs + Math.max(0, Math.ceil((fromMs - startMs) / period)) * period
         while (next <= toMs && result.length < limit) {
             result.push(new Date(next))

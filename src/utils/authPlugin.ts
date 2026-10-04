@@ -1,6 +1,7 @@
 import { Elysia, status } from 'elysia'
 import { isElevated, ResolveSession, type session } from './sessionVerifier'
 import { env } from './env'
+import { apiKeyAllows } from './apiKeyPolicy'
 
 /**
  * Attaches `session` to every request and rejects cross-site state changes.
@@ -27,6 +28,12 @@ export const sessionPlugin = new Elysia({ name: 'trptools/session' })
         )
 
         return { session }
+    })
+    .onBeforeHandle({ as: 'scoped' }, ({ request, session, set }) => {
+        set.headers['cache-control'] = 'private, no-store'
+        if (!apiKeyAllows(session, request.method, new URL(request.url).pathname)) {
+            throw status(403, 'Forbidden')
+        }
     })
 
 /** Narrows a session to an authenticated one or throws 401. */

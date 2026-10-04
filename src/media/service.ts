@@ -232,6 +232,7 @@ export abstract class MediaService {
         // attach images to group B's routes.
         let recurringOwner = false
         if (body.ownerType === 'SHIFT') {
+            if (!body.ownerId) throw status(400, 'Bad Request' satisfies globalModel.badRequest)
             const [owned] = await db.select({ id: events.eventId }).from(events).where(and(eq(events.eventId, body.ownerId!), eq(events.groupId, group.id))).limit(1)
             const [instance] = owned ? [] : await db.select({ id: shiftOccurrences.id }).from(shiftOccurrences).where(and(eq(shiftOccurrences.id, body.ownerId!), eq(shiftOccurrences.groupId, group.id))).limit(1)
             recurringOwner = Boolean(owned)
@@ -287,6 +288,10 @@ export abstract class MediaService {
                 uploadedBy: session.user?.userId ?? null
             })
             .returning()
+            .catch(async (error: unknown) => {
+                await deleteObject(key).catch(() => undefined)
+                throw error
+            })
 
         if (!row) {
             await deleteObject(key)
@@ -344,6 +349,10 @@ export abstract class MediaService {
                 uploadedBy: session.user?.userId ?? null
             })
             .returning()
+            .catch(async (error: unknown) => {
+                await deleteObject(key).catch(() => undefined)
+                throw error
+            })
 
         if (!row) {
             await deleteObject(key)
@@ -351,7 +360,13 @@ export abstract class MediaService {
         }
 
         const url = publicUrl(row.key)
-        await owner.link(row.id)
+        try {
+            await owner.link(row.id)
+        } catch (error) {
+            await db.delete(media).where(eq(media.id, row.id)).catch(() => undefined)
+            await deleteObject(key).catch(() => undefined)
+            throw error
+        }
         await dropIcon(owner.currentMediaId)
 
         await recordAudit(group.id, session.user?.userId ?? null, 'media.icon', `Updated the ${owner.label} image`)

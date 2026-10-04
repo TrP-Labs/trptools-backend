@@ -366,7 +366,7 @@ export abstract class DispatchControls {
      * client cannot block the broker, and it is bounded so a stalled reader
      * gets dropped instead of growing memory without limit.
      */
-    static async *stream(roomId: string, userId: string, room?: RoomInfo, signal?: AbortSignal, onCleanup?: (promise: Promise<unknown>) => void): AsyncGenerator<Vehicles.streamEvent> {
+    static async *stream(roomId: string, userId: string, room?: RoomInfo, signal?: AbortSignal, onCleanup?: (promise: Promise<unknown>) => void, stillAuthorized?: () => Promise<boolean>): AsyncGenerator<Vehicles.streamEvent> {
         const info = room ?? await requireRoom(roomId)
 
         const queue: Vehicles.streamEvent[] = []
@@ -431,10 +431,16 @@ export abstract class DispatchControls {
                 push({ event: 'HEARTBEAT' })
                 if (checking || closed) return
                 checking = true
-                void touchRoom(roomId).then((exists) => {
+                void (async () => {
+                    if (stillAuthorized && !await stillAuthorized().catch(() => false)) {
+                        queue.length = 0
+                        push({ event: 'CLOSED' })
+                        return
+                    }
+                    const exists = await touchRoom(roomId)
                     if (!exists) push({ event: 'CLOSED' })
                     else if (info.timeline) void hostSnapshot(roomId).then(snapshot => push({ event: 'HOST', data: snapshot })).catch(() => undefined)
-                }).catch(() => undefined).finally(() => { checking = false })
+                })().catch(() => undefined).finally(() => { checking = false })
             }, 15_000)
             yield { event: 'SYNC', data: vehicles }
             yield { event: 'PRESENCE', data: presence }

@@ -73,6 +73,8 @@ export async function putObject(key: string, bytes: Uint8Array, contentType: str
     const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
     const response = await client.fetch(objectUrl(key), {
         method: 'PUT',
+        signal: AbortSignal.timeout(15_000),
+        redirect: 'error',
         headers: { 'content-type': contentType },
         body
     })
@@ -82,7 +84,7 @@ export async function putObject(key: string, bytes: Uint8Array, contentType: str
 export async function deleteObject(key: string) {
     if (!client) return
     await client
-        .fetch(objectUrl(key), { method: 'DELETE' })
+        .fetch(objectUrl(key), { method: 'DELETE', signal: AbortSignal.timeout(15_000), redirect: 'error' })
         .then((response) => {
             if (!response.ok && response.status !== 404) {
                 throw new Error(`Object storage DELETE failed with ${response.status}`)

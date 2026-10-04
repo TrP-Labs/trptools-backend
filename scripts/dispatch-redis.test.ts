@@ -380,6 +380,16 @@ test('natural room expiry is detected at the heartbeat rather than per event', a
     await stream.return(undefined)
 }, 20_000)
 
+test('a revoked session closes its stream and releases presence at the heartbeat', async () => {
+    const stream = DispatchControls.stream('integration', 'revoked', info, undefined, undefined, async () => false)
+    expect((await stream.next()).value?.event).toBe('SYNC')
+    expect((await stream.next()).value?.event).toBe('PRESENCE')
+    let event = (await stream.next()).value
+    while (event?.event !== 'CLOSED') event = (await stream.next()).value
+    expect((await stream.next()).done).toBe(true)
+    expect(await DispatchControls.present('integration')).not.toContain('revoked')
+}, 20_000)
+
 test('150 ms simulated RTT keeps 50-vehicle operations below one second of service Redis time', async () => {
     delay = 150
     const start = performance.now()
