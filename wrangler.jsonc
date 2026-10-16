@@ -3,7 +3,7 @@
   "name": "trptools-backend",
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-19",
-  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal", "global_fetch_strictly_public"],
   "triggers": { "crons": ["* * * * *"] },
   "minify": true,
   "keep_vars": true,
