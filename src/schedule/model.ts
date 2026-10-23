@@ -265,6 +265,12 @@ export namespace ScheduleModel {
         canManage: t.Boolean(),
         images: t.Array(MediaModel.item),
         drivers: t.Array(t.Object({ robloxId: t.String(), name: t.String() })),
+        /**
+         * How much of the shift each person spent on the game server, as a
+         * hosted server reported it. Staff only: it is a record of who
+         * turned up for how long, not something a shift page publishes.
+         */
+        attendance: t.Array(t.Object({ robloxId: t.String(), name: t.String(), seconds: t.Number(), percent: t.Number() })),
         staff: t.Array(t.Object({ name: t.String(), slot: t.String(), status: t.String() })),
         onDemand: t.Boolean(),
         decision: t.String(),

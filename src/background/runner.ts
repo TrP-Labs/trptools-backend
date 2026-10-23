@@ -7,6 +7,8 @@ export function startBackgroundRunner() {
         running = true
         try {
             await aggregateStatistics()
+            const { sweepRooms } = await import('../rooms/service')
+            await sweepRooms()
             await runNotificationTick(async (kind, id) => {
                 if (kind === 'plan') {
                     const { planNotification } = await import('../notifications/scheduler')

@@ -248,26 +248,27 @@ test('refresh leases preserve newer edits and retry crashed delivery', async () 
     ).toBe(true)
     expect(JSON.parse((await redis.get(noteKey))!).note).toBe('Second')
 })
-test('room stays live through wrap-up and while occupied, closing only when inactive and empty', async () => {
+test('room stays live through wrap-up and closes at its end even while occupied', async () => {
     now = end + 1799999
+    await redis.hset('dispatchroom:test:users', 'host', '1')
+    await redis.rpush('dispatchroom:test:vehicles', '12')
+    await redis.hset('dispatchroom:test:vehicles:12', 'id', '12')
     expect(
         Number(await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])),
     ).toBe(1)
     now += 1
-    await redis.hset('dispatchroom:test:users', 'host', '1')
-    expect(
-        Number(await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])),
-    ).toBe(1)
-    await redis.del('dispatchroom:test:users')
+    // A tab left open, or a presence count a crashed stream never gave
+    // back, must not keep the group's only room open indefinitely.
     expect(
         Number(await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])),
     ).toBe(0)
     expect(await redis.get('groupindex:group')).toBeNull()
+    expect(await redis.exists(key, 'dispatchroom:test:users', 'dispatchroom:test:vehicles', 'dispatchroom:test:vehicles:12')).toBe(0)
 })
 
-test('an empty active room expires at wrap-up without needing a poller', async () => {
+test('an active room expires at wrap-up without needing a poller', async () => {
     await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])
-    expect(await redis.ttl(key)).toBe((end + 1800000 - now) / 1000)
+    expect(await redis.ttl(key)).toBe((end + 1800000 - now) / 1000 + 60)
 })
 test('an early reminder remains visible and dismissible for dispatchers', async () => {
     const state = JSON.parse(
@@ -344,4 +345,38 @@ test('seeded fuzz preserves the response contract across 1500 timeline operation
         if(!contract.Check(value)) throw new Error(JSON.stringify([...contract.Errors(value)]))
         expect(value.timeline.every((item:any,index:number)=>index===0||item.dueAt>=value.timeline[index-1].dueAt)).toBe(true)
     }
+})
+
+test('a card that went stale on the page can still be acted on', async () => {
+    // Nobody read the room between "edit" falling due and "public" passing,
+    // so the page still offers "edit" as READY while the store has it ignored.
+    now = start + 60000
+    const late = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'ACKNOWLEDGE', 'HOST', '', '0', 'host']))
+    expect(late.timeline.find((i: any) => i.id === 'edit').status).toBe('ACKNOWLEDGED')
+    // Done is done: moving a card somebody already handled is still refused.
+    expect(await run(CHANGE_EVENT, [key], ['edit', 'RESCHEDULE', 'HOST', 'END', '-20', 'host'])).toBe('CONFLICT')
+})
+
+test('an ignored card can be done late or moved', async () => {
+    now = start + 60000
+    await run(CLAIM_TIMELINE, [key], ['READ'])
+    expect((await snapshot()).timeline.find((i: any) => i.id === 'edit').status).toBe('IGNORED')
+    const moved = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'RESCHEDULE', 'HOST', 'END', '-20', 'host']))
+    expect(moved.timeline.find((i: any) => i.id === 'edit')).toMatchObject({ status: 'WAITING', dueAt: end - 1200000 })
+    now = end - 1200000
+    const done = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'ACTIVATE', 'HOST', '', '0', 'host']))
+    expect(done.timeline.find((i: any) => i.id === 'edit').status).toBe('ACTIVATED')
+})
+
+test('pressing the same thing twice is not a conflict', async () => {
+    const first = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'SKIP', 'HOST', '', '0', 'host']))
+    const second = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'SKIP', 'HOST', '', '0', 'other-host']))
+    expect(second.revision).toBe(first.revision)
+    expect(second.timeline.find((i: any) => i.id === 'edit')).toMatchObject({ status: 'SKIPPED', actorId: 'host' })
+})
+
+test('a dispatcher can dismiss a reminder that fell due since the page last heard', async () => {
+    now = end - 600000
+    const reminder = JSON.parse(await run(CHANGE_EVENT, [key], ['return-depot', 'ACKNOWLEDGE', 'DISPATCH', '', '0', 'dispatcher']))
+    expect(reminder.timeline.find((i: any) => i.id === 'return-depot').status).toBe('ACKNOWLEDGED')
 })

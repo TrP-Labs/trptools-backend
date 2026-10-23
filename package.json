@@ -1,6 +1,6 @@
 {
   "name": "trptools-backend",
-  "version": "3.4.3",
+  "version": "3.4.6",
   "private": true,
   "type": "module",
   "module": "src/index.ts",
@@ -27,7 +27,8 @@
     "db:seed": "bun run src/scripts/seed.ts",
     "test:dispatch": "bun test scripts/dispatch-redis.test.ts && DISPATCH_TEST_EDGE=true bun test scripts/dispatch-redis.test.ts",
     "test:host": "bun test scripts/host-redis.test.ts",
-    "test:engagement": "bun test scripts/engagement-api.test.ts"
+    "test:engagement": "bun test scripts/engagement-api.test.ts",
+    "test:promotions": "bun scripts/promotions-api.test.ts"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",

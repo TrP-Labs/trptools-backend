@@ -1,5 +1,5 @@
 import { relations, sql } from 'drizzle-orm'
-import { boolean, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, pgTable, primaryKey, real, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { groups, rankRelations } from './groups'
 import { events } from './events'
 import { users } from './users'
@@ -120,6 +120,27 @@ export const signupSlotRanks = pgTable(
             .references(() => rankRelations.id, { onDelete: 'cascade' })
     },
     (table) => [primaryKey({ columns: [table.slotId, table.rankId] })]
+)
+
+/**
+ * What a slot is worth to one rank, in attendance points.
+ *
+ * Per rank rather than on the slot, because the same dispatcher slot can be
+ * the whole job for one rank and a favour from another. No row means the
+ * default of one point.
+ */
+export const rankSlotPoints = pgTable(
+    'rank_slot_points',
+    {
+        rankId: uuid('rank_id')
+            .notNull()
+            .references(() => rankRelations.id, { onDelete: 'cascade' }),
+        slotId: uuid('slot_id')
+            .notNull()
+            .references(() => signupSlots.id, { onDelete: 'cascade' }),
+        points: real('points').notNull().default(1)
+    },
+    (table) => [primaryKey({ columns: [table.rankId, table.slotId] })]
 )
 
 /**

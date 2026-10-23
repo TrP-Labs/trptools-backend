@@ -4,7 +4,7 @@ import db from '../db'
 import { claimableConnections, claimableRanks, groups, rankRelations, users } from '../db/schema'
 import { findGroup, recordAudit } from '../groups/service'
 import { requireUser } from '../utils/authPlugin'
-import { assertGroupPermission, invalidateUserPermissions } from '../utils/groupPermission'
+import { assertAnyGroupPermission, assertGroupPermission, invalidateUserPermissions } from '../utils/groupPermission'
 import { has, PERM } from '../utils/permissions'
 import { isBanned } from '../utils/moderation'
 import { isSiteAdmin, type session } from '../utils/sessionVerifier'
@@ -17,6 +17,12 @@ import { rateLimit, RateLimitError } from '../utils/ratelimit'
 import { ClaimableModel } from './model'
 import { confirmedRoles, qualifications } from './eligibility'
 import { highestRank, membershipRoles, RankCloud } from './roblox'
+
+/**
+ * Who may see and manage the group's Roblox write connection. It is one
+ * connection, used by claimable ranks and by promotions, so either job opens it.
+ */
+const CONNECTION_GRANTS = [PERM.MANAGE_CLAIMABLES, PERM.MANAGE_PROMOTIONS]
 
 const selection = { claim: claimableRanks, rankName: rankRelations.cachedName, rankColor: rankRelations.color }
 const pendingKey = (group: string, user: string) => `claimable:pending:${group}:${user}`
@@ -41,7 +47,7 @@ async function published(id: string) {
     }
     return { claim, group }
 }
-async function cloudFor(groupId: string) {
+export async function cloudFor(groupId: string) {
     const [connection] = await db.select().from(claimableConnections).where(eq(claimableConnections.groupId, groupId)).limit(1)
     if (!connection) throw status(503, 'The group needs to reconnect Roblox rank changes' satisfies ClaimableModel.unavailable)
     const [writer] = await db.select().from(users).where(eq(users.id, connection.authorizedBy)).limit(1)
@@ -142,7 +148,7 @@ export abstract class Claimables {
     static async connection(groupId: string, session: session) {
         const group = await groupFor(groupId)
         const user = requireUser(session)
-        await assertGroupPermission(session, group.id, PERM.MANAGE_CLAIMABLES)
+        await assertAnyGroupPermission(session, group.id, CONNECTION_GRANTS)
         const { accessToken } = await userCredentials(user.userId, true)
         const [profile] = await db.select({ scopes: users.robloxWriteScopes }).from(users).where(eq(users.id, user.userId)).limit(1)
         const [connection] = await db.select().from(claimableConnections).where(eq(claimableConnections.groupId, group.id)).limit(1)
@@ -154,7 +160,7 @@ export abstract class Claimables {
         const group = await groupFor(groupId)
         const user = requireUser(session)
         if (session.viaApiKey) throw status(403, 'Forbidden')
-        await assertGroupPermission(session, group.id, PERM.MANAGE_CLAIMABLES)
+        await assertAnyGroupPermission(session, group.id, CONNECTION_GRANTS)
         const { accessToken } = await userCredentials(user.userId, true)
         const [profile] = await db.select().from(users).where(eq(users.id, user.userId)).limit(1)
         if (!accessToken || !profile?.robloxWriteScopes.split(' ').includes('group:write')) throw status(503, 'The group needs to reconnect Roblox rank changes')
@@ -168,7 +174,7 @@ export abstract class Claimables {
     }
     static async disconnect(groupId: string, session: session) {
         const group = await groupFor(groupId)
-        await assertGroupPermission(session, group.id, PERM.MANAGE_CLAIMABLES)
+        await assertAnyGroupPermission(session, group.id, CONNECTION_GRANTS)
         await db.delete(claimableConnections).where(eq(claimableConnections.groupId, group.id))
         await recordAudit(group.id, requireUser(session).userId, 'claimable.disconnect', 'Disconnected Roblox rank changes')
         return 'Success' as const

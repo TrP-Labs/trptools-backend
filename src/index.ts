@@ -22,6 +22,8 @@ import { applicationRoutes } from './applications/controller'
 import { host } from './host/controller'
 import { rooms } from './rooms/controller'
 import { dispatch } from './rooms/dispatch/controller'
+import { realtime } from './realtime/controller'
+import { attendance } from './attendance/controller'
 import { publicPages } from './public/controller'
 import { mediaRoutes } from './media/controller'
 import { adminRoutes, reportRoutes } from './reports/controller'
@@ -142,6 +144,8 @@ export const app = new Elysia()
     .use(rooms)
     .use(host)
     .use(dispatch)
+    .use(realtime)
+    .use(attendance)
     .use(publicPages)
     .use(mediaRoutes)
     .use(reportRoutes)

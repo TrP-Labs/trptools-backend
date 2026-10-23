@@ -86,7 +86,20 @@ export const PERM = {
     EDIT_SIGNUPS: 1 << 18,
     /** End an active room early. Deliberately absent from the Host preset. */
     MANAGE_CLAIMABLES: 1 << 20,
-    CLOSE_ROOM: 1 << 19
+    CLOSE_ROOM: 1 << 19,
+
+    /**
+     * A rank's attendance rules: the points each slot is worth, the monthly
+     * minimum and maximum, and where somebody goes past either. Also opens
+     * the Promotions and demotions page, read-only.
+     */
+    MANAGE_ATTENDANCE: 1 << 21,
+    /**
+     * Press promote or demote on that page. Separate from reading it: the
+     * buttons change somebody's Roblox rank, which is louder than deciding
+     * how many points a Saturday is worth.
+     */
+    MANAGE_PROMOTIONS: 1 << 22
 } as const
 
 export type PermissionFlag = (typeof PERM)[keyof typeof PERM]

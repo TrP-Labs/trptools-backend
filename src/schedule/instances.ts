@@ -1,7 +1,7 @@
 import { status } from 'elysia'
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import db from '../db'
-import { events, shiftOccurrences, shiftVotes, shiftDrivers, users, shiftStaffLog, type Event } from '../db/schema'
+import { events, shiftOccurrences, shiftVotes, shiftDrivers, users, shiftStaffLog, shiftAttendance, type Event } from '../db/schema'
 import { findGroup, recordAudit } from '../groups/service'
 import { assertGroupPermission, GetMembership } from '../utils/groupPermission'
 import { has, PERM } from '../utils/permissions'
@@ -16,6 +16,7 @@ import { actorForUser, actorForDiscord, type SignupActor } from './identity'
 import { voteWindow, votingAllowed } from './onDemand'
 import { publishSignupChange } from './events'
 import type { ScheduleModel } from './model'
+import { attendancePercent } from '../realtime/rules'
 
 export type Instance = typeof shiftOccurrences.$inferSelect
 
@@ -138,7 +139,11 @@ export abstract class Instances {
         const drivers = manager || past && row.publicDrivers ? await db.select({ robloxId: shiftDrivers.robloxId, name: shiftDrivers.name }).from(shiftDrivers).where(eq(shiftDrivers.occurrenceId, row.id)) : []
         const staff = manager || past && row.publicStaff ? await db.select({ name: shiftStaffLog.name, slot: shiftStaffLog.slot, status: shiftStaffLog.status }).from(shiftStaffLog)
             .where(and(eq(shiftStaffLog.eventId, row.eventId), eq(shiftStaffLog.occurrence, row.start))).orderBy(asc(shiftStaffLog.updatedAt)) : []
-        return { ...row, postDescription: past || manager ? row.postDescription : '', translations: presentTranslations('SHIFT', past || manager ? row.translations : { ...row.translations, postDescription: {} }),
+        const attendance = manager
+            ? (await db.select().from(shiftAttendance).where(eq(shiftAttendance.occurrenceId, row.id)).orderBy(desc(shiftAttendance.seconds)))
+                .map(entry => ({ robloxId: entry.robloxId, name: entry.name, seconds: entry.seconds, percent: attendancePercent(entry.seconds, row.start.getTime(), row.end.getTime()) }))
+            : []
+        return { ...row, attendance, postDescription: past || manager ? row.postDescription : '', translations: presentTranslations('SHIFT', past || manager ? row.translations : { ...row.translations, postDescription: {} }),
             canManage: manager, images: (await mediaForOwners('SHIFT', [row.id], manager)).get(row.id) ?? [], drivers,
             staff,
             voteCount: votes.filter(v => v.attending).length, voted: Boolean(mine?.attending), canVote: Boolean(session.user) && votingAllowed(row, membership.robloxRank, Boolean(actor.discordUserId), true),

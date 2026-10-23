@@ -246,6 +246,18 @@ export async function subscribeChannel(channel: string, listener: Listener): Pro
     }
 }
 
+/** Visits matching keys in bounded batches without blocking Redis. */
+export async function scanKeys(pattern: string, visit: (keys: string[]) => void | Promise<void>) {
+    let cursor = '0'
+    do {
+        const result = localRedis
+            ? await localRedis.scan(cursor, 'MATCH', pattern, 'COUNT', 500)
+            : await edgeRedis!.scan(cursor, { match: pattern, count: 500 })
+        cursor = String(result[0])
+        if (result[1].length) await visit(result[1])
+    } while (cursor !== '0')
+}
+
 /** Deletes matching keys in bounded batches without blocking Redis. */
 export async function deleteByPattern(pattern: string) {
     let cursor = '0'

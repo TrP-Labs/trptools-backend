@@ -77,6 +77,13 @@ export const env = {
     /** Optional signed push endpoint for the serverless Discord bot. */
     BOT_WORKER_URL: optional('BOT_WORKER_URL', ''),
     BOT_WORKER_SYNC_TOKEN: optional('BOT_WORKER_SYNC_TOKEN', ''),
+    /**
+     * Shared secret hosted game servers present on the live feed
+     * (`POST /realtime/game/:robloxGroupId`). One for the whole instance,
+     * because it is configured inside the game rather than per group. Unset
+     * closes the feed rather than opening it, like the bot's token.
+     */
+    GAME_FEED_TOKEN: optional('GAME_FEED_TOKEN', ''),
 
     // --- S3-compatible object storage for uploaded images -------------------
     S3_ENDPOINT: stripTrailingSlash(optional('S3_ENDPOINT', 'http://localhost:9000')),

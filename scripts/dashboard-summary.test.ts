@@ -87,7 +87,7 @@ mock.module('../src/utils/redis', () => ({
             return keys.map((key) => key.startsWith('perm:')
                 ? `${levelForPermissions(grants)}:${rank}:${grants}:driver-rank` : 'live-room')
         }
-    }, deleteByPattern: async () => {}, deleteByPrefix: async () => {}, subscribeChannel: async () => () => {}
+    }, deleteByPattern: async () => {}, deleteByPrefix: async () => {}, scanKeys: async () => {}, subscribeChannel: async () => () => {}
 }))
 mock.module('../src/utils/roblox', () => ({ Roblox: {
     getUserGroups: async () => [{ groupId: 123, role: { id: 1, rank: 5 } }]

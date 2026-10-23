@@ -75,13 +75,6 @@ else
     redis.call('HSET', KEYS[2], ARGV[1], count)
     redis.call('EXPIRE', KEYS[2], tonumber(ARGV[3]))
 end
-if tonumber(ARGV[2]) > 0 then
-    local active = tonumber(redis.call('HGET', KEYS[1], 'activeUntil') or '0')
-    local ttl = math.max(7200, math.ceil((active - tonumber(ARGV[5])) / 1000) + 7200)
-    redis.call('EXPIRE', KEYS[1], ttl)
-    local group = redis.call('HGET', KEYS[1], 'groupId')
-    if group then redis.call('EXPIRE', 'groupindex:' .. group, ttl) end
-end
 local fields = redis.call('HGETALL', KEYS[2])
 local present = {}
 for i = 1, #fields, 2 do
@@ -90,11 +83,4 @@ end
 local encoded = #present == 0 and '[]' or cjson.encode(present)
 redis.call('PUBLISH', ARGV[4], '{"event":"PRESENCE","data":' .. encoded .. '}')
 return present
-`
-
-export const CLOSE_ROOM = `
-redis.call('DEL', KEYS[1])
-if redis.call('GET', KEYS[2]) == ARGV[1] then redis.call('DEL', KEYS[2]) end
-redis.call('PUBLISH', ARGV[2], '{"event":"CLOSED"}')
-return 1
 `
