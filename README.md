@@ -74,6 +74,27 @@ DATABASE_URL=postgresql://localhost/trptools_claimable_test REDIS_URL=redis://lo
 
 The Worker variant runs the deployed entry in `workerd` with local Neon/Upstash bridges. Every Roblox response is mocked; it never authorizes or changes a real group.
 
+### Promotions and demotions
+
+The rank-change half of attendance uses the same write connection, with the
+same safeguards. Its regression runs against `trptools_promotion_test` and a
+temporary Redis on port 54133, with every Roblox response mocked:
+
+```bash
+DATABASE_URL=postgresql://localhost/trptools_promotion_test REDIS_URL=redis://localhost:54133 bun --no-env-file scripts/promotions-api.test.ts
+```
+
+## Live game feed (optional)
+
+Hosted TrP servers report every 15 seconds to
+`POST <BASE_URL>/realtime/game/<robloxGroupId>` with
+`Authorization: Bearer <GAME_FEED_TOKEN>`. Set `GAME_FEED_TOKEN` to a long random
+secret (`openssl rand -hex 32`) and give the same value to the game. Unset closes
+the feed. The answer is always `200` with the commands dispatchers have queued,
+room or no room; `404` means the Roblox group is not registered here, which the
+game shows its host as "not set up yet". `401` (a wrong token) stops the game
+sending until a host re-enables it.
+
 ## Discord (optional)
 
 1. Set `DISCORD_APP_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, and `BOT_SERVICE_TOKEN`.
@@ -83,7 +104,8 @@ The Worker variant runs the deployed entry in `workerd` with local Neon/Upstash 
 ## Checks
 
 1. Run `bun run check` for types, unit tests, both bundles, and a local Worker health probe.
-2. With Redis installed, run `bun run test:dispatch` to exercise both Redis clients.
+2. With Redis installed, run `bun run test:dispatch` to exercise both Redis clients,
+   and `bun run test:host` for the host timeline scripts.
 
 MIT — see [LICENSE](./LICENSE).
 
