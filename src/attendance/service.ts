@@ -192,9 +192,11 @@ async function computeStandings(groupId: string, month: string, only?: string) {
 
     const order = { PROMOTE: 0, DEMOTE: 1 } as Record<string, number>
     people.sort((a, b) => (order[a.verdict ?? ''] ?? 2) - (order[b.verdict ?? ''] ?? 2) || b.points - a.points || a.name.localeCompare(b.name))
-    const configuredRanks = ranks.filter((rank) =>
-        (rank.attendanceMaxPoints !== null && rank.promotionRankId) || (rank.attendanceMinPoints !== null && rank.demotionRankId)).length
-    return { group, ranks: byId, people, incomplete, configuredRanks }
+    const configured = (rank: RankRow) =>
+        Boolean((rank.attendanceMaxPoints !== null && rank.promotionRankId) || (rank.attendanceMinPoints !== null && rank.demotionRankId))
+    const summary = ranks.filter((rank) => rank.cachedRank < 255)
+        .map((rank) => ({ id: rank.id, name: rank.cachedName, color: rank.color, rank: rank.cachedRank, configured: configured(rank) }))
+    return { group, ranks: byId, people, incomplete, configuredRanks: summary.filter((rank) => rank.configured).length, summary }
 }
 
 async function connectionFor(groupId: string, userId: string) {
@@ -223,6 +225,7 @@ export abstract class Attendance {
         const worth = new Map(points.map((row) => [row.slotId, row.points]))
         return {
             rankId: rank.id,
+            rank: { name: rank.cachedName, color: rank.color, rank: rank.cachedRank },
             minPoints: rank.attendanceMinPoints,
             maxPoints: rank.attendanceMaxPoints,
             requiredPercent: rank.attendanceRequiredPercent,
@@ -286,7 +289,7 @@ export abstract class Attendance {
             connectionFor(group.id, user.userId)
         ])
         return {
-            month: selected, configuredRanks: computed.configuredRanks, canApply: canApply && !session.viaApiKey,
+            month: selected, configuredRanks: computed.configuredRanks, ranks: computed.summary, canApply: canApply && !session.viaApiKey,
             connection, people: computed.people, incomplete: computed.incomplete
         }
     }

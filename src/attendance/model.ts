@@ -17,6 +17,8 @@ export namespace AttendanceModel {
 
     export const settings = t.Object({
         rankId: t.String(),
+        /** Enough to title the page for somebody who may keep attendance but not bind ranks. */
+        rank: t.Object({ name: t.String(), color: t.String(), rank: t.Number() }),
         minPoints: nullablePoints,
         maxPoints: nullablePoints,
         requiredPercent: t.Integer({ minimum: 0, maximum: 100 }),
@@ -64,6 +66,8 @@ export namespace AttendanceModel {
         month: t.String(),
         /** Ranks with a bound and somewhere to go; the page explains an empty list against this. */
         configuredRanks: t.Number(),
+        /** Every rank, so the page can link to each one's rules. */
+        ranks: t.Array(t.Object({ id: t.String(), name: t.String(), color: t.String(), rank: t.Number(), configured: t.Boolean() })),
         /** May this viewer press the buttons at all, connection aside. */
         canApply: t.Boolean(),
         connection: t.Object({ hasWriteScope: t.Boolean(), connected: t.Boolean(), authorizedByMe: t.Boolean() }),
