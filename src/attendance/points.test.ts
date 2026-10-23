@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { monthOf, monthRange, shiftPoints, totalPoints, verdictFor, type RankRules, type ShiftWindow } from './points'
+import { boundsFor, monthOf, periodOf, periodRange, scoreShift, shiftPoints, totalPoints, verdictFor, type RankRules, type ShiftWindow } from './points'
 
 const rules = (overrides: Partial<RankRules> = {}): RankRules => ({
-    id: 'driver', minPoints: 2, maxPoints: 4, requiredPercent: 50, unsignedPoints: 0.5,
+    id: 'driver', minPoints: 2, maxPoints: 4, requiredPercent: 50, unsignedPoints: 0.5, noShowPoints: 0,
     promotionRankId: 'senior', demotionRankId: 'trainee', slotPoints: new Map([['dispatcher', 2]]), ...overrides
 })
 const hour: ShiftWindow = { id: 's1', start: 0, end: 3_600_000, tracked: true }
@@ -27,6 +27,24 @@ describe('one shift', () => {
         const untracked = { ...hour, tracked: false }
         expect(shiftPoints(rules(), untracked, { slotId: 'dispatcher' })).toBe(2)
         expect(shiftPoints(rules(), untracked, {})).toBe(0)
+    })
+
+    test('a no-show costs the penalty only on a tracked shift', () => {
+        const strict = rules({ noShowPoints: 1.5 })
+        expect(shiftPoints(strict, hour, { slotId: 'dispatcher', seconds: 600 })).toBe(-1.5)
+        expect(shiftPoints(strict, { ...hour, tracked: false }, { slotId: 'dispatcher' })).toBe(2)
+        // Turning up without signing up is never penalised, however short.
+        expect(shiftPoints(strict, hour, { seconds: 60 })).toBe(0)
+        // Off by default: a missed slot is simply worth nothing.
+        expect(shiftPoints(rules(), hour, { slotId: 'dispatcher' })).toBe(0)
+    })
+
+    test('a score says why', () => {
+        expect(scoreShift(rules({ noShowPoints: 1 }), hour, { slotId: 'dispatcher', seconds: 900 })).toEqual({ points: -1, reason: 'NO_SHOW', percent: 25 })
+        expect(scoreShift(rules(), hour, { slotId: 'dispatcher', seconds: 3600 })).toEqual({ points: 2, reason: 'SIGNED_UP', percent: 100 })
+        expect(scoreShift(rules(), { ...hour, tracked: false }, { slotId: 'x' })).toEqual({ points: 1, reason: 'TAKEN_AT_WORD', percent: null })
+        expect(scoreShift(rules(), hour, { seconds: 900 }).reason).toBe('SHORT')
+        expect(scoreShift(rules(), hour, { seconds: 1800 }).reason).toBe('PRESENT')
     })
 
     test('a threshold of zero counts anybody seen at all', () => {
@@ -59,9 +77,35 @@ describe('a month', () => {
         expect(verdictFor(rules({ demotionRankId: null }), 0)).toBeNull()
     })
 
+    test('a penalty can take the total below zero, and a no-show is not a counted shift', () => {
+        const shifts = [hour, { ...hour, id: 's2' }]
+        const activity = new Map([['s1', { slotId: 'dispatcher' }], ['s2', { seconds: 3600 }]])
+        expect(totalPoints(rules({ noShowPoints: 1 }), shifts, activity)).toEqual({ points: -0.5, counted: 1 })
+    })
+
     test('months are UTC calendar months', () => {
-        expect(monthRange('2026-12')).toEqual({ from: new Date('2026-12-01T00:00:00Z'), to: new Date('2027-01-01T00:00:00Z') })
-        expect(monthRange('2026-13')).toBeNull()
+        expect(periodRange('2026-12')).toEqual({ from: new Date('2026-12-01T00:00:00Z'), to: new Date('2027-01-01T00:00:00Z'), months: 1, kind: 'MONTH' })
+        expect(periodRange('2026-13')).toBeNull()
         expect(monthOf(new Date('2026-10-31T23:59:00Z'))).toBe('2026-10')
+    })
+})
+
+describe('a quarter', () => {
+    test('is three UTC calendar months', () => {
+        expect(periodRange('2026-Q4')).toEqual({ from: new Date('2026-10-01T00:00:00Z'), to: new Date('2027-01-01T00:00:00Z'), months: 3, kind: 'QUARTER' })
+        expect(periodRange('2026-Q1')!.from).toEqual(new Date('2026-01-01T00:00:00Z'))
+        expect(periodRange('2026-Q5')).toBeNull()
+        expect(periodOf(new Date('2026-09-30T23:59:00Z'), 'QUARTER')).toBe('2026-Q3')
+        expect(periodOf(new Date('2026-10-01T00:00:00Z'), 'QUARTER')).toBe('2026-Q4')
+        expect(periodOf(new Date('2026-10-01T00:00:00Z'), 'MONTH')).toBe('2026-10')
+    })
+
+    test('holds somebody to three months of the monthly bounds', () => {
+        expect(boundsFor(rules(), 3)).toEqual({ minPoints: 6, maxPoints: 12 })
+        expect(boundsFor(rules({ minPoints: null }), 3)).toEqual({ minPoints: null, maxPoints: 12 })
+        // Five points promote over a month and are comfortably inside a quarter.
+        expect(verdictFor(rules(), 5)).toBe('PROMOTE')
+        expect(verdictFor(rules(), 5, 3)).toBe('DEMOTE')
+        expect(verdictFor(rules(), 12.5, 3)).toBe('PROMOTE')
     })
 })

@@ -123,6 +123,27 @@ export const signupSlotRanks = pgTable(
 )
 
 /**
+ * Somebody whose attendance is set aside for now — on leave, say.
+ *
+ * Keyed by Roblox id rather than by account, because a standing is about the
+ * Roblox member whether or not they ever signed in here. A pause takes them
+ * out of the promotion and demotion suggestions and nothing else: their
+ * shifts still count and still show, so unpausing loses nothing.
+ */
+export const attendancePauses = pgTable(
+    'attendance_pauses',
+    {
+        groupId: uuid('group_id')
+            .notNull()
+            .references(() => groups.id, { onDelete: 'cascade' }),
+        robloxId: text('roblox_id').notNull(),
+        pausedBy: uuid('paused_by'),
+        pausedAt: timestamp('paused_at', { withTimezone: true }).notNull().defaultNow()
+    },
+    (table) => [primaryKey({ columns: [table.groupId, table.robloxId] })]
+)
+
+/**
  * What a slot is worth to one rank, in attendance points.
  *
  * Per rank rather than on the slot, because the same dispatcher slot can be

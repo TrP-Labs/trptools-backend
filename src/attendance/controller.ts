@@ -21,13 +21,23 @@ export const attendance = new Elysia({ prefix: '/attendance', tags: ['Ranks'] })
         detail: { summary: 'Save a rank’s attendance rules' }
     })
 
-    .get('/groups/:groupId/standings', async ({ params, query, session }) => Attendance.standings(params.groupId, query.month, session), {
-        query: t.Object({ month: t.Optional(t.String({ pattern: '^[0-9]{4}-[0-9]{2}$' })) }),
+    .get('/groups/:groupId/standings', async ({ params, query, session }) => Attendance.standings(params.groupId, query.period, session), {
+        query: t.Object({ period: t.Optional(AttendanceModel.period) }),
         response: { 200: AttendanceModel.standings, 401: globalModel.unauthorized, 403: globalModel.forbidden, 404: globalModel.notFound },
         detail: {
-            summary: 'Who has earned a promotion or a demotion this month',
-            description: 'Points from attendance and sign-ups against each rank’s monthly minimum and maximum. Nothing is changed by reading it.'
+            summary: 'Everybody’s attendance for a month or a quarter, and who has earned a promotion or a demotion',
+            description: 'Points from attendance and sign-ups against each rank’s monthly minimum and maximum, scaled to the period, with the shift-by-shift breakdown behind them. Nothing is changed by reading it.'
         }
+    })
+
+    .put('/groups/:groupId/pauses/:robloxId', async ({ params, body, session }) => {
+        await rateLimit('attendance:pause', session.user?.userId ?? 'anonymous', 60, 60)
+        return Attendance.pause(params.groupId, params.robloxId, body.paused, session)
+    }, {
+        params: t.Object({ groupId: t.String(), robloxId: t.String({ pattern: '^[0-9]{1,20}$' }) }),
+        body: AttendanceModel.pauseBody,
+        response: { 200: globalModel.genericSuccess, 401: globalModel.unauthorized, 403: globalModel.forbidden, 404: globalModel.notFound, 429: globalModel.rateLimited },
+        detail: { summary: 'Keep somebody out of the promotion and demotion suggestions, or let them back in' }
     })
 
     .post('/groups/:groupId/apply', async ({ params, body, session }) => {
