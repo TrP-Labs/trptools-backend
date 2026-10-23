@@ -9,6 +9,8 @@ import { broker } from '../../utils/events'
 import { globalModel } from '../../utils/globalModel'
 import { roomChannel, roomUsersKey, roomVehiclesKey, roomKey, requireRoom, touchRoom, type RoomInfo } from '../service'
 import { hostSnapshot } from '../../host/service'
+import { queueOrder, queueRoute } from '../../realtime/commands'
+import { roomGameStatus } from '../../realtime/service'
 import { Vehicles } from './model'
 import { assertResults, runBatches, type RedisTask } from './batch'
 import { ADD_VEHICLE, PATCH_VEHICLE, MODIFY_VEHICLE, DELETE_VEHICLES, CHANGE_PRESENCE } from './redisScripts'
@@ -22,12 +24,12 @@ import {
     type SolverVehicle
 } from './solver'
 
-const VEHICLE_TTL_SECONDS = 60 * 60 * 8
+export const VEHICLE_TTL_SECONDS = 60 * 60 * 8
 
-const vehiclePrefix = (roomId: string) => `dispatchroom:${roomId}:vehicles:`
-const vehicleKey = (roomId: string, vehicleId: string) => `${vehiclePrefix(roomId)}${vehicleId}`
+export const vehiclePrefix = (roomId: string) => `dispatchroom:${roomId}:vehicles:`
+export const vehicleKey = (roomId: string, vehicleId: string) => `${vehiclePrefix(roomId)}${vehicleId}`
 
-type StoredVehicle = {
+export type StoredVehicle = {
     id: string
     ownerId: string
     name: string
@@ -41,11 +43,17 @@ type StoredVehicle = {
     note: string
     location: string
     status: string
+    /** Game-reported fields. Absent on a pasted board, which stores none of them. */
+    gameRoute?: string
+    gameAssigned?: string
+    tablet?: string
+    command?: string
+    live?: string
 }
 
 const SERVICE_STATUSES: Vehicles.serviceStatus[] = ['AWAITING', 'ENROUTE', 'ON_SCENE', 'RETURNING']
 
-function decode(raw: Record<string, string>): Omit<Vehicles.vehicle, 'routeName' | 'routeColor'> | null {
+export function decode(raw: Record<string, string>): Omit<Vehicles.vehicle, 'routeName' | 'routeColor'> | null {
     if (!raw || !raw.id) return null
 
     return {
@@ -65,7 +73,14 @@ function decode(raw: Record<string, string>): Omit<Vehicles.vehicle, 'routeName'
         location: raw.location ?? '',
         status: SERVICE_STATUSES.includes(raw.status as Vehicles.serviceStatus)
             ? (raw.status as Vehicles.serviceStatus)
-            : 'AWAITING'
+            : 'AWAITING',
+        // `live` marks a vehicle the game has reported on at least once, so a
+        // board that went live mid-shift does not draw pasted vehicles as if
+        // the game had said their tablet was missing.
+        gameRoute: raw.live === 'true' ? raw.gameRoute ?? '' : null,
+        gameAssigned: raw.live === 'true' ? raw.gameAssigned ?? '' : null,
+        tablet: raw.live === 'true' ? raw.tablet === 'true' : null,
+        command: raw.command === 'QUEUED' || raw.command === 'SENT' ? raw.command : null
     }
 }
 
@@ -75,7 +90,7 @@ function decode(raw: Record<string, string>): Omit<Vehicles.vehicle, 'routeName'
  * A vehicle's `route` is either a route id or a free literal such as "SV", so
  * only the ids get resolved and anything else is shown as typed.
  */
-async function decorate(
+export async function decorate(
     groupId: string,
     vehicles: Array<Omit<Vehicles.vehicle, 'routeName' | 'routeColor'>>
 ): Promise<Vehicles.vehicleList> {
@@ -108,10 +123,10 @@ async function decorate(
     })
 }
 
-type RawVehicle = Omit<Vehicles.vehicle, 'routeName' | 'routeColor'>
-type Change = { task: RedisTask; event: Vehicles.streamEvent }
+export type RawVehicle = Omit<Vehicles.vehicle, 'routeName' | 'routeColor'>
+export type Change = { task: RedisTask; event: Vehicles.streamEvent }
 
-async function loadVehicles(roomId: string): Promise<{ ids: string[]; vehicles: RawVehicle[] }> {
+export async function loadVehicles(roomId: string): Promise<{ ids: string[]; vehicles: RawVehicle[] }> {
     const ids = await dataRedis.lrange(roomVehiclesKey(roomId), 0, -1)
     const results = await runBatches(dataRedis, ids.map((id) => (pipeline) => pipeline.hgetall(vehicleKey(roomId, id))))
     assertResults(results)
@@ -126,7 +141,7 @@ async function publishEvents(roomId: string, events: Vehicles.streamEvent[]) {
     assertResults(results)
 }
 
-async function commitChanges(roomId: string, changes: Change[], refreshList = false) {
+export async function commitChanges(roomId: string, changes: Change[], refreshList = false) {
     const tasks = changes.map((change) => change.task)
     if (refreshList) tasks.push((pipeline) => pipeline.expire(roomVehiclesKey(roomId), VEHICLE_TTL_SECONDS))
     const results = await runBatches(dataRedis, tasks)
@@ -142,11 +157,27 @@ async function commitChanges(roomId: string, changes: Change[], refreshList = fa
     return events
 }
 
-function patchChange(roomId: string, id: string, patch: Record<string, string>, event: Vehicles.streamEvent): Change {
+export function patchChange(roomId: string, id: string, patch: Record<string, string>, event: Vehicles.streamEvent): Change {
     return {
         task: (pipeline) => pipeline.eval(PATCH_VEHICLE, [roomKey(roomId), vehicleKey(roomId, id)], Object.entries(patch).flat()),
         event
     }
+}
+
+/** Claims each seed's place in the room, announcing only the ones that were new. */
+export async function addChanges(roomId: string, groupId: string, seeds: StoredVehicle[]): Promise<Change[]> {
+    const decorated = await decorate(groupId, seeds.map((seed) => decode(seed as Record<string, string>)!))
+    return seeds.map((seed, index) => ({
+        task: (pipeline) => pipeline.eval(ADD_VEHICLE,
+            [roomKey(roomId), vehicleKey(roomId, seed.id), roomVehiclesKey(roomId)],
+            [String(VEHICLE_TTL_SECONDS), seed.id, ...Object.entries(seed).filter(([, value]) => value !== undefined).flat() as string[]]),
+        event: { event: 'ADD', data: decorated[index]! }
+    }))
+}
+
+export function removeVehicles(roomId: string, ids: string[]) {
+    return dataRedis.eval<number>(DELETE_VEHICLES, [roomKey(roomId), roomVehiclesKey(roomId)],
+        [vehiclePrefix(roomId), JSON.stringify(ids), roomChannel(roomId)])
 }
 
 export abstract class DispatchControls {
@@ -198,19 +229,13 @@ export abstract class DispatchControls {
             })
         }
 
-        const decorated = await decorate(info.groupId, seeds.map((seed) => decode(seed)!))
-        seeds.forEach((seed, index) => changes.push({
-            task: (pipeline) => pipeline.eval(ADD_VEHICLE,
-                [roomKey(roomId), vehicleKey(roomId, seed.id), roomVehiclesKey(roomId)],
-                [String(VEHICLE_TTL_SECONDS), seed.id, ...Object.entries(seed).flat()]),
-            event: { event: 'ADD', data: decorated[index]! }
-        }))
+        changes.push(...await addChanges(roomId, info.groupId, seeds))
         const events = await commitChanges(roomId, changes, true)
         const total = await dataRedis.llen(roomVehiclesKey(roomId))
         return { added: events.filter((event) => event.event === 'ADD').length, removed, total }
     }
 
-    static async modifyVehicle(roomId: string, vehicleId: string, _info: RoomInfo, body: Vehicles.modifyBody) {
+    static async modifyVehicle(roomId: string, vehicleId: string, info: RoomInfo, body: Vehicles.modifyBody, dispatcher = 0) {
         const patch: Record<string, string> = {}
         if (body.route !== undefined) patch.route = body.route ?? ''
         if (body.assigned !== undefined) patch.assigned = body.assigned ? 'true' : 'false'
@@ -228,12 +253,26 @@ export abstract class DispatchControls {
         if (result === -2) throw status(409, 'a vehicle cannot tow itself' satisfies Vehicles.towProblem)
         if (result === -3) throw status(409, 'that vehicle is not in this room' satisfies Vehicles.towProblem)
         if (result === -4) throw status(409, 'that vehicle is already being towed' satisfies Vehicles.towProblem)
+        // With a server feeding the room the board is also the game's
+        // dispatch tablet: what was just stored is queued for the driver.
+        if (dispatcher > 0) {
+            if (body.route !== undefined) await queueRoute(roomId, info.groupId, dispatcher, vehicleId, body.route)
+            if (body.towing) await queueOrder(roomId, dispatcher, vehicleId, 'Tow', Number(body.towing))
+        }
+        return 'Success' as globalModel.genericSuccess
+    }
+
+    /** An order that has no field on the board, sent straight to the driver. */
+    static async sendCommand(roomId: string, vehicleId: string, body: Vehicles.commandBody, dispatcher: number) {
+        const type = body.type === 'STOP' ? 'Stop' : body.type === 'CONTINUE' ? 'Continue' : 'EndShift'
+        if (!await queueOrder(roomId, dispatcher, vehicleId, type)) {
+            throw status(409, 'no game server is connected to this room' satisfies Vehicles.notLive)
+        }
         return 'Success' as globalModel.genericSuccess
     }
 
     private static removeVehicles(roomId: string, ids: string[]) {
-        return dataRedis.eval<number>(DELETE_VEHICLES, [roomKey(roomId), roomVehiclesKey(roomId)],
-            [vehiclePrefix(roomId), JSON.stringify(ids), roomChannel(roomId)])
+        return removeVehicles(roomId, ids)
     }
 
     static async deleteVehicle(roomId: string, vehicleId: string, _info: RoomInfo) {
@@ -243,7 +282,7 @@ export abstract class DispatchControls {
     }
 
     /** Runs automatic assignment across the room and broadcasts the result. */
-    static async solveRoom(roomId: string, info: RoomInfo, body: Vehicles.solveBody): Promise<Vehicles.solveResponse> {
+    static async solveRoom(roomId: string, info: RoomInfo, body: Vehicles.solveBody, dispatcher = 0): Promise<Vehicles.solveResponse> {
         const { vehicles } = await loadVehicles(roomId)
 
         const context = await loadSolverContext(
@@ -277,6 +316,9 @@ export abstract class DispatchControls {
             })))
         const written = new Set(events.flatMap((event) => event.event === 'UPDATE' ? [event.data.id] : []))
         const assignments = result.assignments.filter((assignment) => written.has(assignment.vehicleId))
+        if (dispatcher > 0) {
+            for (const assignment of assignments) await queueRoute(roomId, info.groupId, dispatcher, assignment.vehicleId, assignment.route)
+        }
         return {
             solved: assignments.length,
             skipped: result.skipped,
@@ -445,6 +487,10 @@ export abstract class DispatchControls {
             yield { event: 'SYNC', data: vehicles }
             yield { event: 'PRESENCE', data: presence }
             if (info.timeline) yield { event: 'HOST', data: await hostSnapshot(roomId) }
+            // Only a room a server has reported to has anything to say here;
+            // later reports arrive as GAME frames on the channel.
+            const game = (info as RoomInfo & { gameAt?: string }).gameAt ? await roomGameStatus(roomId) : null
+            if (game) yield { event: 'GAME', data: game }
 
             while (!closed) {
                 if (queue.length === 0) {

@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
 import { events } from './events'
 import { groups } from './groups'
 import { users } from './users'
@@ -53,6 +53,22 @@ export const shiftDrivers = pgTable('shift_drivers', {
     name: text('name').notNull(),
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow()
 }, t => [unique('shift_drivers_person_unique').on(t.occurrenceId, t.robloxId)])
+
+/**
+ * How long each person was on the game server during one occurrence.
+ *
+ * Seconds rather than a percentage, because a host can extend a shift after
+ * the fact and the share has to be worked out against whatever the shift
+ * ended up being. Written by the live feed (`realtime/attendance.ts`), which
+ * counts in Redis and writes through here about once a minute.
+ */
+export const shiftAttendance = pgTable('shift_attendance', {
+    occurrenceId: uuid('occurrence_id').notNull().references(() => shiftOccurrences.id, { onDelete: 'cascade' }),
+    robloxId: text('roblox_id').notNull(),
+    name: text('name').notNull(),
+    seconds: integer('seconds').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+}, t => [primaryKey({ columns: [t.occurrenceId, t.robloxId] }), index('shift_attendance_person_idx').on(t.robloxId)])
 
 // A ledger has no slot FK: deleting a sheet must not delete a past shift's staffing.
 export const shiftStaffLog = pgTable('shift_staff_log', {

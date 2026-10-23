@@ -111,10 +111,10 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                 }
             })
 
-            .post('/solve', async ({ roomId, room, body, session }) => {
+            .post('/solve', async ({ roomId, room, body, session, user }) => {
                 if (!hasScope(session, 'dispatch:write')) throw status(403, 'Forbidden' satisfies globalModel.forbidden)
                 await assertGroupPermission(session, room.groupId, PERM.DISPATCH)
-                return DispatchControls.solveRoom(roomId, room, body)
+                return DispatchControls.solveRoom(roomId, room, body, user.robloxId)
             }, {
                 body: Vehicles.solveBody,
                 response: {
@@ -132,12 +132,12 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
 
             .group('/vehicle/:vehicleId', (vehicleApp) =>
                 vehicleApp
-                    .patch('/', async ({ roomId, room, params, body, session }) => {
+                    .patch('/', async ({ roomId, room, params, body, session, user }) => {
                         if (!hasScope(session, 'dispatch:write')) {
                             throw status(403, 'Forbidden' satisfies globalModel.forbidden)
                         }
                         await assertGroupPermission(session, room.groupId, PERM.DISPATCH)
-                        return DispatchControls.modifyVehicle(roomId, params.vehicleId, room, body)
+                        return DispatchControls.modifyVehicle(roomId, params.vehicleId, room, body, user.robloxId)
                     }, {
                         params: t.Object({ roomId: t.String(), vehicleId: t.String({ maxLength: 32 }) }),
                         body: Vehicles.modifyBody,
@@ -152,6 +152,28 @@ export const dispatch = new Elysia({ prefix: '/dispatch', tags: ['Dispatch'] })
                             summary: 'Update one vehicle',
                             description:
                                 'Setting `towing` to another vehicle id records a tow. It is refused if that vehicle has left the room or is already under tow, so two tow trucks cannot claim the same casualty.'
+                        }
+                    })
+
+                    .post('/command', async ({ roomId, room, params, body, session, user }) => {
+                        if (!hasScope(session, 'dispatch:write')) {
+                            throw status(403, 'Forbidden' satisfies globalModel.forbidden)
+                        }
+                        await assertGroupPermission(session, room.groupId, PERM.DISPATCH)
+                        return DispatchControls.sendCommand(roomId, params.vehicleId, body, user.robloxId)
+                    }, {
+                        params: t.Object({ roomId: t.String(), vehicleId: t.String({ maxLength: 32 }) }),
+                        body: Vehicles.commandBody,
+                        response: {
+                            200: globalModel.genericSuccess,
+                            401: globalModel.unauthorized,
+                            403: globalModel.forbidden,
+                            404: globalModel.notFound,
+                            409: Vehicles.notLive
+                        },
+                        detail: {
+                            summary: 'Send the driver an order through the game',
+                            description: 'Stop, continue or end shift. Queued for the hosted server feeding the room and delivered in its next request; refused when no server is feeding it.'
                         }
                     })
 

@@ -37,8 +37,7 @@ finish = finish + tonumber(ARGV[4]) * 60000
 room.activeUntil = tostring(finish + 1800000)
 redis.call('HSET', KEYS[1], 'needsRefresh', redis.call('HINCRBY', KEYS[1], 'refreshVersion', 1))
 redis.call('HSET', KEYS[1], 'expiresAt', finish, 'activeUntil', room.activeUntil)
-local ttl = math.max(1, math.ceil((finish + 1800000 - now)/1000))
-if redis.call('HLEN', 'dispatchroom:' .. ARGV[2] .. ':users') > 0 then ttl = math.max(7200, ttl + 7200) end
+local ttl = math.max(1, math.ceil((finish + 1800000 - now)/1000) + 60)
 redis.call('EXPIRE', KEYS[1], ttl)
 redis.call('EXPIRE', KEYS[2], ttl)
 local vehicles = 'dispatchroom:' .. ARGV[2] .. ':vehicles'

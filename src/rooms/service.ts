@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { encodeBase32LowerCaseNoPadding } from '@oslojs/encoding'
 import db from '../db'
 import { events, botConfigs } from '../db/schema'
-import { dataRedis, deleteByPrefix } from '../utils/redis'
+import { dataRedis, scanKeys } from '../utils/redis'
 import { globalModel, PERMISSION } from '../utils/globalModel'
 import { assertGroupPermission, assertAnyGroupPermission, GetMembership } from '../utils/groupPermission'
 import { has, PERM } from '../utils/permissions'
@@ -14,8 +14,7 @@ import { findGroup } from '../groups/service'
 import { runBatches, assertResults } from './dispatch/batch'
 import { makeTimeline, DEFAULT_SCHEDULE } from '../host/rules'
 import { RoomModel } from './model'
-import { CREATE_ROOM, TOUCH_ROOM } from './lifecycle'
-import { CLOSE_ROOM } from './dispatch/redisScripts'
+import { CREATE_ROOM, TOUCH_ROOM, CLOSE_ROOM } from './lifecycle'
 
 export type RoomInfo = {
     groupId: string
@@ -28,6 +27,28 @@ export type RoomInfo = {
     activeUntil: string
     startAt: string
     timeline: string
+}
+
+/**
+ * Closes every room whose shift and wrap-up are over.
+ *
+ * Touching a room is what closes it, and a room nobody is watching is touched
+ * by nobody — so the background tick sweeps the index once a minute. One
+ * SCAN over `groupindex:*` and one script per open room.
+ */
+export async function sweepRooms() {
+    let closed = 0
+    for (const roomId of await openRoomIds()) {
+        if (!await touchRoom(roomId)) closed++
+    }
+    return closed
+}
+
+async function openRoomIds(): Promise<string[]> {
+    const keys: string[] = []
+    await scanKeys('groupindex:*', (batch) => { keys.push(...batch) })
+    if (!keys.length) return []
+    return (await dataRedis.mget(keys)).filter((id): id is string => Boolean(id))
 }
 
 export function generateRoomId(): string {
@@ -122,6 +143,11 @@ export abstract class RoomControls {
             [roomKey(roomId), groupIndexKey(event.groupId)], [roomId, JSON.stringify(info), String(ttlSeconds)])
         if (!claimed) throw status(409, 'this group already has a room open' satisfies RoomModel.alreadyOpen)
 
+        // A server already feeding the group fills the board straight away.
+        const { GameFeed } = await import('../realtime/service')
+        await GameFeed.seed(roomId, info).catch((error) =>
+            console.warn('[rooms] could not seed from the game feed', error instanceof Error ? error.message : 'unknown'))
+
         return { roomId }
     }
 
@@ -173,8 +199,7 @@ export abstract class RoomControls {
         const info = await requireRoom(roomId)
         await assertGroupPermission(session, info.groupId, Date.now() < Number(info.activeUntil ?? Number(info.expiresAt) + 1800000) ? PERM.CLOSE_ROOM : PERM.START_ROOM)
 
-        await dataRedis.eval(CLOSE_ROOM, [roomKey(roomId), groupIndexKey(info.groupId)], [roomId, roomChannel(roomId)])
-        await deleteByPrefix(`dispatchroom:${roomId}:`)
+        await dataRedis.eval(CLOSE_ROOM, [roomKey(roomId)], [roomId])
 
         return 'Success' as globalModel.genericSuccess
     }

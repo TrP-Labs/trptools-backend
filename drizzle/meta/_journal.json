@@ -260,6 +260,13 @@
       "when": 1790998464397,
       "tag": "0036_signup_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792791283429,
+      "tag": "0037_game_feed_attendance",
+      "breakpoints": true
     }
   ]
 }

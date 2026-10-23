@@ -2,6 +2,26 @@ import { t } from 'elysia'
 import { HostModel } from '../../host/model'
 
 export namespace Vehicles {
+    /**
+     * Whether a hosted game server is feeding this room, and what it said
+     * last. `live` is the server's own judgement against the clock, so every
+     * client agrees on when the import button comes back.
+     */
+    export const gameStatus = t.Object({
+        live: t.Boolean(),
+        lastAt: t.Union([t.Number(), t.Null()]),
+        /** Server uptime in seconds, as of `lastAt`. */
+        runtime: t.Union([t.Number(), t.Null()]),
+        /** In-game minutes after midnight, 0-1439, as of `lastAt`. */
+        gameTime: t.Union([t.Number(), t.Null()]),
+        players: t.Number(),
+        /** The routes this server lets dispatchers assign, or null if it has not said. */
+        routes: t.Union([t.Array(t.String()), t.Null()]),
+        /** Commands still waiting for the game's next request. */
+        queued: t.Number()
+    })
+    export type gameStatus = typeof gameStatus.static
+
     export const category = t.Union([
         t.Literal('TROLLEYBUS'),
         t.Literal('SERVICE'),
@@ -71,9 +91,44 @@ export namespace Vehicles {
         note: t.String(),
         /** Where a service vehicle is, in the dispatcher's own words. */
         location: t.String(),
-        status: serviceStatus
+        status: serviceStatus,
+
+        /**
+         * What the game last reported, when a hosted server is feeding the
+         * room (`realtime/`). All null on a board filled by pasting, which
+         * has nothing to say about them.
+         *
+         * `gameRoute` is the route the driver has set on the vehicle itself,
+         * `gameAssigned` the one the game's dispatch tablet holds — the value
+         * this board and the in-game boards share — and `tablet` whether the
+         * tablet is in the vehicle at all, without which the driver sees none
+         * of it.
+         */
+        gameRoute: t.Union([t.String(), t.Null()]),
+        gameAssigned: t.Union([t.String(), t.Null()]),
+        tablet: t.Union([t.Boolean(), t.Null()]),
+        /**
+         * Where this board's latest assignment is on its way to the game:
+         * waiting for the next request, or handed over and waiting for the
+         * report that says what the game did with it.
+         */
+        command: t.Union([t.Literal('QUEUED'), t.Literal('SENT'), t.Null()])
     })
     export type vehicle = typeof vehicle.static
+
+    /** The fields above that only the game writes, as an UPDATE frame carries them. */
+    export const liveFields = t.Object({
+        ownerId: t.Optional(t.String()),
+        name: t.Optional(t.String()),
+        depot: t.Optional(t.String()),
+        depotId: t.Optional(t.Union([t.String(), t.Null()])),
+        routeName: t.Optional(t.Union([t.String(), t.Null()])),
+        routeColor: t.Optional(t.Union([t.String(), t.Null()])),
+        gameRoute: t.Optional(t.Union([t.String(), t.Null()])),
+        gameAssigned: t.Optional(t.Union([t.String(), t.Null()])),
+        tablet: t.Optional(t.Union([t.Boolean(), t.Null()])),
+        command: t.Optional(t.Union([t.Literal('QUEUED'), t.Literal('SENT'), t.Null()]))
+    })
 
     export const vehicleList = t.Array(vehicle)
     export type vehicleList = typeof vehicleList.static
@@ -96,6 +151,21 @@ export namespace Vehicles {
         vehicleIds: t.Optional(t.Array(t.String({ maxLength: 32 }), { maxItems: 500 }))
     })
     export type solveBody = typeof solveBody.static
+
+    /**
+     * An order for the driver, sent through the game.
+     *
+     * Route and tow changes become game commands on their own when the room
+     * is live; these three have no field on the board to change, so they are
+     * asked for directly.
+     */
+    export const commandBody = t.Object({
+        type: t.Union([t.Literal('STOP'), t.Literal('CONTINUE'), t.Literal('END_SHIFT')])
+    })
+    export type commandBody = typeof commandBody.static
+
+    export const notLive = t.Literal('no game server is connected to this room')
+    export type notLive = typeof notLive.static
 
     export const solveResponse = t.Object({
         solved: t.Number(),
@@ -151,11 +221,12 @@ export namespace Vehicles {
     export const streamEvent = t.Union([
         t.Object({ event: t.Literal('SYNC'), data: vehicleList }),
         t.Object({ event: t.Literal('ADD'), data: vehicle }),
-        t.Object({ event: t.Literal('UPDATE'), data: t.Composite([t.Object({ id: t.String() }), modifyBody]) }),
+        t.Object({ event: t.Literal('UPDATE'), data: t.Composite([t.Object({ id: t.String() }), modifyBody, liveFields]) }),
         t.Object({ event: t.Literal('DELETE'), data: t.String() }),
         t.Object({ event: t.Literal('PRESENCE'), data: t.Array(t.String()) }),
         t.Object({ event: t.Literal('CLOSED') }),
         t.Object({ event: t.Literal('HOST'), data: HostModel.snapshot }),
+        t.Object({ event: t.Literal('GAME'), data: gameStatus }),
         t.Object({ event: t.Literal('HEARTBEAT') })
     ])
     export type streamEvent = typeof streamEvent.static

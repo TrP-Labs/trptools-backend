@@ -248,26 +248,27 @@ test('refresh leases preserve newer edits and retry crashed delivery', async () 
     ).toBe(true)
     expect(JSON.parse((await redis.get(noteKey))!).note).toBe('Second')
 })
-test('room stays live through wrap-up and while occupied, closing only when inactive and empty', async () => {
+test('room stays live through wrap-up and closes at its end even while occupied', async () => {
     now = end + 1799999
+    await redis.hset('dispatchroom:test:users', 'host', '1')
+    await redis.rpush('dispatchroom:test:vehicles', '12')
+    await redis.hset('dispatchroom:test:vehicles:12', 'id', '12')
     expect(
         Number(await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])),
     ).toBe(1)
     now += 1
-    await redis.hset('dispatchroom:test:users', 'host', '1')
-    expect(
-        Number(await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])),
-    ).toBe(1)
-    await redis.del('dispatchroom:test:users')
+    // A tab left open, or a presence count a crashed stream never gave
+    // back, must not keep the group's only room open indefinitely.
     expect(
         Number(await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])),
     ).toBe(0)
     expect(await redis.get('groupindex:group')).toBeNull()
+    expect(await redis.exists(key, 'dispatchroom:test:users', 'dispatchroom:test:vehicles', 'dispatchroom:test:vehicles:12')).toBe(0)
 })
 
-test('an empty active room expires at wrap-up without needing a poller', async () => {
+test('an active room expires at wrap-up without needing a poller', async () => {
     await run(TOUCH_ROOM, [key, 'dispatchroom:test:users'])
-    expect(await redis.ttl(key)).toBe((end + 1800000 - now) / 1000)
+    expect(await redis.ttl(key)).toBe((end + 1800000 - now) / 1000 + 60)
 })
 test('an early reminder remains visible and dismissible for dispatchers', async () => {
     const state = JSON.parse(

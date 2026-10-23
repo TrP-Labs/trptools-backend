@@ -20,6 +20,8 @@ export default {
     async scheduled(_controller: unknown, _bindings: unknown, context: { waitUntil(promise: Promise<unknown>): void }) {
         const { aggregateStatistics } = await import('./statistics/collector')
         context.waitUntil(aggregateStatistics())
+        const { sweepRooms } = await import('./rooms/service')
+        context.waitUntil(sweepRooms().catch((error) => console.error('[rooms] sweep failed', error instanceof Error ? error.message : 'unknown')))
         if (!env.BACKGROUND_JOB_TOKEN) return
         const { runNotificationTick } = await import('./notifications/scheduler')
         context.waitUntil(runNotificationTick(async (kind, id) => {
