@@ -134,7 +134,7 @@ try {
     const settings = await expectStatus(`/attendance/ranks/${driver.id}`, 200, 'GET', undefined, 4)
     assert.deepEqual(settings.slots.map((s: { name: string }) => s.name), ['Dispatcher'])
     await expectStatus(`/attendance/ranks/${driver.id}`, 200, 'PUT', {
-        minPoints: 1, maxPoints: 2, requiredPercent: 50, unsignedPoints: 0.5,
+        minPoints: 1, maxPoints: 2, requiredPercent: 50, unsignedPoints: 0.5, noShowPoints: 0,
         promotionRankId: rank('20').id, demotionRankId: rank('5').id, slots: [{ slotId: slot!.id, points: 2 }]
     }, 4)
     const saved = await expectStatus(`/attendance/ranks/${driver.id}`, 200, 'GET', undefined, 4)
@@ -151,36 +151,74 @@ try {
     assert.deepEqual(byId.get('2'), { ...(byId.get('2') as object), points: 2.5, shifts: 2, verdict: 'PROMOTE', targetRankName: 'Senior' })
     assert.equal((byId.get('3') as { verdict: string }).verdict, 'DEMOTE')
     assert.equal((byId.get('3') as { points: number }).points, 0)
+    // The sheet: two columns, and user 2's two cells say why.
+    assert.equal(standings.shifts.length, 2); assert.equal(standings.months, 1)
+    assert.deepEqual((byId.get('2') as { cells: unknown[] }).cells.map((cell) => {
+        const { points, reason, percent, slot } = cell as Record<string, unknown>
+        return { points, reason, percent, slot }
+    }), [{ points: 0.5, reason: 'PRESENT', percent: 100, slot: null }, { points: 2, reason: 'SIGNED_UP', percent: 83, slot: 'Dispatcher' }])
+    assert.equal((byId.get('3') as { cells: unknown[] }).cells.length, 0)
+
+    // A quarter holds the driver to three months of their bounds: 2.5 points
+    // promote over the month and fall short of a quarter's minimum of three.
+    const quarter = `${standings.period.slice(0, 4)}-Q${Math.floor((Number(standings.period.slice(5)) - 1) / 3) + 1}`
+    const quarterly = await expectStatus(`/attendance/groups/${groupId}/standings?period=${quarter}`, 200)
+    const q2 = quarterly.people.find((p: { robloxId: string }) => p.robloxId === '2')
+    assert.equal(quarterly.months, 3); assert.equal(q2.minPoints, 3); assert.equal(q2.maxPoints, 6); assert.equal(q2.verdict, 'DEMOTE')
+    await expectStatus(`/attendance/groups/${groupId}/standings?period=2026-Q5`, 400)
+
+    // A no-show penalty: user 3 signs up for shift A, which a server
+    // tracked, and never turns up.
+    await db.insert(shiftSignups).values({ slotId: slot!.id, eventId: event!.eventId, userId: ids[3]!, occurrence: startA })
+    await db.update(rankRelations).set({ attendanceNoShowPoints: 1 }).where(eq(rankRelations.id, driver.id))
+    const penalised = await expectStatus(`/attendance/groups/${groupId}/standings`, 200)
+    const p3 = penalised.people.find((p: { robloxId: string }) => p.robloxId === '3')
+    assert.equal(p3.points, -1); assert.equal(p3.cells[0].reason, 'NO_SHOW'); assert.equal(p3.shifts, 0)
+    await db.update(rankRelations).set({ attendanceNoShowPoints: 0 }).where(eq(rankRelations.id, driver.id))
+
+    // --- pausing -----------------------------------------------------------------
+    assert.equal(standings.canPause, true)
+    await expectStatus(`/attendance/groups/${groupId}/pauses/3`, 403, 'PUT', { paused: true }, 2)
+    await expectStatus(`/attendance/groups/${groupId}/pauses/3`, 200, 'PUT', { paused: true }, 4)
+    await expectStatus(`/attendance/groups/${groupId}/pauses/3`, 200, 'PUT', { paused: true }, 4)
+    const pausedRead = await expectStatus(`/attendance/groups/${groupId}/standings`, 200)
+    const paused3 = pausedRead.people.find((p: { robloxId: string }) => p.robloxId === '3')
+    // Still counted and still carrying its verdict, so unpausing needs no reload.
+    assert.equal(paused3.paused, true); assert.equal(paused3.verdict, 'DEMOTE')
+    await expectStatus(`/attendance/groups/${groupId}/apply`, 409, 'POST', { robloxId: '3', verdict: 'DEMOTE', period: standings.period })
+    await expectStatus(`/attendance/groups/${groupId}/pauses/3`, 200, 'PUT', { paused: false }, 4)
     // A member whose rank has no rules is listed with points and no verdict.
     assert.equal((byId.get('6') as { verdict: null }).verdict, null)
     assert.equal(byId.has('1'), false)
 
     // --- applying ----------------------------------------------------------------
-    const month = standings.month
-    await expectStatus(`/attendance/groups/${groupId}/apply`, 403, 'POST', { robloxId: '2', verdict: 'PROMOTE', month }, 4)
-    await expectStatus(`/attendance/groups/${groupId}/apply`, 409, 'POST', { robloxId: '2', verdict: 'DEMOTE', month })
-    assert.deepEqual((await expectStatus(`/attendance/groups/${groupId}/apply`, 200, 'POST', { robloxId: '2', verdict: 'PROMOTE', month })), { state: 'CONFIRMED' })
+    const month = standings.period
+    await expectStatus(`/attendance/groups/${groupId}/apply`, 403, 'POST', { robloxId: '2', verdict: 'PROMOTE', period: month }, 4)
+    await expectStatus(`/attendance/groups/${groupId}/apply`, 409, 'POST', { robloxId: '2', verdict: 'DEMOTE', period: month })
+    assert.deepEqual((await expectStatus(`/attendance/groups/${groupId}/apply`, 200, 'POST', { robloxId: '2', verdict: 'PROMOTE', period: month })), { state: 'CONFIRMED' })
     // Assigned before anything is removed, and the base Member role is kept.
     assert.deepEqual(writes, ['+2:20', '-2:10'])
     assert.deepEqual(memberships.get(2), ['1', '20'])
-    await expectStatus(`/attendance/groups/${groupId}/apply`, 409, 'POST', { robloxId: '2', verdict: 'PROMOTE', month })
-    assert.deepEqual(await expectStatus(`/attendance/groups/${groupId}/apply`, 200, 'POST', { robloxId: '3', verdict: 'DEMOTE', month }), { state: 'CONFIRMED' })
+    await expectStatus(`/attendance/groups/${groupId}/apply`, 409, 'POST', { robloxId: '2', verdict: 'PROMOTE', period: month })
+    assert.deepEqual(await expectStatus(`/attendance/groups/${groupId}/apply`, 200, 'POST', { robloxId: '3', verdict: 'DEMOTE', period: month }), { state: 'CONFIRMED' })
     assert.deepEqual(memberships.get(3), ['5'])
 
     // Nobody may move somebody to a rank at or above their own.
     memberships.set(3, ['10'])
     await deleteByPattern('roblox:*')
     await db.update(rankRelations).set({ promotionRankId: rank('200').id, attendanceMaxPoints: -1 }).where(eq(rankRelations.id, driver.id))
-    await expectStatus(`/attendance/groups/${groupId}/apply`, 403, 'POST', { robloxId: '3', verdict: 'PROMOTE', month })
+    await expectStatus(`/attendance/groups/${groupId}/apply`, 403, 'POST', { robloxId: '3', verdict: 'PROMOTE', period: month })
     assert.deepEqual(memberships.get(3), ['10'])
 
     const audit = await db.select().from(auditMessages).where(eq(auditMessages.groupId, groupId))
     assert.equal(audit.filter((row) => row.action === 'rank.promote').length, 1)
     assert.equal(audit.filter((row) => row.action === 'rank.demote').length, 1)
+    assert.equal(audit.filter((row) => row.action === 'attendance.pause').length, 2)
+    assert.equal(audit.filter((row) => row.action === 'attendance.unpause').length, 1)
     // The ceiling refused it before Roblox was asked to change anything.
     assert.equal(writes.length, 4)
     void rankSlotPoints
-    console.log('Promotions API: settings, grants, points arithmetic, standings, stale verdicts, role replacement, rank ceilings and audit passed.')
+    console.log('Promotions API: settings, grants, points arithmetic, standings, quarters, no-show penalties, pauses, stale verdicts, role replacement, rank ceilings and audit passed.')
 } finally {
     globalThis.fetch = realFetch
     await db.delete(groups).where(eq(groups.id, groupId))

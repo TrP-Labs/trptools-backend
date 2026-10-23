@@ -2,7 +2,7 @@ import { status } from 'elysia'
 import { and, asc, eq, gte, inArray, lt, notInArray, or } from 'drizzle-orm'
 import db from '../db'
 import {
-    claimableConnections, rankRelations, rankSlotPoints, shiftAttendance, shiftOccurrences, shiftSignups,
+    attendancePauses, claimableConnections, rankRelations, rankSlotPoints, shiftAttendance, shiftOccurrences, shiftSignups,
     signupSheets, signupSlots, users
 } from '../db/schema'
 import { findGroup, recordAudit } from '../groups/service'
@@ -17,7 +17,9 @@ import { isSiteAdmin, type session } from '../utils/sessionVerifier'
 import { cloudFor } from '../claimables/service'
 import { highestRank, membershipRoles } from '../claimables/roblox'
 import { AttendanceModel } from './model'
-import { monthOf, monthRange, totalPoints, verdictFor, type Activity, type RankRules, type ShiftWindow } from './points'
+import {
+    boundsFor, periodOf, periodRange, scoreShift, totalPoints, verdictFor, type Activity, type RankRules, type ShiftWindow
+} from './points'
 
 type RankRow = typeof rankRelations.$inferSelect
 
@@ -40,6 +42,7 @@ function rulesOf(rank: RankRow, slotPoints: Map<string, number>): RankRules {
         maxPoints: rank.attendanceMaxPoints,
         requiredPercent: rank.attendanceRequiredPercent,
         unsignedPoints: rank.attendanceUnsignedPoints,
+        noShowPoints: rank.attendanceNoShowPoints,
         promotionRankId: rank.promotionRankId,
         demotionRankId: rank.demotionRankId,
         slotPoints
@@ -59,9 +62,12 @@ async function pooled<T, R>(items: T[], size: number, work: (item: T) => Promise
     return results
 }
 
-/** Everybody's activity in the month, keyed by Roblox id, then by occurrence. */
-async function monthActivity(groupId: string, from: Date, to: Date) {
-    const shifts = await db.select({ id: shiftOccurrences.id, eventId: shiftOccurrences.eventId, start: shiftOccurrences.start, end: shiftOccurrences.end })
+/** Everybody's activity in the period, keyed by Roblox id, then by occurrence. */
+async function periodActivity(groupId: string, from: Date, to: Date) {
+    const shifts = await db.select({
+        id: shiftOccurrences.id, eventId: shiftOccurrences.eventId, start: shiftOccurrences.start, end: shiftOccurrences.end,
+        name: shiftOccurrences.name, color: shiftOccurrences.color
+    })
         .from(shiftOccurrences)
         .where(and(
             eq(shiftOccurrences.groupId, groupId),
@@ -69,9 +75,11 @@ async function monthActivity(groupId: string, from: Date, to: Date) {
             lt(shiftOccurrences.start, new Date(Math.min(to.getTime(), Date.now()))),
             notInArray(shiftOccurrences.decision, ['CANCELED', 'FAILED', 'PENDING'])
         ))
+        .orderBy(asc(shiftOccurrences.start))
     const activity = new Map<string, Map<string, Activity>>()
     const names = new Map<string, string>()
-    if (!shifts.length) return { shifts: [] as ShiftWindow[], activity, names }
+    const slotNames = new Map<string, string>()
+    if (!shifts.length) return { shifts: [] as ShiftWindow[], columns: [], activity, names, slotNames }
 
     const attended = await db.select().from(shiftAttendance).where(inArray(shiftAttendance.occurrenceId, shifts.map((shift) => shift.id)))
     const tracked = new Set(attended.map((row) => row.occurrenceId))
@@ -115,26 +123,36 @@ async function monthActivity(groupId: string, from: Date, to: Date) {
         touch(robloxId, occurrenceId).slotId = row.slotId
         if (person.name && !names.has(robloxId)) names.set(robloxId, person.name)
     }
+    const slotIds = [...new Set(signups.map((row) => row.slotId))]
+    if (slotIds.length) {
+        for (const slot of await db.select({ id: signupSlots.id, name: signupSlots.name }).from(signupSlots).where(inArray(signupSlots.id, slotIds))) {
+            slotNames.set(slot.id, slot.name)
+        }
+    }
 
     return {
         shifts: shifts.map((shift) => ({ id: shift.id, start: shift.start.getTime(), end: shift.end.getTime(), tracked: tracked.has(shift.id) })),
+        columns: shifts.map((shift) => ({
+            id: shift.id, name: shift.name, color: shift.color, start: shift.start.toISOString(), end: shift.end.toISOString(), tracked: tracked.has(shift.id)
+        })),
         activity,
-        names
+        names,
+        slotNames
     }
 }
 
 /**
- * Every standing for one group and month.
+ * Every standing for one group and period.
  *
- * Who is evaluated: anybody who attended or signed up this month, plus the
+ * Who is evaluated: anybody who attended or signed up in the period, plus the
  * holders of any rank with a minimum — somebody who never turned up is
  * exactly who a minimum is for, and has no activity to be found by.
  * Permission is never read from here: a standing is worked out against the
  * Roblox rank the person holds right now, like everything else (§5).
  */
-async function computeStandings(groupId: string, month: string, only?: string) {
+async function computeStandings(groupId: string, period: string, only?: string) {
     const group = await groupFor(groupId)
-    const range = monthRange(month)
+    const range = periodRange(period)
     if (!range) throw status(400, 'Bad Request')
     const ranks = await db.select().from(rankRelations).where(eq(rankRelations.groupId, group.id)).orderBy(asc(rankRelations.cachedRank))
     const byRole = new Map(ranks.map((rank) => [rank.robloxId, rank]))
@@ -145,7 +163,11 @@ async function computeStandings(groupId: string, month: string, only?: string) {
     const rules = new Map(ranks.map((rank) => [rank.id, rulesOf(rank, new Map(
         pointRows.filter((row) => row.rankId === rank.id).map((row) => [row.slotId, row.points])
     ))]))
-    const { shifts, activity, names } = await monthActivity(group.id, range.from, range.to)
+    const [{ shifts, columns, activity, names, slotNames }, pauses] = await Promise.all([
+        periodActivity(group.id, range.from, range.to),
+        db.select({ robloxId: attendancePauses.robloxId }).from(attendancePauses).where(eq(attendancePauses.groupId, group.id))
+    ])
+    const paused = new Set(pauses.map((row) => row.robloxId))
 
     const known = new Map<string, RankRow>()
     let incomplete = false
@@ -171,13 +193,27 @@ async function computeStandings(groupId: string, month: string, only?: string) {
     const people = resolved.flatMap(([robloxId, rank]) => {
         if (!rank || rank.cachedRank >= 255) return []
         const own = rules.get(rank.id)!
-        const { points, counted } = totalPoints(own, shifts, activity.get(robloxId) ?? new Map())
-        const verdict = verdictFor(own, points)
+        const mine = activity.get(robloxId) ?? new Map<string, Activity>()
+        const { points, counted } = totalPoints(own, shifts, mine)
+        const verdict = verdictFor(own, points, range.months)
         const target = verdict === 'PROMOTE' ? byId.get(own.promotionRankId!) : verdict === 'DEMOTE' ? byId.get(own.demotionRankId!) : undefined
+        // Only the shifts somebody touched: the sheet draws the rest blank,
+        // and a quarter of nothing for three hundred people is mostly zeros.
+        const cells = shifts.flatMap((shift) => {
+            const seen = mine.get(shift.id)
+            if (!seen) return []
+            const score = scoreShift(own, shift, seen)
+            return [{
+                shiftId: shift.id, points: score.points, reason: score.reason,
+                percent: score.percent === null ? null : Math.round(score.percent),
+                slot: seen.slotId ? slotNames.get(seen.slotId) ?? null : null
+            }]
+        })
         return [{
             robloxId, name: names.get(robloxId) ?? robloxId, avatar: null as string | null,
-            rankId: rank.id, rankName: rank.cachedName, rankColor: rank.color,
-            points, shifts: counted, minPoints: own.minPoints, maxPoints: own.maxPoints,
+            rankId: rank.id, rankName: rank.cachedName, rankColor: rank.color, rankOrder: rank.cachedRank,
+            staff: rank.visible, paused: paused.has(robloxId),
+            points, shifts: counted, cells, ...boundsFor(own, range.months),
             verdict: target ? verdict : null, targetRankId: target?.id ?? null, targetRankName: target?.cachedName ?? null
         }]
     })
@@ -195,8 +231,11 @@ async function computeStandings(groupId: string, month: string, only?: string) {
     const configured = (rank: RankRow) =>
         Boolean((rank.attendanceMaxPoints !== null && rank.promotionRankId) || (rank.attendanceMinPoints !== null && rank.demotionRankId))
     const summary = ranks.filter((rank) => rank.cachedRank < 255)
-        .map((rank) => ({ id: rank.id, name: rank.cachedName, color: rank.color, rank: rank.cachedRank, configured: configured(rank) }))
-    return { group, ranks: byId, people, incomplete, configuredRanks: summary.filter((rank) => rank.configured).length, summary }
+        .map((rank) => ({ id: rank.id, name: rank.cachedName, color: rank.color, rank: rank.cachedRank, configured: configured(rank), staff: rank.visible }))
+    return {
+        group, ranks: byId, people, incomplete, configuredRanks: summary.filter((rank) => rank.configured).length, summary,
+        columns, months: range.months
+    }
 }
 
 async function connectionFor(groupId: string, userId: string) {
@@ -230,6 +269,7 @@ export abstract class Attendance {
             maxPoints: rank.attendanceMaxPoints,
             requiredPercent: rank.attendanceRequiredPercent,
             unsignedPoints: rank.attendanceUnsignedPoints,
+            noShowPoints: rank.attendanceNoShowPoints,
             promotionRankId: rank.promotionRankId,
             demotionRankId: rank.demotionRankId,
             // Only what this rank could actually sign up for; an empty list on
@@ -267,6 +307,7 @@ export abstract class Attendance {
             attendanceMaxPoints: body.maxPoints,
             attendanceRequiredPercent: body.requiredPercent,
             attendanceUnsignedPoints: body.unsignedPoints,
+            attendanceNoShowPoints: body.noShowPoints,
             promotionRankId: body.promotionRankId,
             demotionRankId: body.demotionRankId
         }).where(eq(rankRelations.id, rank.id))
@@ -278,20 +319,43 @@ export abstract class Attendance {
         return 'Success' as const
     }
 
-    static async standings(groupId: string, month: string | undefined, session: session): Promise<AttendanceModel.Standings> {
+    static async standings(groupId: string, period: string | undefined, session: session): Promise<AttendanceModel.Standings> {
         const group = await groupFor(groupId)
         await assertAnyGroupPermission(session, group.id, [PERM.MANAGE_ATTENDANCE, PERM.MANAGE_PROMOTIONS])
         const user = requireUser(session)
-        const selected = month ?? monthOf(new Date())
-        const [computed, canApply, connection] = await Promise.all([
+        const selected = period ?? periodOf(new Date(), 'MONTH')
+        const [computed, canApply, canPause, connection] = await Promise.all([
             computeStandings(group.id, selected),
             hasGroupPermission(session, group.id, PERM.MANAGE_PROMOTIONS),
+            hasGroupPermission(session, group.id, PERM.MANAGE_ATTENDANCE),
             connectionFor(group.id, user.userId)
         ])
         return {
-            month: selected, configuredRanks: computed.configuredRanks, ranks: computed.summary, canApply: canApply && !session.viaApiKey,
-            connection, people: computed.people, incomplete: computed.incomplete
+            period: selected, months: computed.months, shifts: computed.columns,
+            configuredRanks: computed.configuredRanks, ranks: computed.summary, canApply: canApply && !session.viaApiKey,
+            canPause, connection, people: computed.people, incomplete: computed.incomplete
         }
+    }
+
+    /**
+     * Sets somebody's attendance aside, or brings it back.
+     *
+     * Their shifts keep counting either way — a pause only keeps them out of
+     * the suggestions — so the sheet can grey a row without the page having
+     * to work the whole period out again.
+     */
+    static async pause(groupId: string, robloxId: string, paused: boolean, session: session) {
+        const group = await groupFor(groupId)
+        await assertGroupPermission(session, group.id, PERM.MANAGE_ATTENDANCE)
+        const user = requireUser(session)
+        if (paused) {
+            await db.insert(attendancePauses).values({ groupId: group.id, robloxId, pausedBy: user.userId }).onConflictDoNothing()
+        } else {
+            await db.delete(attendancePauses).where(and(eq(attendancePauses.groupId, group.id), eq(attendancePauses.robloxId, robloxId)))
+        }
+        await recordAudit(group.id, user.userId, paused ? 'attendance.pause' : 'attendance.unpause',
+            `${paused ? 'Paused' : 'Unpaused'} attendance suggestions for Roblox user ${robloxId}`)
+        return 'Success' as const
     }
 
     /**
@@ -309,9 +373,10 @@ export abstract class Attendance {
         const user = requireUser(session)
         if (session.viaApiKey) throw status(403, 'Forbidden')
         await assertGroupPermission(session, group.id, PERM.MANAGE_PROMOTIONS)
-        const { people, ranks } = await computeStandings(group.id, body.month, body.robloxId)
+        const { people, ranks } = await computeStandings(group.id, body.period, body.robloxId)
         const standing = people[0]
-        if (!standing || standing.verdict !== body.verdict || !standing.targetRankId) {
+        // A paused person is never suggested, so a button for them is stale by definition.
+        if (!standing || standing.paused || standing.verdict !== body.verdict || !standing.targetRankId) {
             throw status(409, 'their standing has changed, refresh and try again' satisfies AttendanceModel.stale)
         }
         const target = ranks.get(standing.targetRankId)!
@@ -338,7 +403,7 @@ export abstract class Attendance {
             const confirmed = Boolean(after && membershipRoles(after).includes(targetPath))
             await invalidatePerson(group.id, group.robloxId, body.robloxId)
             await recordAudit(group.id, user.userId, body.verdict === 'PROMOTE' ? 'rank.promote' : 'rank.demote',
-                `${body.verdict === 'PROMOTE' ? 'Promoted' : 'Demoted'} ${standing.name} from ${standing.rankName} to ${target.cachedName} on ${standing.points} attendance points for ${body.month}`)
+                `${body.verdict === 'PROMOTE' ? 'Promoted' : 'Demoted'} ${standing.name} from ${standing.rankName} to ${target.cachedName} on ${standing.points} attendance points for ${body.period}`)
             return { state: confirmed ? 'CONFIRMED' as const : 'PENDING' as const }
         } catch (error) {
             if (error && typeof error === 'object' && 'code' in error) throw error

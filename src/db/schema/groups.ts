@@ -177,6 +177,11 @@ export const rankRelations = pgTable(
         attendanceRequiredPercent: integer('attendance_required_percent').notNull().default(50),
         /** Points for a counted shift taken without signing up for a slot. */
         attendanceUnsignedPoints: real('attendance_unsigned_points').notNull().default(1),
+        /**
+         * Taken off for a slot signed up for and not turned up to, on a shift
+         * a server tracked. Zero, the default, is no penalty: a group opts in.
+         */
+        attendanceNoShowPoints: real('attendance_no_show_points').notNull().default(0),
         promotionRankId: uuid('promotion_rank_id').references((): AnyPgColumn => rankRelations.id, { onDelete: 'set null' }),
         demotionRankId: uuid('demotion_rank_id').references((): AnyPgColumn => rankRelations.id, { onDelete: 'set null' })
     },
