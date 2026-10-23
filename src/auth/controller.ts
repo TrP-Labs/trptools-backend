@@ -1,7 +1,7 @@
 import { Elysia, redirect, status, t } from 'elysia'
 import { dataRedis } from '../utils/redis'
 import { findGroup } from '../groups/service'
-import { assertGroupPermission } from '../utils/groupPermission'
+import { assertAnyGroupPermission } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
 import { safeReturnPath } from '../utils/returnPath'
 import { AuthModel } from './model'
@@ -48,17 +48,19 @@ export const auth = new Elysia({ prefix: '/auth', tags: ['Authentication'] })
         if (session.viaApiKey) throw status(403, 'Forbidden')
         const group = await findGroup(body.groupId)
         if (!group) throw status(404, 'Not Found')
-        await assertGroupPermission(session, group.id, PERM.MANAGE_CLAIMABLES)
+        // The write connection serves claimable ranks and promotions alike;
+        // whichever page asked is where the person lands afterwards.
+        await assertAnyGroupPermission(session, group.id, [PERM.MANAGE_CLAIMABLES, PERM.MANAGE_PROMOTIONS])
         await rateLimit('auth:login', clientKey(request), 20, 60)
         const { url, state, codeVerifier } = await Session.GenerateLogin(true)
-        const next = `/dashboard/${group.slug}/claimables`
+        const next = `/dashboard/${group.slug}/${body.returnTo === 'promotions' ? 'promotions' : 'claimables'}`
         await dataRedis.set(`roblox:reverify:${state}`, JSON.stringify({ userId: user.userId, next }), 'EX', 600)
         const expires = new Date(Date.now() + OAUTH_COOKIE_TTL_MS)
         roblox_oauth_state.set({ ...baseCookie, value: state, expires })
         roblox_code_verifier.set({ ...baseCookie, value: codeVerifier, expires })
         roblox_return_to.set({ ...baseCookie, value: next, expires })
         return Response.json({ url })
-    }, { body: t.Object({ groupId: t.String() }), response: { 200: AuthModel.LoginUrlResponse, 401: globalModel.unauthorized, 403: globalModel.forbidden, 404: globalModel.notFound } })
+    }, { body: t.Object({ groupId: t.String(), returnTo: t.Optional(t.Union([t.Literal('claimables'), t.Literal('promotions')])) }), response: { 200: AuthModel.LoginUrlResponse, 401: globalModel.unauthorized, 403: globalModel.forbidden, 404: globalModel.notFound } })
 
     .get(
         '/login',

@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm'
-import { boolean, jsonb, index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
+import { boolean, jsonb, index, integer, pgTable, real, text, timestamp, unique, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { moderationEnum, visibilityEnum, vehicleCategoryEnum } from './enums'
 import { routes, depots } from './routes'
 import { events } from './events'
@@ -159,7 +159,26 @@ export const rankRelations = pgTable(
         permissions: integer('permissions').notNull().default(0),
 
         maxActivity: integer('max_activity'),
-        minActivity: integer('min_activity')
+        minActivity: integer('min_activity'),
+
+        /**
+         * Attendance: points a month this rank is held to.
+         *
+         * Null switches a bound off; zero is a real bound. Over the maximum
+         * makes somebody a candidate for `promotionRankId`, under the minimum
+         * for `demotionRankId`. Points rather than shift counts because a
+         * dispatcher slot and an evening on the road are not worth the same.
+         * The old integer `min/max_activity` columns were never read and stay
+         * only so their data is not dropped.
+         */
+        attendanceMinPoints: real('attendance_min_points'),
+        attendanceMaxPoints: real('attendance_max_points'),
+        /** Share of a shift, in percent, somebody must be on the server for it to count. */
+        attendanceRequiredPercent: integer('attendance_required_percent').notNull().default(50),
+        /** Points for a counted shift taken without signing up for a slot. */
+        attendanceUnsignedPoints: real('attendance_unsigned_points').notNull().default(1),
+        promotionRankId: uuid('promotion_rank_id').references((): AnyPgColumn => rankRelations.id, { onDelete: 'set null' }),
+        demotionRankId: uuid('demotion_rank_id').references((): AnyPgColumn => rankRelations.id, { onDelete: 'set null' })
     },
     (table) => [
         unique('rank_relations_group_role_unique').on(table.groupId, table.robloxId),
