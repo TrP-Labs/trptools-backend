@@ -51,19 +51,50 @@ for _, item in ipairs(timeline) do
 end
 table.sort(timeline, function(a,b) return a.dueAt < b.dueAt end)
 ${STORE}`
-export const CHANGE_EVENT = `${PREAMBLE}
+// Settles the timeline against the clock before acting on it. The page only
+// hears about a card going READY or IGNORED on its next HOST frame, so a
+// click in between used to be judged against a state nobody could see — and
+// came back as an error for doing exactly what the card offered.
+const SETTLE = `
+for _, item in ipairs(timeline) do
+    local nextTime = finish + 1800000
+    for _, other in ipairs(timeline) do if other.dueAt > item.dueAt then nextTime = math.min(nextTime, other.dueAt) end end
+    if item.status == 'WAITING' and now >= item.dueAt then
+        if item.automation then item.status = 'QUEUED'; item.source = 'AUTOMATION' else item.status = 'READY' end
+    end
+    if ((item.status == 'READY' or item.status == 'QUEUED') and item.source ~= 'STAFF' or item.awaitingAck) and now >= nextTime then
+        item.status = 'IGNORED'; item.awaitingAck = nil; item.changedAt = now
+    end
+end
+`
+export const CHANGE_EVENT = `${PREAMBLE}${SETTLE}
 local target
 for _, item in ipairs(timeline) do if item.id == ARGV[4] then target = item end end
 if not target then return 'NOT_FOUND' end
 local operation = ARGV[5]
-if target.status ~= 'WAITING' and target.status ~= 'READY' and not target.awaitingAck then return 'CONFLICT' end
+-- A second press, or a second host pressing the same thing, already happened:
+-- answer with the room as it is rather than calling it a conflict.
+local done = (operation == 'ACKNOWLEDGE' and target.status == 'ACKNOWLEDGED' and not target.awaitingAck)
+    or (operation == 'SKIP' and target.status == 'SKIPPED')
+    or (operation == 'ACTIVATE' and not target.awaitingAck and (target.status == 'ACTIVATED' or target.status == 'QUEUED' or target.status == 'RUNNING' or target.status == 'AUTOMATED'))
+if done then
+    ${SNAPSHOT}
+    return encoded
+end
+-- Ignored only means nobody acted in time; acting late is still acting.
+local open = target.status == 'WAITING' or target.status == 'READY' or target.status == 'IGNORED' or target.awaitingAck
+if operation == 'RESCHEDULE' then open = open or target.status == 'SKIPPED' end
+-- Queued but not yet claimed by the bot can still be called off.
+if operation == 'SKIP' then open = open or target.status == 'QUEUED' end
+if not open then return 'CONFLICT' end
 if target.awaitingAck and operation ~= 'ACKNOWLEDGE' and operation ~= 'SKIP' then return 'CONFLICT' end
-if ARGV[6] == 'DISPATCH' and (operation ~= 'ACKNOWLEDGE' or target.audience == 'HOST' or (target.status ~= 'READY' and not target.awaitingAck)) then return 'FORBIDDEN' end
+if ARGV[6] == 'DISPATCH' and (operation ~= 'ACKNOWLEDGE' or target.audience == 'HOST' or (target.status ~= 'READY' and target.status ~= 'IGNORED' and not target.awaitingAck)) then return 'FORBIDDEN' end
 if operation == 'RESCHEDULE' then
     target.reference = ARGV[7]
     target.offsetMinutes = tonumber(ARGV[8])
     target.dueAt = (target.reference == 'START' and start or finish) + target.offsetMinutes * 60000
     target.status = 'WAITING'
+    target.source = nil
     table.sort(timeline, function(a,b) return a.dueAt < b.dueAt end)
 elseif operation == 'SKIP' then target.status = 'SKIPPED'
 elseif operation == 'ACKNOWLEDGE' then target.status = 'ACKNOWLEDGED'

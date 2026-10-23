@@ -346,3 +346,37 @@ test('seeded fuzz preserves the response contract across 1500 timeline operation
         expect(value.timeline.every((item:any,index:number)=>index===0||item.dueAt>=value.timeline[index-1].dueAt)).toBe(true)
     }
 })
+
+test('a card that went stale on the page can still be acted on', async () => {
+    // Nobody read the room between "edit" falling due and "public" passing,
+    // so the page still offers "edit" as READY while the store has it ignored.
+    now = start + 60000
+    const late = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'ACKNOWLEDGE', 'HOST', '', '0', 'host']))
+    expect(late.timeline.find((i: any) => i.id === 'edit').status).toBe('ACKNOWLEDGED')
+    // Done is done: moving a card somebody already handled is still refused.
+    expect(await run(CHANGE_EVENT, [key], ['edit', 'RESCHEDULE', 'HOST', 'END', '-20', 'host'])).toBe('CONFLICT')
+})
+
+test('an ignored card can be done late or moved', async () => {
+    now = start + 60000
+    await run(CLAIM_TIMELINE, [key], ['READ'])
+    expect((await snapshot()).timeline.find((i: any) => i.id === 'edit').status).toBe('IGNORED')
+    const moved = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'RESCHEDULE', 'HOST', 'END', '-20', 'host']))
+    expect(moved.timeline.find((i: any) => i.id === 'edit')).toMatchObject({ status: 'WAITING', dueAt: end - 1200000 })
+    now = end - 1200000
+    const done = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'ACTIVATE', 'HOST', '', '0', 'host']))
+    expect(done.timeline.find((i: any) => i.id === 'edit').status).toBe('ACTIVATED')
+})
+
+test('pressing the same thing twice is not a conflict', async () => {
+    const first = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'SKIP', 'HOST', '', '0', 'host']))
+    const second = JSON.parse(await run(CHANGE_EVENT, [key], ['edit', 'SKIP', 'HOST', '', '0', 'other-host']))
+    expect(second.revision).toBe(first.revision)
+    expect(second.timeline.find((i: any) => i.id === 'edit')).toMatchObject({ status: 'SKIPPED', actorId: 'host' })
+})
+
+test('a dispatcher can dismiss a reminder that fell due since the page last heard', async () => {
+    now = end - 600000
+    const reminder = JSON.parse(await run(CHANGE_EVENT, [key], ['return-depot', 'ACKNOWLEDGE', 'DISPATCH', '', '0', 'dispatcher']))
+    expect(reminder.timeline.find((i: any) => i.id === 'return-depot').status).toBe('ACKNOWLEDGED')
+})
