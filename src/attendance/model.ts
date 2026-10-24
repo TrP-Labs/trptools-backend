@@ -61,7 +61,9 @@ export namespace AttendanceModel {
         reason,
         /** Share of the shift on the server; null where no server tracked it. */
         percent: t.Union([t.Number(), t.Null()]),
-        slot: t.Union([t.String(), t.Null()])
+        slot: t.Union([t.String(), t.Null()]),
+        /** Careers reported during this shift; empty for older feeds and history. */
+        jobs: t.Array(t.String())
     })
 
     export const verdict = t.Union([t.Literal('PROMOTE'), t.Literal('DEMOTE'), t.Null()])

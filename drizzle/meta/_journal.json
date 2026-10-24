@@ -281,6 +281,13 @@
       "when": 1792797403987,
       "tag": "0039_attendance_pauses",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792885229534,
+      "tag": "0040_attendance_jobs",
+      "breakpoints": true
     }
   ]
 }

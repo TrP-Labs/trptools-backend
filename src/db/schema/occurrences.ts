@@ -67,6 +67,7 @@ export const shiftAttendance = pgTable('shift_attendance', {
     robloxId: text('roblox_id').notNull(),
     name: text('name').notNull(),
     seconds: integer('seconds').notNull().default(0),
+    jobs: text('jobs').array().notNull().default([]),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 }, t => [primaryKey({ columns: [t.occurrenceId, t.robloxId] }), index('shift_attendance_person_idx').on(t.robloxId)])
 

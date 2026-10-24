@@ -6,7 +6,7 @@ import { activeOccurrence } from '../utils/recurrence'
 import { ensureInstance } from '../schedule/instances'
 import type { RoomInfo } from '../rooms/service'
 import { RECORD_ATTENDANCE } from './redisScripts'
-import { attendanceStep } from './rules'
+import { attendanceStep, GAME_JOBS, isGameJob } from './rules'
 import type { RealtimeModel } from './model'
 
 type Occurrence = { eventId: string; start: number; end: number }
@@ -14,6 +14,7 @@ type Occurrence = { eventId: string; start: number; end: number }
 const secondsKey = (occurrence: Occurrence) => `attendance:${occurrence.eventId}:${occurrence.start}`
 const clockKey = (occurrence: Occurrence) => `${secondsKey(occurrence)}:clock`
 const namesKey = (occurrence: Occurrence) => `${secondsKey(occurrence)}:names`
+const jobsKey = (occurrence: Occurrence) => `${secondsKey(occurrence)}:jobs`
 const occurrenceCacheKey = (groupId: string) => `gamefeed:${groupId}:occurrence`
 
 /** Long enough to outlive the longest shift and its extensions. */
@@ -69,6 +70,19 @@ export async function recordAttendance(groupId: string, room: RoomInfo | null, p
         await dataRedis.hset(namesKey(occurrence), Object.fromEntries(present))
         await dataRedis.expire(namesKey(occurrence), ATTENDANCE_TTL_SECONDS)
     }
+    // Keep every career seen during credited attendance: switching jobs or
+    // returning to the menu must not erase what somebody did earlier.
+    if (step > 0) {
+        const jobs = Object.fromEntries(people.flatMap((person) => {
+            const id = String(person.ID)
+            return /^[0-9]{1,20}$/.test(id) && id !== '0' && isGameJob(person.Job)
+                ? [[`${id}:${person.Job}`, '1']] : []
+        }))
+        if (Object.keys(jobs).length) {
+            await dataRedis.hset(jobsKey(occurrence), jobs)
+            await dataRedis.expire(jobsKey(occurrence), ATTENDANCE_TTL_SECONDS)
+        }
+    }
     const final = now >= occurrence.end
     const flush = await dataRedis.eval<number>(RECORD_ATTENDANCE, [secondsKey(occurrence)],
         [String(now), String(step), String(FLUSH_EVERY_MS), String(ATTENDANCE_TTL_SECONDS), final ? '1' : '0', ...present.map(([id]) => id)])
@@ -76,9 +90,10 @@ export async function recordAttendance(groupId: string, room: RoomInfo | null, p
 }
 
 export async function flushAttendance(occurrence: Occurrence) {
-    const [seconds, names] = await Promise.all([
+    const [seconds, names, jobs] = await Promise.all([
         dataRedis.hgetall(secondsKey(occurrence)),
-        dataRedis.hgetall(namesKey(occurrence))
+        dataRedis.hgetall(namesKey(occurrence)),
+        dataRedis.hgetall(jobsKey(occurrence))
     ])
     const rows = Object.entries(seconds).filter(([id]) => !id.startsWith('__'))
     if (!rows.length) return
@@ -88,11 +103,16 @@ export async function flushAttendance(occurrence: Occurrence) {
     if (!instance) return
     await db.insert(shiftAttendance)
         .values(rows.map(([robloxId, value]) => ({
-            occurrenceId: instance.id, robloxId, name: names[robloxId] ?? robloxId, seconds: Number(value) || 0
+            occurrenceId: instance.id, robloxId, name: names[robloxId] ?? robloxId, seconds: Number(value) || 0,
+            jobs: GAME_JOBS.filter((job) => jobs[`${robloxId}:${job}`])
         })))
         .onConflictDoUpdate({
             target: [shiftAttendance.occurrenceId, shiftAttendance.robloxId],
             // Redis holds the running total, so the larger figure is the newer one.
-            set: { seconds: sql`greatest(${shiftAttendance.seconds}, excluded.seconds)`, name: sql`excluded.name`, updatedAt: sql`now()` }
+            set: {
+                seconds: sql`greatest(${shiftAttendance.seconds}, excluded.seconds)`,
+                jobs: sql`ARRAY(SELECT DISTINCT job FROM unnest(${shiftAttendance.jobs} || excluded.jobs) AS job ORDER BY job)`,
+                name: sql`excluded.name`, updatedAt: sql`now()`
+            }
         })
 }
