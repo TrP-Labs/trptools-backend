@@ -91,7 +91,7 @@ async function periodActivity(groupId: string, from: Date, to: Date) {
         return entry
     }
     for (const row of attended) {
-        touch(row.robloxId, row.occurrenceId).seconds = row.seconds
+        Object.assign(touch(row.robloxId, row.occurrenceId), { seconds: row.seconds, jobs: row.jobs })
         names.set(row.robloxId, row.name)
     }
 
@@ -206,7 +206,8 @@ async function computeStandings(groupId: string, period: string, only?: string) 
             return [{
                 shiftId: shift.id, points: score.points, reason: score.reason,
                 percent: score.percent === null ? null : Math.round(score.percent),
-                slot: seen.slotId ? slotNames.get(seen.slotId) ?? null : null
+                slot: seen.slotId ? slotNames.get(seen.slotId) ?? null : null,
+                jobs: seen.jobs ?? []
             }]
         })
         return [{

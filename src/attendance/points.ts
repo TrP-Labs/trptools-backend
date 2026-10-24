@@ -35,7 +35,7 @@ export type ShiftWindow = {
     tracked: boolean
 }
 
-export type Activity = { seconds?: number; slotId?: string }
+export type Activity = { seconds?: number; slotId?: string; jobs?: string[] }
 
 export const DEFAULT_SLOT_POINTS = 1
 

@@ -95,6 +95,14 @@ room or no room; `404` means the Roblox group is not registered here, which the
 game shows its host as "not set up yet". `401` (a wrong token) stops the game
 sending until a host re-enables it.
 
+Each entry in `Users` may include `Job`: `DriverShift`, `FreeDrive`,
+`ServiceDriver`, `Conductor`, `Dispatcher`, or `DepotWorker`. Omit it when the
+player has no job. The feed still accepts older reports without it and ignores
+unknown careers for history. Known careers seen during attendance are saved
+per person and occurrence and returned as `jobs` on attendance cells, for the
+Activity sheet tooltip; they do not change attendance points. Migration
+`0040_attendance_jobs` leaves existing attendance with an empty career list.
+
 ## Discord (optional)
 
 1. Set `DISCORD_APP_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, and `BOT_SERVICE_TOKEN`.

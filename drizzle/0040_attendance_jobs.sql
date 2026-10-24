@@ -1,0 +1,1 @@
+ALTER TABLE "shift_attendance" ADD COLUMN "jobs" text[] DEFAULT '{}' NOT NULL;

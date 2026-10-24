@@ -15,6 +15,7 @@ export namespace RealtimeModel {
     export const user = t.Object({
         Username: t.Optional(t.String({ maxLength: 64 })),
         ID: id,
+        Job: t.Optional(t.String({ maxLength: 64 })),
         Position: position
     })
     export type User = typeof user.static

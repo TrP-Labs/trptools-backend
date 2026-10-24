@@ -8,7 +8,7 @@ if (!process.env.DATABASE_URL?.endsWith('/trptools_promotion_test') || !process.
     throw new Error('Use the isolated trptools_promotion_test database and Redis port 54133')
 }
 Object.assign(process.env, { ROBLOX_CLIENT_ID: 'promotion-test', ROBLOX_CLIENT_SECRET: 'promotion-test', ROBLOX_API_KEY: 'promotion-test-key',
-    BASE_URL: 'http://localhost:54201', FRONTEND_URL: 'http://localhost:54200', ENCRYPTION_KEY: 'promotion-test-key', SITE_ADMINS: '',
+    GAME_FEED_TOKEN: 'career-feed-test', BASE_URL: 'http://localhost:54201', FRONTEND_URL: 'http://localhost:54200', ENCRYPTION_KEY: 'promotion-test-key', SITE_ADMINS: '',
     DISCORD_APP_ID: '', DISCORD_BOT_TOKEN: '', DISCORD_CLIENT_SECRET: '', VAPID_PUBLIC_KEY: '', VAPID_PRIVATE_KEY: '' })
 
 const GROUP = '99900002'
@@ -69,7 +69,9 @@ const schema = await import('../src/db/schema')
 const { users, groups, rankRelations, sessions, auditMessages, claimableConnections, events, shiftOccurrences, shiftAttendance,
     signupSheets, signupSlots, shiftSignups, rankSlotPoints } = schema
 const { hashToken } = await import('../src/utils/sessionVerifier')
-const { deleteByPattern } = await import('../src/utils/redis')
+const { dataRedis, deleteByPattern } = await import('../src/utils/redis')
+const { recordAttendance, flushAttendance } = await import('../src/realtime/attendance')
+const { GAME_JOBS } = await import('../src/realtime/rules')
 const { storeUserTokens } = await import('../src/utils/robloxCredentials')
 const { PERM } = await import('../src/utils/permissions')
 
@@ -128,6 +130,42 @@ try {
     ])
     await db.insert(shiftSignups).values({ slotId: slot!.id, eventId: event!.eventId, userId: ids[2]!, occurrence: startB })
 
+    // The revised game payload reaches attendance history through the real
+    // HTTP validator. A job change, omission, and an older write-through all
+    // preserve previously observed careers without changing attendance time.
+    const attendanceKey = `attendance:${event!.eventId}:${startA.getTime()}`
+    const active = { eventId: event!.eventId, start: startA.getTime(), end: startA.getTime() + 3600_000 }
+    await dataRedis.set(`gamefeed:${groupId}:occurrence`, JSON.stringify(active), 'EX', 60)
+    // Use the earlier occurrence via a room for deterministic clock stepping.
+    const room = { eventId: event!.eventId, occurrence: startA.toISOString(), expiresAt: String(active.end) } as import('../src/rooms/service').RoomInfo
+    await recordAttendance(groupId, room, [{ ID: 2, Job: 'DriverShift' }], active.start)
+    assert.deepEqual(await dataRedis.hgetall(`${attendanceKey}:jobs`), {})
+    for (const [index, Job] of GAME_JOBS.entries()) {
+        await recordAttendance(groupId, room, [{ ID: 2, Username: 'User2', Job }], active.start + (index + 1) * 15_000)
+    }
+    await recordAttendance(groupId, room, [{ ID: 2 }, { ID: 0, Job: 'Dispatcher' }], active.start + 105_000)
+    await recordAttendance(groupId, room, [{ ID: 2, Job: 'FutureJob' }], active.start + 120_000)
+    assert.equal(Object.keys(await dataRedis.hgetall(`${attendanceKey}:jobs`)).length, 6)
+    await flushAttendance(active)
+    let [careerRow] = await db.select().from(shiftAttendance).where(eq(shiftAttendance.occurrenceId, occurrences[0]!.id))
+    assert.deepEqual([...careerRow!.jobs].sort(), [...GAME_JOBS].sort())
+    assert.equal(careerRow!.seconds, 3600)
+    // Simulate an older Redis snapshot finishing after the newer write.
+    await dataRedis.del(`${attendanceKey}:jobs`)
+    await dataRedis.hset(`${attendanceKey}:jobs`, { '2:DriverShift': '1' })
+    await flushAttendance(active)
+    ;[careerRow] = await db.select().from(shiftAttendance).where(eq(shiftAttendance.occurrenceId, occurrences[0]!.id))
+    assert.equal(careerRow!.jobs.length, 6)
+    for (const Job of [...GAME_JOBS, undefined, 'FutureJob']) {
+        const report = await app.handle(new Request(`http://localhost:54201/realtime/game/${GROUP}`, {
+            method: 'POST', headers: { authorization: 'Bearer career-feed-test', 'content-type': 'application/json' },
+            body: JSON.stringify({ Users: [{ Username: 'User2', ID: 2, ...(Job ? { Job } : {}) }], Vehicles: [], ServerData: { runtime: 100, gametime: 845 } })
+        }))
+        assert.equal(report.status, 200, await report.text())
+    }
+    await deleteByPattern(`attendance:${event!.eventId}:*`)
+    await deleteByPattern(`gamefeed:${groupId}*`)
+
     // --- rank settings ---------------------------------------------------------
     const driver = rank('10')
     await expectStatus(`/attendance/ranks/${driver.id}`, 403, 'GET', undefined, 2)
@@ -157,6 +195,8 @@ try {
         const { points, reason, percent, slot } = cell as Record<string, unknown>
         return { points, reason, percent, slot }
     }), [{ points: 0.5, reason: 'PRESENT', percent: 100, slot: null }, { points: 2, reason: 'SIGNED_UP', percent: 83, slot: 'Dispatcher' }])
+    assert.deepEqual([...(byId.get('2') as { cells: { jobs: string[] }[] }).cells[0]!.jobs].sort(), [...GAME_JOBS].sort())
+    assert.deepEqual((byId.get('2') as { cells: { jobs: string[] }[] }).cells[1]!.jobs, [])
     assert.equal((byId.get('3') as { cells: unknown[] }).cells.length, 0)
 
     // A quarter holds the driver to three months of their bounds: 2.5 points
@@ -218,7 +258,7 @@ try {
     // The ceiling refused it before Roblox was asked to change anything.
     assert.equal(writes.length, 4)
     void rankSlotPoints
-    console.log('Promotions API: settings, grants, points arithmetic, standings, quarters, no-show penalties, pauses, stale verdicts, role replacement, rank ceilings and audit passed.')
+    console.log('Promotions API: game careers, legacy reports, history persistence, settings, grants, points arithmetic, standings, quarters, no-show penalties, pauses, stale verdicts, role replacement, rank ceilings and audit passed.')
 } finally {
     globalThis.fetch = realFetch
     await db.delete(groups).where(eq(groups.id, groupId))

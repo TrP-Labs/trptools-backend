@@ -19,6 +19,14 @@ export const COMMANDS_PER_RESPONSE = 20
  */
 export const ATTENDANCE_STEP_CAP_MS = 65_000
 
+/** Known careers only: a future game job must not stop the feed or grow history without a bound. */
+export const GAME_JOBS = ['DriverShift', 'FreeDrive', 'ServiceDriver', 'Conductor', 'Dispatcher', 'DepotWorker'] as const
+export type GameJob = typeof GAME_JOBS[number]
+
+export function isGameJob(job: string | undefined): job is GameJob {
+    return GAME_JOBS.some((known) => known === job)
+}
+
 export type GameCommandType = 'Route' | 'Tow' | 'Stop' | 'Continue' | 'EndShift'
 
 export type GameCommand = {
