@@ -59,3 +59,13 @@ test('cached recurrence parsing respects edits and keeps caller dates independen
     expect(occurrenceStartsBetween(daily, edited, start, end, 1)[0]).toEqual(edited)
     expect(occurrenceStartsBetween(daily, start, start, end, 10)).toHaveLength(5)
 })
+
+describe('a start that carries milliseconds', () => {
+    const start = new Date('2026-11-05T19:01:42.423Z')
+
+    for (const rule of ['FREQ=WEEKLY;BYDAY=TH', 'FREQ=MONTHLY', 'FREQ=DAILY']) {
+        test(`${rule} finds its own first occurrence`, () => {
+            expect(occurrenceStartsBetween(rule, start, start, start)).toEqual([start])
+        })
+    }
+})

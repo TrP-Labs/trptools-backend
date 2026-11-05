@@ -13,6 +13,7 @@ import { isElevated, type session, type SessionUser } from '../utils/sessionVeri
 import { findGroup } from '../groups/service'
 import { runBatches, assertResults } from './dispatch/batch'
 import { makeTimeline, DEFAULT_SCHEDULE } from '../host/rules'
+import { CLAIM_TIMELINE } from '../host/redisScripts'
 import { RoomModel } from './model'
 import { CREATE_ROOM, TOUCH_ROOM, CLOSE_ROOM } from './lifecycle'
 
@@ -39,7 +40,15 @@ export type RoomInfo = {
 export async function sweepRooms() {
     let closed = 0
     for (const roomId of await openRoomIds()) {
-        if (!await touchRoom(roomId)) closed++
+        if (!await touchRoom(roomId)) {
+            closed++
+            continue
+        }
+        // Cards used to turn ready only when the Discord bot polled, so a
+        // group without the bot never saw the depot reminder reach its
+        // dispatchers. Settling here moves every room along the clock.
+        await dataRedis.eval(CLAIM_TIMELINE, [roomKey(roomId)], [String(Date.now()), roomId, roomChannel(roomId), 'SETTLE'])
+            .catch((error: unknown) => console.error('[rooms] timeline settle failed', error instanceof Error ? error.message : 'unknown'))
     }
     return closed
 }

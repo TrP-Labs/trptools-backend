@@ -70,11 +70,14 @@ export function buildKey(groupId: string, contentType: string): string {
 export async function putObject(key: string, bytes: Uint8Array, contentType: string) {
     if (!client) throw new Error('Object storage is not configured')
     // Public access belongs to the bucket policy/domain; R2 does not support ACLs.
+    // `redirect: 'error'` throws inside a Worker before the request is sent,
+    // which failed every upload in production. Manual mode plus the ok check
+    // below refuses a redirect just the same.
     const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
     const response = await client.fetch(objectUrl(key), {
         method: 'PUT',
         signal: AbortSignal.timeout(15_000),
-        redirect: 'error',
+        redirect: 'manual',
         headers: { 'content-type': contentType },
         body
     })
@@ -84,7 +87,7 @@ export async function putObject(key: string, bytes: Uint8Array, contentType: str
 export async function deleteObject(key: string) {
     if (!client) return
     await client
-        .fetch(objectUrl(key), { method: 'DELETE', signal: AbortSignal.timeout(15_000), redirect: 'error' })
+        .fetch(objectUrl(key), { method: 'DELETE', signal: AbortSignal.timeout(15_000), redirect: 'manual' })
         .then((response) => {
             if (!response.ok && response.status !== 404) {
                 throw new Error(`Object storage DELETE failed with ${response.status}`)

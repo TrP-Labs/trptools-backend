@@ -80,7 +80,7 @@ export const app = new Elysia()
         set.headers['x-frame-options'] = 'DENY'
         set.headers['referrer-policy'] = 'strict-origin-when-cross-origin'
     })
-    .onError(({ code, error, set }) => {
+    .onError(({ code, error, set, request }) => {
         if (error instanceof RateLimitError) return limitedResponse(error)
 
         if (error instanceof DiscordError) {
@@ -108,6 +108,14 @@ export const app = new Elysia()
                 set.status = 500
                 return 'Internal Server Error'
             }
+            // The body stays a bare "Bad Request", but the log says which
+            // field was refused. Without it, every rejected request from the
+            // bot or the dashboard looked identical and untraceable.
+            const detail = code === 'VALIDATION'
+                ? (error as { all?: Array<{ path?: string; summary?: string; message?: string }> }).all?.[0]
+                : undefined
+            console.warn('[400]', request.method, new URL(request.url).pathname, code,
+                detail ? `${detail.path ?? ''} ${detail.summary ?? detail.message ?? ''}`.trim() : '')
             set.status = 400
             return 'Bad Request'
         }

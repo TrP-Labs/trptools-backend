@@ -340,7 +340,10 @@ export abstract class BotService {
             new Date(occurrence.getTime() + 1000),
             1
         )
-        if (matches.length === 0 || matches[0]!.start.getTime() !== occurrence.getTime()) throw status(400, 'Bad Request')
+        // A posted sheet outlives an edit to the shift's time. Its buttons are
+        // for an occurrence that no longer runs, which is a sheet that has
+        // gone, not a malformed request the bot can only call an error.
+        if (matches.length === 0 || matches[0]!.start.getTime() !== occurrence.getTime()) return { status: 'GONE', slotName: '', previousSlotName: null }
 
         const sheets = await loadSheets(group.id)
         const sheet = sheets.find((candidate) => candidate.slots.some((slot) => slot.id === body.slotId))

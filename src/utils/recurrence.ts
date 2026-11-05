@@ -87,7 +87,11 @@ function calendarStarts(parsed: RRule, from: Date, to: Date, limit: number): Dat
         return result
     }
 
+    // Milliseconds included: daily rules keep them (they step from the exact
+    // start), so dropping them here put a weekly shift's first occurrence a
+    // fraction of a second before its own start and outside every window.
     const hourMs = ((start.getUTCHours() * 60 + start.getUTCMinutes()) * 60 + start.getUTCSeconds()) * 1000
+        + start.getUTCMilliseconds()
     if (freq === Frequency.WEEKLY) {
         const days = parsed.options.byweekday ?? []
         if (days.length === 0) return null
@@ -120,7 +124,7 @@ function calendarStarts(parsed: RRule, from: Date, to: Date, limit: number): Dat
         const monthOfYear = month % 12
         const candidate = Date.UTC(
             year, monthOfYear, start.getUTCDate(),
-            start.getUTCHours(), start.getUTCMinutes(), start.getUTCSeconds()
+            start.getUTCHours(), start.getUTCMinutes(), start.getUTCSeconds(), start.getUTCMilliseconds()
         )
         if (Date.UTC(year, monthOfYear, 1) > toMs) break
         // February has no 31st; RRule skips that month instead of moving it.

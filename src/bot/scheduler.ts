@@ -163,8 +163,15 @@ export async function releaseClaim(
 
 /** Finish a claimed action; a crashed worker's short lease otherwise expires for retry. */
 export async function completeClaim(action: ActionName, eventId: string, occurrence: string, roomId?: string, timelineId?: string) {
-    if (roomId && timelineId) { await finishTimeline(roomId, timelineId, 'COMPLETE'); return }
     const when = new Date(occurrence)
+    if (roomId && timelineId) {
+        await finishTimeline(roomId, timelineId, 'COMPLETE')
+        // The room's timeline is not the only record anybody reads. Without
+        // the done marker, closing the room handed the same action to the
+        // scheduler again, and reopening it put the card back to waiting.
+        if (action !== 'REFRESH' && !Number.isNaN(when.getTime())) await dataRedis.set(doneKey(action, eventId, when), '1', 'EX', DONE_TTL)
+        return
+    }
     if (Number.isNaN(when.getTime())) return
 
     await dataRedis.set(doneKey(action, eventId, when), '1', 'EX', DONE_TTL)
