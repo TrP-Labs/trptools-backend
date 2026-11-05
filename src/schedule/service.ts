@@ -1,4 +1,5 @@
 import { status } from 'elysia'
+import { scheduleChanged } from '../utils/idle'
 import { and, asc, count, eq, gt, inArray } from 'drizzle-orm'
 import db from '../db'
 import { events, shiftSignups, signupSheets, signupSlots, shiftOccurrences, type Event } from '../db/schema'
@@ -222,6 +223,7 @@ export abstract class Schedule {
         if (!event) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
 
         await recordAudit(group.id, session.user?.userId ?? null, 'shift.create', `Created shift ${body.name}`)
+        await scheduleChanged()
 
         return { eventId: event.eventId }
     }
@@ -257,6 +259,7 @@ export abstract class Schedule {
 
         const [next] = await db.select().from(events).where(eq(events.eventId, eventId)).limit(1)
         if (next) await updateInstanceDefaults(event, next, Object.keys(body))
+        await scheduleChanged()
         await recordAudit(event.groupId, session.user?.userId ?? null, 'shift.update', `Updated shift ${event.name}`)
 
         return 'Success' as globalModel.genericSuccess
@@ -271,6 +274,7 @@ export abstract class Schedule {
         const now = new Date()
         await materializeInstances(occurrencesBetween(event.rrule, event.startTime, event.duration, new Date(now.getTime() - 120 * 86400000), now, 200).map(o => ({ event, start: o.start })))
         await db.update(events).set({ archived: true, notificationAt: null }).where(eq(events.eventId, eventId))
+        await scheduleChanged()
         await db.update(shiftOccurrences).set({ decision: 'CANCELED' }).where(and(eq(shiftOccurrences.eventId, eventId), gt(shiftOccurrences.start, now), inArray(shiftOccurrences.decision, ['SCHEDULED', 'PENDING', 'CONFIRMED'])))
 
         await recordAudit(event.groupId, session.user?.userId ?? null, 'shift.delete', `Deleted shift ${event.name}`)

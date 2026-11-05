@@ -1,6 +1,10 @@
 import { sql } from 'drizzle-orm'
 import db from '../db'
+import { databaseRows } from '../db/rows'
 import type { StatisticsModel } from './model'
+import { hourlyOnce, markStatisticsPending, takeStatisticsPending } from '../utils/idle'
+
+const BATCH = 5000
 /** One background write validates all targets and deduplicates retries atomically. */
 export async function collectStatistics(batch: StatisticsModel.batch) {
     await db.execute(sql`INSERT INTO statistics_events (id, group_id, kind, target_id)
@@ -18,17 +22,35 @@ export async function collectStatistics(batch: StatisticsModel.batch) {
             OR (input.kind = 'shift_view' AND g.show_shifts AND EXISTS (SELECT 1 FROM events e
                 WHERE e.event_id = input."targetId" AND e.group_id = g.id AND e.visibility = 'PUBLIC'))
         ON CONFLICT DO NOTHING`)
+    await markStatisticsPending()
 }
 /** Claims and folds a bounded batch in one atomic SQL statement, safe across replicas. */
 export async function aggregateStatistics(now = new Date()) {
-    await db.execute(sql`WITH claimed AS (
-        SELECT id FROM statistics_events WHERE processed_at IS NULL ORDER BY received_at LIMIT 5000 FOR UPDATE SKIP LOCKED
-    ), processed AS (
-        UPDATE statistics_events SET processed_at = ${now.toISOString()}::timestamptz
-        WHERE id IN (SELECT id FROM claimed) RETURNING group_id, kind, target_id, received_at
-    ) INSERT INTO statistics_daily (group_id, day, kind, target_id, count)
-        SELECT group_id, (received_at AT TIME ZONE 'UTC')::date, kind, target_id, COUNT(*)::integer
-        FROM processed GROUP BY group_id, (received_at AT TIME ZONE 'UTC')::date, kind, target_id
-        ON CONFLICT (group_id, day, kind, target_id) DO UPDATE SET count = statistics_daily.count + EXCLUDED.count`)
-    if (now.getUTCMinutes() === 0) await db.execute(sql`DELETE FROM statistics_events WHERE processed_at IS NOT NULL AND received_at < ${new Date(now.getTime() - 7 * 86400_000).toISOString()}`)
+    // Nothing recorded since the last fold means nothing to fold: the minute
+    // tick no longer wakes the database for a site nobody is visiting.
+    if (!await takeStatisticsPending()) return
+    let folded = 0
+    try {
+        const result = await db.execute(sql`WITH claimed AS (
+            SELECT id FROM statistics_events WHERE processed_at IS NULL ORDER BY received_at LIMIT ${BATCH} FOR UPDATE SKIP LOCKED
+        ), processed AS (
+            UPDATE statistics_events SET processed_at = ${now.toISOString()}::timestamptz
+            WHERE id IN (SELECT id FROM claimed) RETURNING group_id, kind, target_id, received_at
+        ), folded AS (
+            INSERT INTO statistics_daily (group_id, day, kind, target_id, count)
+            SELECT group_id, (received_at AT TIME ZONE 'UTC')::date, kind, target_id, COUNT(*)::integer
+            FROM processed GROUP BY group_id, (received_at AT TIME ZONE 'UTC')::date, kind, target_id
+            ON CONFLICT (group_id, day, kind, target_id) DO UPDATE SET count = statistics_daily.count + EXCLUDED.count
+        ) SELECT COUNT(*)::integer AS claimed FROM processed`)
+        folded = Number(databaseRows(result)[0]?.claimed ?? 0)
+    } catch (error) {
+        await markStatisticsPending()
+        throw error
+    }
+    // A full batch may have left more behind; fold again next minute.
+    if (folded >= BATCH) await markStatisticsPending()
+    if (await hourlyOnce('statistics')) {
+        await db.execute(sql`DELETE FROM statistics_events WHERE processed_at IS NOT NULL AND received_at < ${new Date(now.getTime() - 7 * 86400_000).toISOString()}`)
+    }
 }
+

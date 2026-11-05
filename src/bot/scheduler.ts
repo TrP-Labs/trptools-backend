@@ -10,6 +10,7 @@ import { CLAIM_TIMELINE, FINISH_TIMELINE } from '../host/redisScripts'
 import { timelineCandidates } from '../host/candidates'
 import { DEFAULT_SCHEDULE } from '../host/rules'
 import { dueCandidates, demandDecisionCandidates } from './schedulerRules'
+import { readMemo, writeMemo } from '../utils/idle'
 
 /**
  * Works out which automated actions are due and claims them for delivery.
@@ -38,41 +39,77 @@ const doneKey = (action: ActionName, eventId: string, occurrence: Date) =>
 const CLAIM_TTL = 2 * 60
 const DONE_TTL = 60 * 60 * 24
 
+/**
+ * Every bot-connected group's shifts and automation settings.
+ *
+ * Read on every poll — every thirty seconds from the long-running bot, every
+ * minute from the Worker — and changed only when somebody edits a shift, the
+ * bot page, the host schedule or the group, each of which forgets this memo
+ * (`utils/idle.ts`). Remembering it in Redis lets an idle site go without
+ * Postgres entirely; the day-long expiry only bounds a write that forgot to.
+ */
+async function schedulerRows() {
+    const memo = await readMemo('scheduler')
+    if (memo.value) {
+        try { return revive(JSON.parse(memo.value)) } catch { /* reload below */ }
+    }
+    const rows = await loadRows()
+    const encoded = JSON.stringify(rows)
+    // Long shift descriptions across many groups could outgrow a sensible
+    // Redis value; past that size every poll simply reads Postgres as before.
+    if (encoded.length < 512 * 1024) await writeMemo('scheduler', memo.version, encoded, 86_400)
+    return rows
+}
+
+// The Worker uses Neon's HTTP transport: one join avoids a database
+// round trip for every guild before we even know whether a shift is due.
+const loadRows = () => db
+    .select({
+        config: {
+            guildId: botConfigs.guildId,
+            announcementsEnabled: botConfigs.announcementsEnabled,
+            autoAnnounce: botConfigs.autoAnnounce,
+            autoAnnounceLead: botConfigs.autoAnnounceLead,
+            signupsEnabled: botConfigs.signupsEnabled,
+            autoSignups: botConfigs.autoSignups,
+            autoSignupsLead: botConfigs.autoSignupsLead,
+            remindersEnabled: botConfigs.remindersEnabled,
+            autoHostReminder: botConfigs.autoHostReminder,
+            autoHostReminderLead: botConfigs.autoHostReminderLead,
+            autoStaffStart: botConfigs.autoStaffStart,
+            autoStaffStartLead: botConfigs.autoStaffStartLead,
+            autoBegin: botConfigs.autoBegin,
+            autoBeginLead: botConfigs.autoBeginLead,
+            autoComplete: botConfigs.autoComplete,
+            autoCompleteDelay: botConfigs.autoCompleteDelay
+        },
+        groupId: groups.id,
+        signupLeadMinutes: groups.signupLeadMinutes,
+        hostSchedule: groups.hostSchedule,
+        shift: events
+    })
+    .from(botConfigs)
+    .innerJoin(groups, eq(botConfigs.groupId, groups.id))
+    .innerJoin(events, and(eq(events.groupId, groups.id), eq(events.archived, false)))
+
+type SchedulerRow = Awaited<ReturnType<typeof loadRows>>[number]
+
+/** JSON has no dates; these are the shift's timestamp columns. */
+function revive(rows: SchedulerRow[]): SchedulerRow[] {
+    for (const row of rows) {
+        const shift = row.shift as Record<string, unknown>
+        for (const field of ['startTime', 'createdAt', 'updatedAt', 'notificationAt']) {
+            if (typeof shift[field] === 'string') shift[field] = new Date(shift[field] as string)
+        }
+    }
+    return rows
+}
+
 export async function dueActions(
     now = new Date(),
     mode: 'legacy' | 'leased' = 'legacy'
 ): Promise<BotInternal.dueActions> {
-    // The Worker uses Neon's HTTP transport: one join avoids a database
-    // round trip for every guild before we even know whether a shift is due.
-    const rows = await db
-        .select({
-            config: {
-                guildId: botConfigs.guildId,
-                announcementsEnabled: botConfigs.announcementsEnabled,
-                autoAnnounce: botConfigs.autoAnnounce,
-                autoAnnounceLead: botConfigs.autoAnnounceLead,
-                signupsEnabled: botConfigs.signupsEnabled,
-                autoSignups: botConfigs.autoSignups,
-                autoSignupsLead: botConfigs.autoSignupsLead,
-                remindersEnabled: botConfigs.remindersEnabled,
-                autoHostReminder: botConfigs.autoHostReminder,
-                autoHostReminderLead: botConfigs.autoHostReminderLead,
-                autoStaffStart: botConfigs.autoStaffStart,
-                autoStaffStartLead: botConfigs.autoStaffStartLead,
-                autoBegin: botConfigs.autoBegin,
-                autoBeginLead: botConfigs.autoBeginLead,
-                autoComplete: botConfigs.autoComplete,
-                autoCompleteDelay: botConfigs.autoCompleteDelay
-            },
-            groupId: groups.id,
-            signupLeadMinutes: groups.signupLeadMinutes,
-            hostSchedule: groups.hostSchedule,
-            shift: events
-        })
-        .from(botConfigs)
-        .innerJoin(groups, eq(botConfigs.groupId, groups.id))
-        .innerJoin(events, and(eq(events.groupId, groups.id), eq(events.archived, false)))
-
+    const rows = await schedulerRows()
 
     const due: BotInternal.dueActions = []
     const groupIds = [...new Set(rows.map(row => row.groupId))]

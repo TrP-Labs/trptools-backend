@@ -19,6 +19,7 @@ import { groupIndexKey, roomKey, type RoomInfo } from '../rooms/service'
 import { writeRoomNote, hostSnapshot } from '../host/service'
 import { saveDiscordImage } from '../host/images'
 import { STAFF_ACTION } from '../host/redisScripts'
+import { OPEN_ROOMS } from '../rooms/lifecycle'
 import { completeClaim } from './scheduler'
 import { roomChannel } from '../rooms/service'
 import { presentConfig } from './present'
@@ -185,6 +186,10 @@ export abstract class BotService {
     }
 
     static async boardGuilds() {
+        // A board only exists while a room is open. With none open there is
+        // nothing to redraw, and the bot's minute check costs no query.
+        const open = await dataRedis.eval<string[] | null>(OPEN_ROOMS, [], [])
+        if (open && open.length === 0) return []
         return db.select({ guildId: botConfigs.guildId, manifestRefreshSeconds: botConfigs.manifestRefreshSeconds }).from(botConfigs)
             .where(eq(botConfigs.manifestEnabled, true))
     }
