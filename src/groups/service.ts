@@ -1,4 +1,5 @@
 import { normalizeDiscordInvite } from '../utils/joinLinks'
+import { scheduleChanged } from '../utils/idle'
 import { status } from 'elysia'
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm'
 import type { NeonHttpDatabase } from 'drizzle-orm/neon-http'
@@ -459,6 +460,7 @@ export abstract class Group_ {
             .where(eq(groups.id, group.id))
 
         await recordAudit(group.id, session.user?.userId ?? null, 'group.update', 'Group settings updated')
+        await scheduleChanged()
 
         return 'Success' as globalModel.genericSuccess
     }
@@ -665,6 +667,7 @@ export abstract class Group_ {
 
         await db.delete(groups).where(eq(groups.id, group.id))
         await invalidateGroupPermissions(group.id)
+        await scheduleChanged()
 
         return 'Success' as globalModel.genericSuccess
     }

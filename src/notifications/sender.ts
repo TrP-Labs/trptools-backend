@@ -12,5 +12,5 @@ export function buildPushRequest(subscription: NotificationModel.subscription, m
 export async function sendPush(subscription: NotificationModel.subscription, message: unknown) {
     const details = buildPushRequest(subscription, message)
     return fetch(details.endpoint, { method: 'POST', headers: details.headers as Record<string, string>,
-        body: Uint8Array.from(details.body).buffer, redirect: 'error', signal: AbortSignal.timeout(10_000) })
+        body: Uint8Array.from(details.body).buffer, redirect: 'manual', signal: AbortSignal.timeout(10_000) })
 }

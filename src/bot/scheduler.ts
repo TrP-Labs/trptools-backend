@@ -4,12 +4,13 @@ import db from '../db'
 import { botConfigs, events, groups } from '../db/schema'
 import { dataRedis } from '../utils/redis'
 import type { BotInternal } from './internalModel'
-import { groupIndexKey, roomKey, roomChannel, touchRoom, type RoomInfo } from '../rooms/service'
+import { groupIndexKey, roomKey, roomChannel, type RoomInfo } from '../rooms/service'
+import { sweepRoomScript } from '../rooms/lifecycle'
 import { CLAIM_TIMELINE, FINISH_TIMELINE } from '../host/redisScripts'
-import { runBatches, assertResults } from '../rooms/dispatch/batch'
 import { timelineCandidates } from '../host/candidates'
 import { DEFAULT_SCHEDULE } from '../host/rules'
 import { dueCandidates, demandDecisionCandidates } from './schedulerRules'
+import { readMemo, writeMemo } from '../utils/idle'
 
 /**
  * Works out which automated actions are due and claims them for delivery.
@@ -24,6 +25,8 @@ import { dueCandidates, demandDecisionCandidates } from './schedulerRules'
 
 type ActionName = BotInternal.dueAction['action']
 
+const POLL_ROOM = sweepRoomScript(CLAIM_TIMELINE)
+
 const claimKey = (action: ActionName, eventId: string, occurrence: Date) =>
     `bot:lease:${action}:${eventId}:${occurrence.getTime()}`
 
@@ -36,62 +39,98 @@ const doneKey = (action: ActionName, eventId: string, occurrence: Date) =>
 const CLAIM_TTL = 2 * 60
 const DONE_TTL = 60 * 60 * 24
 
+/**
+ * Every bot-connected group's shifts and automation settings.
+ *
+ * Read on every poll — every thirty seconds from the long-running bot, every
+ * minute from the Worker — and changed only when somebody edits a shift, the
+ * bot page, the host schedule or the group, each of which forgets this memo
+ * (`utils/idle.ts`). Remembering it in Redis lets an idle site go without
+ * Postgres entirely; the day-long expiry only bounds a write that forgot to.
+ */
+async function schedulerRows() {
+    const memo = await readMemo('scheduler')
+    if (memo.value) {
+        try { return revive(JSON.parse(memo.value)) } catch { /* reload below */ }
+    }
+    const rows = await loadRows()
+    const encoded = JSON.stringify(rows)
+    // Long shift descriptions across many groups could outgrow a sensible
+    // Redis value; past that size every poll simply reads Postgres as before.
+    if (encoded.length < 512 * 1024) await writeMemo('scheduler', memo.version, encoded, 86_400)
+    return rows
+}
+
+// The Worker uses Neon's HTTP transport: one join avoids a database
+// round trip for every guild before we even know whether a shift is due.
+const loadRows = () => db
+    .select({
+        config: {
+            guildId: botConfigs.guildId,
+            announcementsEnabled: botConfigs.announcementsEnabled,
+            autoAnnounce: botConfigs.autoAnnounce,
+            autoAnnounceLead: botConfigs.autoAnnounceLead,
+            signupsEnabled: botConfigs.signupsEnabled,
+            autoSignups: botConfigs.autoSignups,
+            autoSignupsLead: botConfigs.autoSignupsLead,
+            remindersEnabled: botConfigs.remindersEnabled,
+            autoHostReminder: botConfigs.autoHostReminder,
+            autoHostReminderLead: botConfigs.autoHostReminderLead,
+            autoStaffStart: botConfigs.autoStaffStart,
+            autoStaffStartLead: botConfigs.autoStaffStartLead,
+            autoBegin: botConfigs.autoBegin,
+            autoBeginLead: botConfigs.autoBeginLead,
+            autoComplete: botConfigs.autoComplete,
+            autoCompleteDelay: botConfigs.autoCompleteDelay
+        },
+        groupId: groups.id,
+        signupLeadMinutes: groups.signupLeadMinutes,
+        hostSchedule: groups.hostSchedule,
+        shift: events
+    })
+    .from(botConfigs)
+    .innerJoin(groups, eq(botConfigs.groupId, groups.id))
+    .innerJoin(events, and(eq(events.groupId, groups.id), eq(events.archived, false)))
+
+type SchedulerRow = Awaited<ReturnType<typeof loadRows>>[number]
+
+/** JSON has no dates; these are the shift's timestamp columns. */
+function revive(rows: SchedulerRow[]): SchedulerRow[] {
+    for (const row of rows) {
+        const shift = row.shift as Record<string, unknown>
+        for (const field of ['startTime', 'createdAt', 'updatedAt', 'notificationAt']) {
+            if (typeof shift[field] === 'string') shift[field] = new Date(shift[field] as string)
+        }
+    }
+    return rows
+}
+
 export async function dueActions(
     now = new Date(),
     mode: 'legacy' | 'leased' = 'legacy'
 ): Promise<BotInternal.dueActions> {
-    // The Worker uses Neon's HTTP transport: one join avoids a database
-    // round trip for every guild before we even know whether a shift is due.
-    const rows = await db
-        .select({
-            config: {
-                guildId: botConfigs.guildId,
-                announcementsEnabled: botConfigs.announcementsEnabled,
-                autoAnnounce: botConfigs.autoAnnounce,
-                autoAnnounceLead: botConfigs.autoAnnounceLead,
-                signupsEnabled: botConfigs.signupsEnabled,
-                autoSignups: botConfigs.autoSignups,
-                autoSignupsLead: botConfigs.autoSignupsLead,
-                remindersEnabled: botConfigs.remindersEnabled,
-                autoHostReminder: botConfigs.autoHostReminder,
-                autoHostReminderLead: botConfigs.autoHostReminderLead,
-                autoStaffStart: botConfigs.autoStaffStart,
-                autoStaffStartLead: botConfigs.autoStaffStartLead,
-                autoBegin: botConfigs.autoBegin,
-                autoBeginLead: botConfigs.autoBeginLead,
-                autoComplete: botConfigs.autoComplete,
-                autoCompleteDelay: botConfigs.autoCompleteDelay
-            },
-            groupId: groups.id,
-            signupLeadMinutes: groups.signupLeadMinutes,
-            hostSchedule: groups.hostSchedule,
-            shift: events
-        })
-        .from(botConfigs)
-        .innerJoin(groups, eq(botConfigs.groupId, groups.id))
-        .innerJoin(events, and(eq(events.groupId, groups.id), eq(events.archived, false)))
-
+    const rows = await schedulerRows()
 
     const due: BotInternal.dueActions = []
-
     const groupIds = [...new Set(rows.map(row => row.groupId))]
-    const indexes = await runBatches(dataRedis, groupIds.map(id => pipeline => pipeline.eval("return redis.call('GET', KEYS[1])", [groupIndexKey(id)], [])))
-    assertResults(indexes)
+    // One MGET for every group's room pointer, and one script per open room
+    // that keeps it alive, settles its timeline and claims what is due: a
+    // request per group plus three per room before.
+    const indexes = groupIds.length ? await dataRedis.mget(groupIds.map(groupIndexKey)) : []
     const open = new Map<string, { id: string; info: Partial<RoomInfo> }>()
-    const ids = indexes.flatMap(([, value], index) => typeof value === 'string' ? [{ id: value, groupId: groupIds[index]! }] : [])
-    const rooms = await runBatches(dataRedis, ids.map(room => pipeline => pipeline.hgetall(roomKey(room.id))))
-    assertResults(rooms)
-    for (let index = 0; index < ids.length; index++) {
-        const pointer = ids[index]!
-        const info = rooms[index]![1] as Partial<RoomInfo>
-        if (!info.timeline || !info.eventId) continue
-        if (!await touchRoom(pointer.id)) continue
-        open.set(pointer.groupId, { id: pointer.id, info })
-        const config = rows.find(row => row.groupId === pointer.groupId)!.config
-        const raw = await dataRedis.eval<string>(CLAIM_TIMELINE, [roomKey(pointer.id)],
-            [String(now.getTime()), pointer.id, roomChannel(pointer.id), 'POLL'])
-        const claimed = raw ? JSON.parse(raw) as Array<{ action: ActionName; eventId: string; occurrence: string; expiresAt: number; roomId: string; timelineId: string }> : []
-        for (const item of claimed) due.push({ ...item, guildId: config.guildId, groupId: pointer.groupId, expiresAt: new Date(item.expiresAt).toISOString() })
+    for (let index = 0; index < groupIds.length; index++) {
+        const roomId = indexes[index]
+        if (!roomId) continue
+        const groupId = groupIds[index]!
+        const raw = await dataRedis.eval<string | number | null>(POLL_ROOM, [roomKey(roomId)],
+            [String(now.getTime()), roomId, roomChannel(roomId), 'POLL'])
+        if (typeof raw !== 'string') continue
+        const polled = JSON.parse(raw) as { eventId: string; occurrence: string; due: unknown }
+        if (!polled.eventId) continue
+        open.set(groupId, { id: roomId, info: { eventId: polled.eventId, occurrence: polled.occurrence } })
+        const config = rows.find(row => row.groupId === groupId)!.config
+        const claimed = (Array.isArray(polled.due) ? polled.due : []) as Array<{ action: ActionName; eventId: string; occurrence: string; expiresAt: number; roomId: string; timelineId: string }>
+        for (const item of claimed) due.push({ ...item, guildId: config.guildId, groupId, expiresAt: new Date(item.expiresAt).toISOString() })
     }
 
     for (const { config, groupId, signupLeadMinutes, hostSchedule, shift } of rows) {
@@ -163,8 +202,15 @@ export async function releaseClaim(
 
 /** Finish a claimed action; a crashed worker's short lease otherwise expires for retry. */
 export async function completeClaim(action: ActionName, eventId: string, occurrence: string, roomId?: string, timelineId?: string) {
-    if (roomId && timelineId) { await finishTimeline(roomId, timelineId, 'COMPLETE'); return }
     const when = new Date(occurrence)
+    if (roomId && timelineId) {
+        await finishTimeline(roomId, timelineId, 'COMPLETE')
+        // The room's timeline is not the only record anybody reads. Without
+        // the done marker, closing the room handed the same action to the
+        // scheduler again, and reopening it put the card back to waiting.
+        if (action !== 'REFRESH' && !Number.isNaN(when.getTime())) await dataRedis.set(doneKey(action, eventId, when), '1', 'EX', DONE_TTL)
+        return
+    }
     if (Number.isNaN(when.getTime())) return
 
     await dataRedis.set(doneKey(action, eventId, when), '1', 'EX', DONE_TTL)

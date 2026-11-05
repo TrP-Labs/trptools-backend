@@ -29,13 +29,17 @@ export async function saveDiscordImage(
         !['cdn.discordapp.com', 'media.discordapp.net'].includes(
             url.hostname,
         ) ||
-        !url.pathname.startsWith('/attachments/')
+        // A file uploaded through a modal or a slash command option is an
+        // interaction attachment, served from /ephemeral-attachments/ rather
+        // than /attachments/. Refusing that prefix refused every image
+        // /edit-shift ever sent.
+        !(url.pathname.startsWith('/attachments/') || url.pathname.startsWith('/ephemeral-attachments/'))
     )
         throw status(400, 'Bad Request')
     if (!storageConfigured)
         throw status(503, 'image uploads are not configured')
     const response = await fetch(url, {
-        redirect: 'error',
+        redirect: 'manual',
         signal: AbortSignal.timeout(15000),
     })
     if (

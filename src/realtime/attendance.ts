@@ -5,7 +5,7 @@ import { dataRedis } from '../utils/redis'
 import { activeOccurrence } from '../utils/recurrence'
 import { ensureInstance } from '../schedule/instances'
 import type { RoomInfo } from '../rooms/service'
-import { RECORD_ATTENDANCE } from './redisScripts'
+import { ADVANCE_CLOCK, RECORD_ATTENDANCE } from './redisScripts'
 import { attendanceStep, GAME_JOBS, isGameJob } from './rules'
 import type { RealtimeModel } from './model'
 
@@ -59,33 +59,24 @@ export async function recordAttendance(groupId: string, room: RoomInfo | null, p
         : await scheduledOccurrence(groupId, now)
     if (!occurrence || now < occurrence.start) return
 
-    const previous = Number(await dataRedis.get(clockKey(occurrence))) || null
-    await dataRedis.set(clockKey(occurrence), String(now), 'EX', ATTENDANCE_TTL_SECONDS)
+    const previous = Number(await dataRedis.eval<string | null>(ADVANCE_CLOCK, [clockKey(occurrence)],
+        [String(now), String(ATTENDANCE_TTL_SECONDS)])) || null
     const step = attendanceStep(previous, now, occurrence.start, occurrence.end)
     const present = [...new Map(people.flatMap((person) => {
         const id = String(person.ID)
         return /^[0-9]{1,20}$/.test(id) && id !== '0' ? [[id, (person.Username ?? '').slice(0, 64) || id] as const] : []
     })).entries()]
-    if (step > 0 && present.length) {
-        await dataRedis.hset(namesKey(occurrence), Object.fromEntries(present))
-        await dataRedis.expire(namesKey(occurrence), ATTENDANCE_TTL_SECONDS)
-    }
     // Keep every career seen during credited attendance: switching jobs or
     // returning to the menu must not erase what somebody did earlier.
-    if (step > 0) {
-        const jobs = Object.fromEntries(people.flatMap((person) => {
-            const id = String(person.ID)
-            return /^[0-9]{1,20}$/.test(id) && id !== '0' && isGameJob(person.Job)
-                ? [[`${id}:${person.Job}`, '1']] : []
-        }))
-        if (Object.keys(jobs).length) {
-            await dataRedis.hset(jobsKey(occurrence), jobs)
-            await dataRedis.expire(jobsKey(occurrence), ATTENDANCE_TTL_SECONDS)
-        }
-    }
+    const jobs = Object.fromEntries(people.flatMap((person) => {
+        const id = String(person.ID)
+        return /^[0-9]{1,20}$/.test(id) && id !== '0' && isGameJob(person.Job)
+            ? [[`${id}:${person.Job}`, '1']] : []
+    }))
     const final = now >= occurrence.end
-    const flush = await dataRedis.eval<number>(RECORD_ATTENDANCE, [secondsKey(occurrence)],
-        [String(now), String(step), String(FLUSH_EVERY_MS), String(ATTENDANCE_TTL_SECONDS), final ? '1' : '0', ...present.map(([id]) => id)])
+    const flush = await dataRedis.eval<number>(RECORD_ATTENDANCE, [secondsKey(occurrence), namesKey(occurrence), jobsKey(occurrence)],
+        [String(now), String(step), String(FLUSH_EVERY_MS), String(ATTENDANCE_TTL_SECONDS), final ? '1' : '0',
+            JSON.stringify(Object.fromEntries(present)), JSON.stringify(jobs), ...present.map(([id]) => id)])
     if (Number(flush) === 1) await flushAttendance(occurrence)
 }
 

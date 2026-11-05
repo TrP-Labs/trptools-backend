@@ -21,11 +21,16 @@ export async function roomGame(roomId: string): Promise<{ live: boolean; routes:
     return { live: isLive(Number(lastAt) || null, Date.now()), routes: Array.isArray(parsed) ? parsed : null }
 }
 
+/** What a command leaves the driver doing, for the driver feed; '' if it is not an order. */
+function standingOrder(type: GameCommandType) {
+    return type === 'Stop' ? 'STOP' : type === 'Continue' ? 'CONTINUE' : type === 'EndShift' ? 'END_SHIFT' : ''
+}
+
 async function enqueue(roomId: string, queued: QueuedCommand) {
     await dataRedis.eval(ENQUEUE_COMMAND,
         [roomKey(roomId), commandQueueKey(roomId), vehicleKey(roomId, String(queued.command.Vehicle))],
         [queued.key, JSON.stringify(queued), String(VEHICLE_TTL_SECONDS), roomChannel(roomId),
-            String(queued.command.Vehicle), queued.assignment ? '1' : '0'])
+            String(queued.command.Vehicle), queued.assignment ? '1' : '0', standingOrder(queued.command.Command.Type), String(Date.now())])
 }
 
 /**

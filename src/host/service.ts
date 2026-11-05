@@ -1,4 +1,5 @@
 import { status } from 'elysia'
+import { scheduleChanged } from '../utils/idle'
 import { eq } from 'drizzle-orm'
 import db from '../db'
 import { groups, botConfigs, events } from '../db/schema'
@@ -62,6 +63,7 @@ export abstract class Host {
             .update(groups)
             .set({ hostSchedule: body })
             .where(eq(groups.id, group.id))
+        await scheduleChanged()
         await recordAudit(
             group.id,
             session.user!.userId,

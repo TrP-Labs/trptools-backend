@@ -19,6 +19,7 @@ import { groupIndexKey, roomKey, type RoomInfo } from '../rooms/service'
 import { writeRoomNote, hostSnapshot } from '../host/service'
 import { saveDiscordImage } from '../host/images'
 import { STAFF_ACTION } from '../host/redisScripts'
+import { OPEN_ROOMS } from '../rooms/lifecycle'
 import { completeClaim } from './scheduler'
 import { roomChannel } from '../rooms/service'
 import { presentConfig } from './present'
@@ -185,6 +186,10 @@ export abstract class BotService {
     }
 
     static async boardGuilds() {
+        // A board only exists while a room is open. With none open there is
+        // nothing to redraw, and the bot's minute check costs no query.
+        const open = await dataRedis.eval<string[] | null>(OPEN_ROOMS, [], [])
+        if (open && open.length === 0) return []
         return db.select({ guildId: botConfigs.guildId, manifestRefreshSeconds: botConfigs.manifestRefreshSeconds }).from(botConfigs)
             .where(eq(botConfigs.manifestEnabled, true))
     }
@@ -340,7 +345,10 @@ export abstract class BotService {
             new Date(occurrence.getTime() + 1000),
             1
         )
-        if (matches.length === 0 || matches[0]!.start.getTime() !== occurrence.getTime()) throw status(400, 'Bad Request')
+        // A posted sheet outlives an edit to the shift's time. Its buttons are
+        // for an occurrence that no longer runs, which is a sheet that has
+        // gone, not a malformed request the bot can only call an error.
+        if (matches.length === 0 || matches[0]!.start.getTime() !== occurrence.getTime()) return { status: 'GONE', slotName: '', previousSlotName: null }
 
         const sheets = await loadSheets(group.id)
         const sheet = sheets.find((candidate) => candidate.slots.some((slot) => slot.id === body.slotId))

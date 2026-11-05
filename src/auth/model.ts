@@ -109,7 +109,7 @@ export namespace AuthModel {
 
     export const CreateApiKeyBody = t.Object({
         name: t.String({ minLength: 1, maxLength: 60 }),
-        scopes: t.Optional(t.Array(t.String({ maxLength: 40 }), { maxItems: 12 }))
+        scopes: t.Optional(t.Array(t.String({ maxLength: 40 }), { maxItems: 64 }))
     })
     export type CreateApiKeyBody = typeof CreateApiKeyBody.static
 
@@ -153,13 +153,3 @@ export namespace AuthModel {
     export type noDiscordLinked = typeof noDiscordLinked.static
 }
 
-export const API_SCOPES = [
-    'groups:read',
-    'groups:write',
-    'routes:read',
-    'routes:write',
-    'schedule:read',
-    'schedule:write',
-    'dispatch:read',
-    'dispatch:write'
-] as const

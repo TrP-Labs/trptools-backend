@@ -5,11 +5,22 @@ import { databaseRows } from '../db/rows'
 import { events } from '../db/schema'
 import { upcomingOccurrences } from '../utils/recurrence'
 import { notificationsConfigured } from './service'
+import { hourlyOnce, readMemo, writeMemo } from '../utils/idle'
 
-/** Each plan and send is a separate Worker invocation; the cron only dispatches bounded I/O. */
+/**
+ * Each plan and send is a separate Worker invocation; the cron only dispatches bounded I/O.
+ *
+ * Between passes it remembers when the next thing is due — a shift to plan or
+ * a delivery to send or retry — and does not touch Postgres before then. A
+ * new watch, subscription or shift edit forgets that time (`utils/idle.ts`),
+ * so nothing it causes waits for the old one.
+ */
 export async function runNotificationTick(dispatch: (kind: 'plan' | 'send', id: string) => Promise<unknown>, now = new Date(), drain?: () => Promise<unknown>) {
     if (!notificationsConfigured()) return
-    if (now.getUTCMinutes() === 0) {
+    const memo = await readMemo('notifications')
+    if (memo.value && (memo.value === 'none' || now.getTime() < Number(memo.value))) return
+
+    if (await hourlyOnce('notifications')) {
         await db.execute(sql`DELETE FROM notification_deliveries WHERE occurrence < ${new Date(now.getTime() - 7 * 86_400_000).toISOString()}`)
     }
     const due = await db.select({ id: events.eventId }).from(events)
@@ -17,6 +28,16 @@ export async function runNotificationTick(dispatch: (kind: 'plan' | 'send', id: 
     await Promise.all(due.map((event) => dispatch('plan', event.id)))
     if (drain) await drain()
     else for (let batch = 0; batch < 20; batch++) { if (!await drainNotificationBatch(dispatch, now)) break }
+
+    // Anything left due now (more than one pass's worth) runs next minute.
+    const [next] = databaseRows(await db.execute(sql`SELECT LEAST(
+        (SELECT MIN(e.notification_at) FROM events e WHERE e.notification_at IS NOT NULL AND EXISTS (
+            SELECT 1 FROM notification_watches w WHERE w.group_id = e.group_id AND (w.event_id IS NULL OR w.event_id = e.event_id))),
+        (SELECT MIN(d.available_at) FROM notification_deliveries d WHERE d.delivered_at IS NULL AND d.attempts < 5
+            AND d.occurrence > ${new Date(Date.now() - 15 * 60_000).toISOString()})
+    ) AS next`))
+    const at = next?.next ? new Date(next.next as string).getTime() : null
+    await writeMemo('notifications', memo.version, at === null ? 'none' : String(at), 7 * 86_400)
 }
 
 /** 25 sends leave room below the free Worker's 50-subrequest limit. */

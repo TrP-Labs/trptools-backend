@@ -288,6 +288,13 @@
       "when": 1792885229534,
       "tag": "0040_attendance_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793907980836,
+      "tag": "0041_application_auto_rank",
+      "breakpoints": true
     }
   ]
 }

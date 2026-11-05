@@ -1,0 +1,1 @@
+ALTER TABLE "applications" ADD COLUMN "auto_rank" boolean DEFAULT false NOT NULL;

@@ -132,6 +132,9 @@ redis.call('HSET', KEYS[1], 'needsRefresh', redis.call('HINCRBY', KEYS[1], 'refr
 ${STORE}`
 
 // One read/settle/claim command per room, irrespective of the number of cards.
+// ARGV[4] is the mode: POLL claims due bot work for the bot, READ returns the
+// snapshot, SETTLE only moves cards along the clock (and tells every open
+// board) — what the minute sweep does for a group with no bot polling.
 export const CLAIM_TIMELINE = `${PREAMBLE}
 local due = {}
 local changed = false
@@ -147,7 +150,7 @@ for index, item in ipairs(timeline) do
     if ((item.status == 'READY' or item.status == 'QUEUED') and item.source ~= 'STAFF' or item.awaitingAck) and now >= nextTime then
         item.status = 'IGNORED'; item.awaitingAck = nil; item.changedAt = now; changed = true
     end
-    if item.status == 'QUEUED' and ARGV[4] ~= 'READ' then
+    if item.status == 'QUEUED' and ARGV[4] == 'POLL' then
         item.status = 'RUNNING'; item.leaseUntil = now + 120000; changed = true
         table.insert(due, {action=item.action, timelineId=item.id, roomId=ARGV[2], occurrence=room.occurrence, eventId=room.eventId,
             expiresAt=now + 600000})
@@ -159,7 +162,7 @@ if changed then
     ${SNAPSHOT}
     redis.call('PUBLISH', ARGV[3], '{"event":"HOST","data":' .. encoded .. '}')
 end
-if room.needsRefresh and tonumber(room.refreshLease or '0') <= now and ARGV[4] ~= 'READ' then
+if room.needsRefresh and tonumber(room.refreshLease or '0') <= now and ARGV[4] == 'POLL' then
     redis.call('HSET', KEYS[1], 'refreshLease', now + 120000)
     table.insert(due, {action='REFRESH', timelineId='refresh-' .. room.needsRefresh, roomId=ARGV[2], occurrence=room.occurrence, eventId=room.eventId, expiresAt=now+600000})
 end
@@ -167,7 +170,11 @@ if ARGV[4] == 'READ' then
     ${SNAPSHOT}
     return encoded
 end
-return #due == 0 and '[]' or cjson.encode(due)
+if ARGV[4] ~= 'POLL' then return '[]' end
+-- The scheduler also needs which occurrence the room is for, which it used
+-- to read with a request of its own.
+return '{"eventId":' .. cjson.encode(room.eventId or '') .. ',"occurrence":' .. cjson.encode(room.occurrence or '')
+    .. ',"due":' .. (#due == 0 and '[]' or cjson.encode(due)) .. '}'
 `
 export const FINISH_TIMELINE = `${PREAMBLE}
 if ARGV[4] == 'refresh-' .. (room.needsRefresh or '') then

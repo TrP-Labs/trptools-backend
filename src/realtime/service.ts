@@ -15,12 +15,12 @@ import { globalModel } from '../utils/globalModel'
 import { groupIndexKey, roomChannel, roomKey, touchRoom, type RoomInfo } from '../rooms/service'
 import { recordDrivers } from '../schedule/instances'
 import {
-    addChanges, commitChanges, loadVehicles, patchChange, removeVehicles, type StoredVehicle
+    addChanges, commitChanges, fromPairs, loadVehicles, patchChange, removeVehicles, type StoredVehicle
 } from '../rooms/dispatch/service'
 import { inferCategory, loadSolverContext, matchRule, resolveDepotId } from '../rooms/dispatch/solver'
 import type { Vehicles } from '../rooms/dispatch/model'
 import { commandQueueKey } from './commands'
-import { DRAIN_COMMANDS } from './redisScripts'
+import { DRAIN_COMMANDS, REPORT } from './redisScripts'
 import { recordAttendance } from './attendance'
 import {
     adoptedRoute, COMMANDS_PER_RESPONSE, isLive, shouldAdoptAssignment,
@@ -89,6 +89,23 @@ export async function roomGameStatus(roomId: string): Promise<Vehicles.gameStatu
 }
 
 /**
+ * The group's routes, as a report matches the game's assignments against
+ * them. Held for a minute per process: every server reports every fifteen
+ * seconds and the list changes when a manager edits it, so a new route is
+ * recognized within a minute instead of costing a query on every report.
+ */
+const routeCache = new Map<string, { at: number; rows: Array<{ id: string; name: string; color: string }> }>()
+async function liveRoutes(groupId: string) {
+    const cached = routeCache.get(groupId)
+    if (cached && Date.now() - cached.at < 60_000) return cached.rows
+    const rows = await db.select({ id: routes.id, name: routes.name, color: routes.color }).from(routes)
+        .where(and(eq(routes.groupId, groupId), eq(routes.archived, false)))
+    if (routeCache.size >= 256) routeCache.delete(routeCache.keys().next().value!)
+    routeCache.set(groupId, { at: Date.now(), rows })
+    return rows
+}
+
+/**
  * Brings a room's board into line with one report from the game.
  *
  * The same reconciliation a pasted import does — vehicles the game no longer
@@ -99,11 +116,7 @@ export async function roomGameStatus(roomId: string): Promise<Vehicles.gameStatu
  * somebody else's route.
  */
 export async function syncRoom(roomId: string, info: RoomInfo, payload: RealtimeModel.Vehicle[]) {
-    const [current, groupRoutes] = await Promise.all([
-        loadVehicles(roomId),
-        db.select({ id: routes.id, name: routes.name, color: routes.color }).from(routes)
-            .where(and(eq(routes.groupId, info.groupId), eq(routes.archived, false)))
-    ])
+    const [current, groupRoutes] = await Promise.all([loadVehicles(roomId), liveRoutes(info.groupId)])
     const incoming = new Map<string, RealtimeModel.Vehicle>()
     for (const vehicle of payload) {
         const id = text(vehicle.Id, 32)
@@ -173,12 +186,13 @@ export async function syncRoom(roomId: string, info: RoomInfo, payload: Realtime
 }
 
 /** Hands the game what one response may carry, oldest first. */
-async function drain(roomId: string): Promise<GameCommand[]> {
-    const taken = await dataRedis.eval<string[]>(DRAIN_COMMANDS, [roomKey(roomId), commandQueueKey(roomId)],
-        [vehiclePrefixFor(roomId), roomChannel(roomId), String(COMMANDS_PER_RESPONSE)])
-    return (taken ?? []).flatMap((raw) => {
+async function drain(roomId: string): Promise<{ commands: GameCommand[]; queued: number }> {
+    const [taken, queued] = (await dataRedis.eval<[string[], number] | null>(DRAIN_COMMANDS, [roomKey(roomId), commandQueueKey(roomId)],
+        [vehiclePrefixFor(roomId), roomChannel(roomId), String(COMMANDS_PER_RESPONSE)])) ?? [[], 0]
+    const commands = (taken ?? []).flatMap((raw) => {
         try { return [(JSON.parse(raw) as QueuedCommand).command] } catch { return [] }
     })
+    return { commands, queued: Number(queued) || 0 }
 }
 
 export abstract class GameFeed {
@@ -210,27 +224,28 @@ export abstract class GameFeed {
             gameTime: Number.isFinite(server.gametime) ? String(Math.min(1439, Math.max(0, Math.floor(server.gametime!)))) : '',
             routes: serverRoutes
         }
-        await Promise.all([
-            dataRedis.hset(feedStatusKey(groupId), fields).then(() => dataRedis.expire(feedStatusKey(groupId), STATUS_TTL_SECONDS)),
-            dataRedis.set(feedVehiclesKey(groupId), JSON.stringify(vehicles), 'EX', SNAPSHOT_TTL_SECONDS)
-        ])
-
-        const roomId = await dataRedis.get(groupIndexKey(groupId))
-        const open = roomId ? await touchRoom(roomId) : 0
-        const info = open ? await dataRedis.hgetall(roomKey(roomId!)) as unknown as RoomInfo : null
+        const roomFields = {
+            gameAt: fields.lastAt!, gamePlayers: fields.players!, gameRuntime: fields.runtime!,
+            gameTime: fields.gameTime!, gameRoutes: serverRoutes
+        }
+        const opened = await dataRedis.eval<[string, string[]] | null>(REPORT,
+            [feedStatusKey(groupId), feedVehiclesKey(groupId), groupIndexKey(groupId)],
+            [String(now), String(STATUS_TTL_SECONDS), String(SNAPSHOT_TTL_SECONDS), JSON.stringify(vehicles),
+                JSON.stringify(fields), JSON.stringify(roomFields)])
+        const roomId = opened ? opened[0] : null
+        const info = opened ? fromPairs(opened[1]) as unknown as RoomInfo : null
 
         await recordAttendance(groupId, info, people, now)
             .catch((error) => console.warn('[realtime] attendance failed', error instanceof Error ? error.message : 'unknown'))
         if (!roomId || !info?.groupId) return []
 
-        await dataRedis.hset(roomKey(roomId), {
-            gameAt: fields.lastAt!, gamePlayers: fields.players!, gameRuntime: fields.runtime!,
-            gameTime: fields.gameTime!, gameRoutes: serverRoutes
-        })
         await syncRoom(roomId, info, vehicles)
-        const commands = await drain(roomId)
-        const game = await roomGameStatus(roomId)
-        if (game) await dataRedis.publish(roomChannel(roomId), JSON.stringify({ event: 'GAME', data: game } satisfies Vehicles.streamEvent))
+        const { commands, queued } = await drain(roomId)
+        // Everything the GAME frame says is already in hand: the fields this
+        // report wrote and what the drain left queued.
+        const game = readStatus({ lastAt: fields.lastAt!, runtime: fields.runtime!, gameTime: fields.gameTime!,
+            players: fields.players!, routes: serverRoutes }, queued, now)
+        await dataRedis.publish(roomChannel(roomId), JSON.stringify({ event: 'GAME', data: game } satisfies Vehicles.streamEvent))
         return commands
     }
 

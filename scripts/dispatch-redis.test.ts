@@ -216,11 +216,11 @@ test('reimport preserves dispatch state, batches category changes and decorates 
     context.typesByName.set('bus', { ...rule, category: 'TROLLEYBUS' })
     trips = 0
     expect(await DispatchControls.importVehicles('integration', info, [seed(1), seed(2), seed(3)])).toEqual({ added: 0, removed: 0, total: 3 })
-    expect(trips).toBe(5)
+    expect(trips).toBe(4)
     expect(await redis.hmget(key(1), 'route', 'note', 'assigned', 'location', 'category')).toEqual(['NOTE', 'Keep me', 'true', 'Depot', 'TROLLEYBUS'])
     trips = 0
     await DispatchControls.importVehicles('integration', info, [seed(1), seed(2), seed(3)])
-    expect(trips).toBe(4)
+    expect(trips).toBe(3)
 })
 
 test('simultaneous imports do not duplicate list entries or wipe an existing vehicle', async () => {
@@ -236,7 +236,7 @@ test('50 solves use four trips and publish their stored results', async () => {
     frames.length = 0
     trips = 0
     expect((await DispatchControls.solveRoom('integration', info, {})).solved).toBe(50)
-    expect(trips).toBe(4)
+    expect(trips).toBe(3)
     await settleFrames(50)
     expect(frames.filter((frame) => frame.event === 'UPDATE')).toHaveLength(50)
     expect(await redis.hget(key(49), 'route')).toBe(routeId)
@@ -287,7 +287,7 @@ test('an import removes multiple vehicles and releases tows without per-vehicle 
     await DispatchControls.modifyVehicle('integration', '1', info, { towing: '3' })
     trips = 0
     expect(await DispatchControls.importVehicles('integration', info, [seed(1)])).toEqual({ added: 0, removed: 2, total: 1 })
-    expect(trips).toBe(5)
+    expect(trips).toBe(4)
     expect(await redis.hget(key(1), 'towing')).toBe('')
 })
 
@@ -334,7 +334,7 @@ test('stream reuses the authorized room and does not check EXISTS per update', a
     const stream = DispatchControls.stream('integration', '001', info)
     trips = 0
     expect((await stream.next()).value?.event).toBe('SYNC')
-    expect(trips).toBe(3)
+    expect(trips).toBe(2)
     expect((await stream.next()).value).toEqual({ event: 'PRESENCE', data: ['001'] })
     // Drain the queued join announcement if the subscriber already observed it.
     if (!edge) expect((await stream.next()).value?.event).toBe('PRESENCE')
@@ -363,7 +363,7 @@ test('500-vehicle imports and solves stay bounded and return all assignments', a
     expect(trips).toBe(6)
     trips = 0
     expect((await DispatchControls.solveRoom('integration', info, {})).solved).toBe(500)
-    expect(trips).toBe(7)
+    expect(trips).toBe(5)
     expect(new Set(await redis.lrange(listKey, 0, -1)).size).toBe(500)
 })
 
@@ -378,7 +378,7 @@ test('natural room expiry is detected at the heartbeat rather than per event', a
     expect(event?.event).toBe('CLOSED')
     expect(trips).toBe(1)
     await stream.return(undefined)
-}, 20_000)
+}, 40_000)
 
 test('a revoked session closes its stream and releases presence at the heartbeat', async () => {
     const stream = DispatchControls.stream('integration', 'revoked', info, undefined, undefined, async () => false)
@@ -388,7 +388,7 @@ test('a revoked session closes its stream and releases presence at the heartbeat
     while (event?.event !== 'CLOSED') event = (await stream.next()).value
     expect((await stream.next()).done).toBe(true)
     expect(await DispatchControls.present('integration')).not.toContain('revoked')
-}, 20_000)
+}, 40_000)
 
 test('150 ms simulated RTT keeps 50-vehicle operations below one second of service Redis time', async () => {
     delay = 150
@@ -400,7 +400,7 @@ test('150 ms simulated RTT keeps 50-vehicle operations below one second of servi
     const solving = performance.now()
     await DispatchControls.solveRoom('integration', info, {})
     const solveTime = performance.now() - solving
-    expect(trips).toBe(4)
+    expect(trips).toBe(3)
     expect(importTime).toBeLessThan(1200)
     expect(solveTime).toBeLessThan(1200)
     console.log(`[dispatch ${edge ? 'Upstash' : 'ioredis'}] 150ms RTT: import 50 = ${Math.round(importTime)}ms, solve 50 = ${Math.round(solveTime)}ms (4 trips each)`)

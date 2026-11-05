@@ -22,6 +22,7 @@ import { applicationRoutes } from './applications/controller'
 import { host } from './host/controller'
 import { rooms } from './rooms/controller'
 import { dispatch } from './rooms/dispatch/controller'
+import { driver } from './driver/controller'
 import { realtime } from './realtime/controller'
 import { attendance } from './attendance/controller'
 import { publicPages } from './public/controller'
@@ -80,7 +81,7 @@ export const app = new Elysia()
         set.headers['x-frame-options'] = 'DENY'
         set.headers['referrer-policy'] = 'strict-origin-when-cross-origin'
     })
-    .onError(({ code, error, set }) => {
+    .onError(({ code, error, set, request }) => {
         if (error instanceof RateLimitError) return limitedResponse(error)
 
         if (error instanceof DiscordError) {
@@ -108,6 +109,14 @@ export const app = new Elysia()
                 set.status = 500
                 return 'Internal Server Error'
             }
+            // The body stays a bare "Bad Request", but the log says which
+            // field was refused. Without it, every rejected request from the
+            // bot or the dashboard looked identical and untraceable.
+            const detail = code === 'VALIDATION'
+                ? (error as { all?: Array<{ path?: string; summary?: string; message?: string }> }).all?.[0]
+                : undefined
+            console.warn('[400]', request.method, new URL(request.url).pathname, code,
+                detail ? `${detail.path ?? ''} ${detail.summary ?? detail.message ?? ''}`.trim() : '')
             set.status = 400
             return 'Bad Request'
         }
@@ -144,6 +153,7 @@ export const app = new Elysia()
     .use(rooms)
     .use(host)
     .use(dispatch)
+    .use(driver)
     .use(realtime)
     .use(attendance)
     .use(publicPages)
@@ -178,6 +188,7 @@ export const app = new Elysia()
                     { name: 'Applications', description: 'Staff application forms, and reviewing what people send' },
                     { name: 'Rooms', description: 'Opening and closing dispatch rooms' },
                     { name: 'Dispatch', description: 'Live vehicle assignment inside a room' },
+                    { name: 'Driver', description: 'What dispatch is telling your own vehicles' },
                     { name: 'Public', description: 'Anonymous reads of published group pages' },
                     { name: 'Depots', description: 'Depot numbers, descriptions and images' },
                     { name: 'Media', description: 'Uploaded images for routes, depots and groups' },

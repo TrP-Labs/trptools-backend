@@ -30,7 +30,11 @@ function instanceValues(event: Event, start: Date) {
 export async function ensureInstance(event: Event, start: Date) {
     const [existing] = await db.select().from(shiftOccurrences).where(and(eq(shiftOccurrences.eventId, event.eventId), eq(shiftOccurrences.start, start))).limit(1)
     if (existing) return existing
-    if (event.archived || !occurrencesBetween(event.rrule, event.startTime, event.duration, start, start, 1).length) throw status(400, 'Bad Request')
+    // An occurrence the shift does not run is absent, not malformed. A 400
+    // here reached the bot as a failure to retry, so an announcement for a
+    // shift whose time had since been edited was retried until it expired
+    // and every button on it answered "something went wrong".
+    if (event.archived || !occurrencesBetween(event.rrule, event.startTime, event.duration, start, start, 1).length) throw status(404, 'Not Found')
     const [created] = await db.insert(shiftOccurrences).values(instanceValues(event, start)).onConflictDoNothing().returning()
     if (created) return created
     return (await db.select().from(shiftOccurrences).where(and(eq(shiftOccurrences.eventId, event.eventId), eq(shiftOccurrences.start, start))).limit(1))[0]!
@@ -228,9 +232,22 @@ export async function updateInstanceDefaults(previous: Event, next: Event, chang
             decision: next.onDemand ? 'PENDING' : 'SCHEDULED'
         }).where(and(future, inArray(shiftOccurrences.decision, ['SCHEDULED', 'PENDING']), sql`NOT EXISTS (SELECT 1 FROM shift_votes WHERE occurrence_id = ${shiftOccurrences.id})`, sql`NOT EXISTS (SELECT 1 FROM shift_signups WHERE event_id = ${shiftOccurrences.eventId} AND occurrence = ${shiftOccurrences.start})`))
     }
-    if (changed.includes('rrule') || changed.includes('startTime')) {
+    // The recurrence section always sends both fields, so "in the body" is not
+    // "changed". Treating it as changed re-ran the cancellation on every save.
+    const ruleMoved = (changed.includes('rrule') && next.rrule !== previous.rrule)
+        || (changed.includes('startTime') && next.startTime.getTime() !== previous.startTime.getTime())
+    if (ruleMoved) {
         const held = await db.select().from(shiftOccurrences).where(future)
-        const removed = held.filter(row => row.decision !== 'FAILED' && !occurrencesBetween(next.rrule, next.startTime, next.duration, row.start, row.start, 1).length)
+        const onRule = (row: Instance) => occurrencesBetween(next.rrule, next.startTime, next.duration, row.start, row.start, 1).length > 0
+        const removed = held.filter(row => row.decision !== 'FAILED' && row.decision !== 'CANCELED' && !onRule(row))
         if (removed.length) await db.update(shiftOccurrences).set({ decision: 'CANCELED' }).where(inArray(shiftOccurrences.id, removed.map(row => row.id)))
+        // Moving a shift and then moving it back used to leave the original
+        // occurrences cancelled for good: the row already existed, so nothing
+        // recreated it, and a cancelled row refuses a room and every bot
+        // action. Only an archived shift cancels for any other reason, and an
+        // archived shift cannot be edited, so anything back on the rule is
+        // one this function cancelled.
+        const restored = held.filter(row => row.decision === 'CANCELED' && onRule(row))
+        if (restored.length) await db.update(shiftOccurrences).set({ decision: next.onDemand ? 'PENDING' : 'SCHEDULED' }).where(inArray(shiftOccurrences.id, restored.map(row => row.id)))
     }
 }

@@ -28,3 +28,32 @@ test('scopes are exact and independent, including realtime and room lifecycle', 
     expect(apiKeyAllows(key, 'POST', '/auth/session')).toBe(false)
     expect(apiKeyAllows({}, 'POST', '/auth/keys')).toBe(true)
 })
+
+test('a fine scope opens only its own area, and the original scopes still cover what split out of them', () => {
+    const ranks = { viaApiKey: true, scopes: ['ranks:write'] }
+    expect(apiKeyAllows(ranks, 'PATCH', '/ranks/id')).toBe(true)
+    expect(apiKeyAllows(ranks, 'GET', '/ranks/id')).toBe(false)
+    expect(apiKeyAllows(ranks, 'PATCH', '/groups/id')).toBe(false)
+    expect(apiKeyAllows(ranks, 'PATCH', '/bot/id')).toBe(false)
+
+    const legacy = { viaApiKey: true, scopes: ['groups:write', 'routes:read', 'dispatch:read'] }
+    for (const path of ['/ranks/id', '/bot/id', '/media/id', '/applications/id', '/claimables/id']) {
+        expect(apiKeyAllows(legacy, 'POST', path)).toBe(true)
+    }
+    expect(apiKeyAllows(legacy, 'GET', '/depots/id')).toBe(true)
+    expect(apiKeyAllows(legacy, 'GET', '/host/room')).toBe(true)
+    expect(apiKeyAllows(legacy, 'GET', '/rooms')).toBe(true)
+})
+
+test('scopes nothing used to reach stay out of every umbrella', () => {
+    const everything = { viaApiKey: true, scopes: ['groups:read', 'groups:write', 'routes:read', 'routes:write', 'schedule:read', 'schedule:write', 'dispatch:read', 'dispatch:write'] }
+    for (const path of ['/attendance/id', '/driver/me', '/dashboard', '/notifications', '/users/me']) {
+        expect(apiKeyAllows(everything, 'GET', path)).toBe(false)
+    }
+    expect(apiKeyAllows({ viaApiKey: true, scopes: ['driver:read'] }, 'GET', '/driver/me')).toBe(true)
+    expect(apiKeyAllows({ viaApiKey: true, scopes: ['driver:read'] }, 'POST', '/driver/me')).toBe(false)
+    expect(apiKeyAllows({ viaApiKey: true, scopes: ['profile:read'] }, 'GET', '/users/me')).toBe(true)
+    expect(apiKeyAllows({ viaApiKey: true, scopes: ['profile:read'] }, 'GET', '/users/me/routes')).toBe(true)
+    expect(apiKeyAllows({ viaApiKey: true, scopes: ['profile:read'] }, 'GET', '/users/someone')).toBe(false)
+    expect(apiKeyAllows({ viaApiKey: true, scopes: ['profile:read'] }, 'PATCH', '/users/me')).toBe(false)
+})

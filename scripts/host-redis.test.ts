@@ -53,6 +53,8 @@ async function run(script: string, keys = [key], args: string[] = []) {
         ...args,
     ) as Promise<string>
 }
+// A poll answers with the room's occurrence beside the claimed actions.
+const poll = async () => JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL'])).due
 async function snapshot() {
     return JSON.parse(await run(READ_HOST))
 }
@@ -114,7 +116,7 @@ test('only one concurrent opener wins and room is written with its group index',
 test('empty timelines and idle polls encode arrays', async () => {
     await redis.hset(key, 'timeline', '[]')
     expect((await snapshot()).timeline).toEqual([])
-    expect(JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL']))).toEqual([])
+    expect((await poll())).toEqual([])
 })
 test('concurrent extensions accumulate and move only pending end events', async () => {
     await Promise.all([
@@ -137,7 +139,7 @@ test('skip and acknowledgment prevent automated delivery', async () => {
         ['public', 'ACKNOWLEDGE', 'HOST', '', '0', 'host'],
     )
     now = start
-    expect(JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL']))).toEqual([])
+    expect((await poll())).toEqual([])
     const states = (await snapshot()).timeline
     expect(states.find((i: any) => i.id === 'staff').status).toBe('SKIPPED')
     expect(states.find((i: any) => i.id === 'public').status).toBe(
@@ -166,11 +168,11 @@ test('dispatch can acknowledge only an active dispatch reminder', async () => {
     ).toBe('ACKNOWLEDGED')
 })
 test('automation leases retry failures and reflect completed delivery', async () => {
-    let actions = JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL']))
+    let actions = (await poll())
     expect(actions[0].timelineId).toBe('staff')
-    expect(JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL']))).toEqual([])
+    expect((await poll())).toEqual([])
     await run(FINISH_TIMELINE, [key], ['staff', 'RELEASE'])
-    expect(JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL']))).toHaveLength(
+    expect((await poll())).toHaveLength(
         1,
     )
     await run(FINISH_TIMELINE, [key], ['staff', 'COMPLETE'])
@@ -182,7 +184,7 @@ test('manual early activation retains its time and source after delivery', async
         [key],
         ['public', 'ACTIVATE', 'HOST', '', '0', 'host'],
     )
-    const actions = JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL']))
+    const actions = (await poll())
     expect(actions.some((i: any) => i.timelineId === 'public')).toBe(true)
     await run(FINISH_TIMELINE, [key], ['public', 'COMPLETE'])
     const item = (await snapshot()).timeline.find((i: any) => i.id === 'public')
@@ -230,7 +232,7 @@ test('refresh leases preserve newer edits and retry crashed delivery', async () 
         [key, noteKey],
         [JSON.stringify({ note: 'First', ownerRobloxId: null })],
     )
-    const actions = JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL']))
+    const actions = (await poll())
     const refresh = actions.find((i: any) => i.action === 'REFRESH')
     now += 1
     await run(
@@ -242,7 +244,7 @@ test('refresh leases preserve newer edits and retry crashed delivery', async () 
     expect(await redis.hget(key, 'needsRefresh')).not.toBeNull()
     now += 120001
     expect(
-        JSON.parse(await run(CLAIM_TIMELINE, [key], ['POLL'])).some(
+        (await poll()).some(
             (i: any) => i.action === 'REFRESH',
         ),
     ).toBe(true)
@@ -296,12 +298,12 @@ test('an early reminder remains visible and dismissible for dispatchers', async 
 test('a same-millisecond edit cannot be consumed by an earlier refresh', async () => {
     const noteKey = 'shiftnote:event:' + start
     await run(SET_NOTE, [key,noteKey], [JSON.stringify({note:'First',ownerRobloxId:null})])
-    const first = JSON.parse(await run(CLAIM_TIMELINE,[key],['POLL'])).find((item:any)=>item.action==='REFRESH')
+    const first = (await poll()).find((item:any)=>item.action==='REFRESH')
     await run(SET_NOTE, [key,noteKey], [JSON.stringify({note:'Second',ownerRobloxId:null})])
     await run(FINISH_TIMELINE,[key],[first.timelineId,'COMPLETE'])
     expect(await redis.hget(key,'needsRefresh')).not.toBeNull()
     now += 120001
-    expect(JSON.parse(await run(CLAIM_TIMELINE,[key],['POLL'])).some((item:any)=>item.action==='REFRESH')).toBe(true)
+    expect((await poll()).some((item:any)=>item.action==='REFRESH')).toBe(true)
 })
 
 test('code edits, image uploads, extensions, and Discord commands share valid snapshots', async () => {

@@ -1,4 +1,5 @@
 import { status } from 'elysia'
+import { scheduleChanged } from '../utils/idle'
 import { eq } from 'drizzle-orm'
 import db from '../db'
 import { botConfigs, signupSheets, type BotConfig } from '../db/schema'
@@ -204,6 +205,7 @@ export abstract class Bot {
             })
 
         await invalidateGuild(guild.id)
+        await scheduleChanged()
         await recordAudit(group.id, userId, 'bot.install', `Connected the Discord server ${guild.name}`)
 
         return `${FRONTEND_URL}/dashboard/${group.slug}/bot?installed=1`
@@ -277,6 +279,7 @@ export abstract class Bot {
         }
 
         await recordAudit(group.id, session.user?.userId ?? null, 'bot.update', 'Updated bot settings')
+        await scheduleChanged()
 
         const [updated] = await db.select().from(botConfigs).where(eq(botConfigs.id, config.id)).limit(1)
         if (!updated) throw status(500, 'Internal Server Error' satisfies globalModel.internalError)
@@ -298,6 +301,7 @@ export abstract class Bot {
         await invalidateGuild(config.guildId)
 
         await db.delete(botConfigs).where(eq(botConfigs.id, config.id))
+        await scheduleChanged()
 
         // Per-sheet Discord bindings name channels in the guild that just went
         // away. Left in place they would point at another server's ids after a
