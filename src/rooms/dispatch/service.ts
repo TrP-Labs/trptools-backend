@@ -13,7 +13,7 @@ import { queueOrder, queueRoute } from '../../realtime/commands'
 import { roomGameStatus } from '../../realtime/service'
 import { Vehicles } from './model'
 import { assertResults, runBatches, type RedisTask } from './batch'
-import { ADD_VEHICLE, PATCH_VEHICLE, MODIFY_VEHICLE, DELETE_VEHICLES, CHANGE_PRESENCE } from './redisScripts'
+import { ADD_VEHICLE, PATCH_VEHICLE, MODIFY_VEHICLE, DELETE_VEHICLES, CHANGE_PRESENCE, LOAD_VEHICLES } from './redisScripts'
 import {
     inferCategory,
     loadRoutePreferences,
@@ -127,12 +127,18 @@ export type RawVehicle = Omit<Vehicles.vehicle, 'routeName' | 'routeColor'>
 export type Change = { task: RedisTask; event: Vehicles.streamEvent }
 
 export async function loadVehicles(roomId: string): Promise<{ ids: string[]; vehicles: RawVehicle[] }> {
-    const ids = await dataRedis.lrange(roomVehiclesKey(roomId), 0, -1)
-    const results = await runBatches(dataRedis, ids.map((id) => (pipeline) => pipeline.hgetall(vehicleKey(roomId, id))))
-    assertResults(results)
-    const vehicles = results.map(([, value]) => decode(value as Record<string, string>))
+    const [ids, hashes] = (await dataRedis.eval<[string[], string[][]] | null>(LOAD_VEHICLES,
+        [roomVehiclesKey(roomId)], [vehiclePrefix(roomId)])) ?? [[], []]
+    const vehicles = (hashes ?? []).map((pairs) => decode(fromPairs(pairs)))
         .filter((vehicle): vehicle is RawVehicle => vehicle !== null)
-    return { ids, vehicles }
+    return { ids: ids ?? [], vehicles }
+}
+
+/** A flat `field, value, …` reply, as HGETALL answers inside a script. */
+export function fromPairs(pairs: string[] | null | undefined): Record<string, string> {
+    const record: Record<string, string> = {}
+    for (let i = 0; i + 1 < (pairs?.length ?? 0); i += 2) record[pairs![i]!] = pairs![i + 1]!
+    return record
 }
 
 async function publishEvents(roomId: string, events: Vehicles.streamEvent[]) {
@@ -469,19 +475,27 @@ export abstract class DispatchControls {
             if (vehiclesResult.status === 'rejected') throw vehiclesResult.reason
             const presence = presenceResult.value
             const vehicles = vehiclesResult.value
+            // The heartbeat itself costs nothing. Every stream used to touch
+            // the room and re-read the host timeline on each beat, and check
+            // the session against Postgres: four requests a minute per open
+            // tab, all repeating what the minute sweep does once per room —
+            // it keeps the room alive, publishes timeline changes as HOST
+            // frames and publishes CLOSED when the room ends. What only the
+            // stream can know is whether this person may still watch, which
+            // is rechecked every other beat; a room that has gone fails that
+            // check as well.
+            let beats = 0
             heartbeat = setInterval(() => {
                 push({ event: 'HEARTBEAT' })
-                if (checking || closed) return
+                if (checking || closed || ++beats % 2 !== 0) return
                 checking = true
                 void (async () => {
                     if (stillAuthorized && !await stillAuthorized().catch(() => false)) {
                         queue.length = 0
                         push({ event: 'CLOSED' })
-                        return
+                    } else if (!stillAuthorized && !await touchRoom(roomId)) {
+                        push({ event: 'CLOSED' })
                     }
-                    const exists = await touchRoom(roomId)
-                    if (!exists) push({ event: 'CLOSED' })
-                    else if (info.timeline) void hostSnapshot(roomId).then(snapshot => push({ event: 'HOST', data: snapshot })).catch(() => undefined)
                 })().catch(() => undefined).finally(() => { checking = false })
             }, 15_000)
             yield { event: 'SYNC', data: vehicles }

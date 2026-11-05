@@ -4,9 +4,9 @@ import db from '../db'
 import { botConfigs, events, groups } from '../db/schema'
 import { dataRedis } from '../utils/redis'
 import type { BotInternal } from './internalModel'
-import { groupIndexKey, roomKey, roomChannel, touchRoom, type RoomInfo } from '../rooms/service'
+import { groupIndexKey, roomKey, roomChannel, type RoomInfo } from '../rooms/service'
+import { sweepRoomScript } from '../rooms/lifecycle'
 import { CLAIM_TIMELINE, FINISH_TIMELINE } from '../host/redisScripts'
-import { runBatches, assertResults } from '../rooms/dispatch/batch'
 import { timelineCandidates } from '../host/candidates'
 import { DEFAULT_SCHEDULE } from '../host/rules'
 import { dueCandidates, demandDecisionCandidates } from './schedulerRules'
@@ -23,6 +23,8 @@ import { dueCandidates, demandDecisionCandidates } from './schedulerRules'
  */
 
 type ActionName = BotInternal.dueAction['action']
+
+const POLL_ROOM = sweepRoomScript(CLAIM_TIMELINE)
 
 const claimKey = (action: ActionName, eventId: string, occurrence: Date) =>
     `bot:lease:${action}:${eventId}:${occurrence.getTime()}`
@@ -73,25 +75,25 @@ export async function dueActions(
 
 
     const due: BotInternal.dueActions = []
-
     const groupIds = [...new Set(rows.map(row => row.groupId))]
-    const indexes = await runBatches(dataRedis, groupIds.map(id => pipeline => pipeline.eval("return redis.call('GET', KEYS[1])", [groupIndexKey(id)], [])))
-    assertResults(indexes)
+    // One MGET for every group's room pointer, and one script per open room
+    // that keeps it alive, settles its timeline and claims what is due: a
+    // request per group plus three per room before.
+    const indexes = groupIds.length ? await dataRedis.mget(groupIds.map(groupIndexKey)) : []
     const open = new Map<string, { id: string; info: Partial<RoomInfo> }>()
-    const ids = indexes.flatMap(([, value], index) => typeof value === 'string' ? [{ id: value, groupId: groupIds[index]! }] : [])
-    const rooms = await runBatches(dataRedis, ids.map(room => pipeline => pipeline.hgetall(roomKey(room.id))))
-    assertResults(rooms)
-    for (let index = 0; index < ids.length; index++) {
-        const pointer = ids[index]!
-        const info = rooms[index]![1] as Partial<RoomInfo>
-        if (!info.timeline || !info.eventId) continue
-        if (!await touchRoom(pointer.id)) continue
-        open.set(pointer.groupId, { id: pointer.id, info })
-        const config = rows.find(row => row.groupId === pointer.groupId)!.config
-        const raw = await dataRedis.eval<string>(CLAIM_TIMELINE, [roomKey(pointer.id)],
-            [String(now.getTime()), pointer.id, roomChannel(pointer.id), 'POLL'])
-        const claimed = raw ? JSON.parse(raw) as Array<{ action: ActionName; eventId: string; occurrence: string; expiresAt: number; roomId: string; timelineId: string }> : []
-        for (const item of claimed) due.push({ ...item, guildId: config.guildId, groupId: pointer.groupId, expiresAt: new Date(item.expiresAt).toISOString() })
+    for (let index = 0; index < groupIds.length; index++) {
+        const roomId = indexes[index]
+        if (!roomId) continue
+        const groupId = groupIds[index]!
+        const raw = await dataRedis.eval<string | number | null>(POLL_ROOM, [roomKey(roomId)],
+            [String(now.getTime()), roomId, roomChannel(roomId), 'POLL'])
+        if (typeof raw !== 'string') continue
+        const polled = JSON.parse(raw) as { eventId: string; occurrence: string; due: unknown }
+        if (!polled.eventId) continue
+        open.set(groupId, { id: roomId, info: { eventId: polled.eventId, occurrence: polled.occurrence } })
+        const config = rows.find(row => row.groupId === groupId)!.config
+        const claimed = (Array.isArray(polled.due) ? polled.due : []) as Array<{ action: ActionName; eventId: string; occurrence: string; expiresAt: number; roomId: string; timelineId: string }>
+        for (const item of claimed) due.push({ ...item, guildId: config.guildId, groupId, expiresAt: new Date(item.expiresAt).toISOString() })
     }
 
     for (const { config, groupId, signupLeadMinutes, hostSchedule, shift } of rows) {

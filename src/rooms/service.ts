@@ -15,7 +15,7 @@ import { runBatches, assertResults } from './dispatch/batch'
 import { makeTimeline, DEFAULT_SCHEDULE } from '../host/rules'
 import { CLAIM_TIMELINE } from '../host/redisScripts'
 import { RoomModel } from './model'
-import { CREATE_ROOM, TOUCH_ROOM, CLOSE_ROOM } from './lifecycle'
+import { CREATE_ROOM, TOUCH_ROOM, CLOSE_ROOM, OPEN_ROOMS, BACKFILL_OPEN_ROOMS, sweepRoomScript } from './lifecycle'
 
 export type RoomInfo = {
     groupId: string
@@ -34,30 +34,41 @@ export type RoomInfo = {
  * Closes every room whose shift and wrap-up are over.
  *
  * Touching a room is what closes it, and a room nobody is watching is touched
- * by nobody — so the background tick sweeps the index once a minute. One
- * SCAN over `groupindex:*` and one script per open room.
+ * by nobody — so the background tick sweeps the open rooms once a minute,
+ * with one script per room.
  */
 export async function sweepRooms() {
     let closed = 0
+    const now = String(Date.now())
     for (const roomId of await openRoomIds()) {
-        if (!await touchRoom(roomId)) {
-            closed++
-            continue
-        }
         // Cards used to turn ready only when the Discord bot polled, so a
         // group without the bot never saw the depot reminder reach its
         // dispatchers. Settling here moves every room along the clock.
-        await dataRedis.eval(CLAIM_TIMELINE, [roomKey(roomId)], [String(Date.now()), roomId, roomChannel(roomId), 'SETTLE'])
-            .catch((error: unknown) => console.error('[rooms] timeline settle failed', error instanceof Error ? error.message : 'unknown'))
+        const result = await dataRedis.eval<number | string>(SWEEP_ROOM, [roomKey(roomId)], [now, roomId, roomChannel(roomId), 'SETTLE'])
+            .catch((error: unknown) => {
+                console.error('[rooms] sweep failed', error instanceof Error ? error.message : 'unknown')
+                return 1
+            })
+        if (result === 0) closed++
     }
     return closed
 }
 
+const SWEEP_ROOM = sweepRoomScript(CLAIM_TIMELINE)
+
+/**
+ * The open rooms, read from the set room creation and closing keep. Finding
+ * them with SCAN walked the whole keyspace every minute, and on Upstash each
+ * page of that walk is a billed request — the sweep grew with every cached
+ * permission and rate-limit counter, not with the number of rooms.
+ */
 async function openRoomIds(): Promise<string[]> {
+    const indexed = await dataRedis.eval<string[] | null>(OPEN_ROOMS, [], [])
+    if (indexed) return indexed
     const keys: string[] = []
     await scanKeys('groupindex:*', (batch) => { keys.push(...batch) })
-    if (!keys.length) return []
-    return (await dataRedis.mget(keys)).filter((id): id is string => Boolean(id))
+    const ids = keys.length ? (await dataRedis.mget(keys)).filter((id): id is string => Boolean(id)) : []
+    return (await dataRedis.eval<string[] | null>(BACKFILL_OPEN_ROOMS, [], ids)) ?? []
 }
 
 export function generateRoomId(): string {

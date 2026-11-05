@@ -125,3 +125,15 @@ local encoded = #present == 0 and '[]' or cjson.encode(present)
 redis.call('PUBLISH', ARGV[4], '{"event":"PRESENCE","data":' .. encoded .. '}')
 return present
 `
+
+// A whole board in one call. Reading it as one HGETALL per vehicle cost a
+// request for every vehicle on every game report, board load and stream
+// sync — by far the largest share of the Redis requests a live shift made.
+// KEYS: the room's vehicle list. ARGV: the vehicle key prefix.
+// Returns { ids, { field, value, ... } per id }.
+export const LOAD_VEHICLES = `
+local ids = redis.call('LRANGE', KEYS[1], 0, -1)
+local hashes = {}
+for i, id in ipairs(ids) do hashes[i] = redis.call('HGETALL', ARGV[1] .. id) end
+return {ids, hashes}
+`

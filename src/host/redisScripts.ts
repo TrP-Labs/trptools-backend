@@ -170,7 +170,11 @@ if ARGV[4] == 'READ' then
     ${SNAPSHOT}
     return encoded
 end
-return #due == 0 and '[]' or cjson.encode(due)
+if ARGV[4] ~= 'POLL' then return '[]' end
+-- The scheduler also needs which occurrence the room is for, which it used
+-- to read with a request of its own.
+return '{"eventId":' .. cjson.encode(room.eventId or '') .. ',"occurrence":' .. cjson.encode(room.occurrence or '')
+    .. ',"due":' .. (#due == 0 and '[]' or cjson.encode(due)) .. '}'
 `
 export const FINISH_TIMELINE = `${PREAMBLE}
 if ARGV[4] == 'refresh-' .. (room.needsRefresh or '') then
