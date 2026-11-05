@@ -1,8 +1,12 @@
+import { REVISION } from '../rooms/dispatch/redisScripts'
+
 // A newer command replaces any queued one answering the same question, and
 // marks the vehicle in the same step, so the board can never show "queued"
 // for a command that is not in the queue (or the reverse).
 // KEYS: room, queue, vehicle. ARGV: key, entry, ttl, channel, vehicleId, assignment
-export const ENQUEUE_COMMAND = `
+// ARGV[7] is the standing order a stop, continue or end of shift leaves the
+// driver with, and ARGV[8] when it was given; both empty for a route or tow.
+export const ENQUEUE_COMMAND = `${REVISION}
 if redis.call('EXISTS', KEYS[1]) == 0 or redis.call('EXISTS', KEYS[3]) == 0 then return -1 end
 for _, raw in ipairs(redis.call('LRANGE', KEYS[2], 0, -1)) do
     local ok, entry = pcall(cjson.decode, raw)
@@ -11,7 +15,16 @@ end
 redis.call('RPUSH', KEYS[2], ARGV[2])
 redis.call('LTRIM', KEYS[2], -200, -1)
 redis.call('EXPIRE', KEYS[2], tonumber(ARGV[3]))
+if ARGV[7] ~= '' then
+    if differs(KEYS[3], 'order', ARGV[7]) then bump(KEYS[3]) end
+    redis.call('HSET', KEYS[3], 'order', ARGV[7], 'orderAt', ARGV[8])
+elseif ARGV[6] == '1' and redis.call('HGET', KEYS[3], 'order') == 'END_SHIFT' then
+    -- A new route after an end of shift takes the driver back on.
+    redis.call('HSET', KEYS[3], 'order', '')
+    bump(KEYS[3])
+end
 if ARGV[6] == '1' then
+    if differs(KEYS[3], 'command', 'QUEUED') then bump(KEYS[3]) end
     redis.call('HSET', KEYS[3], 'command', 'QUEUED')
     redis.call('PUBLISH', ARGV[4], cjson.encode({event='UPDATE', data={id=ARGV[5], command='QUEUED'}}))
 end
@@ -34,6 +47,7 @@ for _, raw in ipairs(taken) do
         local key = ARGV[1] .. id
         if redis.call('HGET', key, 'command') == 'QUEUED' then
             redis.call('HSET', key, 'command', 'SENT')
+            redis.call('HINCRBY', key, 'rev', 1)
             redis.call('PUBLISH', ARGV[2], cjson.encode({event='UPDATE', data={id=id, command='SENT'}}))
         end
     end

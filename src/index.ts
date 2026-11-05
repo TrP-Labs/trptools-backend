@@ -22,6 +22,7 @@ import { applicationRoutes } from './applications/controller'
 import { host } from './host/controller'
 import { rooms } from './rooms/controller'
 import { dispatch } from './rooms/dispatch/controller'
+import { driver } from './driver/controller'
 import { realtime } from './realtime/controller'
 import { attendance } from './attendance/controller'
 import { publicPages } from './public/controller'
@@ -152,6 +153,7 @@ export const app = new Elysia()
     .use(rooms)
     .use(host)
     .use(dispatch)
+    .use(driver)
     .use(realtime)
     .use(attendance)
     .use(publicPages)
@@ -186,6 +188,7 @@ export const app = new Elysia()
                     { name: 'Applications', description: 'Staff application forms, and reviewing what people send' },
                     { name: 'Rooms', description: 'Opening and closing dispatch rooms' },
                     { name: 'Dispatch', description: 'Live vehicle assignment inside a room' },
+                    { name: 'Driver', description: 'What dispatch is telling your own vehicles' },
                     { name: 'Public', description: 'Anonymous reads of published group pages' },
                     { name: 'Depots', description: 'Depot numbers, descriptions and images' },
                     { name: 'Media', description: 'Uploaded images for routes, depots and groups' },
