@@ -18,7 +18,8 @@ import { adoptDiscordSignups, adoptDiscordVotes } from '../schedule/identity'
 import { BotModel } from '../bot/model'
 import { robloxCreationDate } from '../utils/robloxProfile'
 import { robloxWriteScopes } from '../utils/robloxOAuthScopes'
-import { API_SCOPES, AuthModel } from './model'
+import { AuthModel } from './model'
+import { API_SCOPES, DEFAULT_SCOPES } from '../utils/apiScopes'
 
 /**
  * A finished OAuth exchange either yields a session or refuses to.
@@ -307,8 +308,8 @@ export abstract class ApiKeys {
 
         if (existing.length >= 10) throw status(409, 'Conflict' satisfies globalModel.conflict)
 
-        const requested = body.scopes?.filter((scope) => (API_SCOPES as readonly string[]).includes(scope)) ?? []
-        const scopes = requested.length > 0 ? requested : ['groups:read', 'routes:read', 'schedule:read']
+        const requested = [...new Set(body.scopes?.filter((scope) => (API_SCOPES as readonly string[]).includes(scope)) ?? [])]
+        const scopes = requested.length > 0 ? requested : [...DEFAULT_SCOPES]
 
         const token = `trp_${generateSessionToken()}`
 
