@@ -102,8 +102,8 @@ try {
     await db.insert(groups).values({ id: groupId, robloxId: GROUP, slug: 'promotion-test', visibility: 'PUBLIC', cachedName: 'Promotion Test', cachedAt: new Date(), cachedMembers: 6 })
     const grants: Record<string, number> = {
         '255': PERM.ADMINISTRATOR,
-        '100': PERM.VIEW_DASHBOARD | PERM.MANAGE_ATTENDANCE,
-        '150': PERM.VIEW_DASHBOARD | PERM.MANAGE_ATTENDANCE | PERM.MANAGE_PROMOTIONS
+        '100': PERM.VIEW_DASHBOARD | PERM.MANAGE_ATTENDANCE | PERM.MANAGE_APPLICATIONS | PERM.REVIEW_APPLICATIONS,
+        '150': PERM.VIEW_DASHBOARD | PERM.MANAGE_ATTENDANCE | PERM.MANAGE_PROMOTIONS | PERM.MANAGE_APPLICATIONS | PERM.REVIEW_APPLICATIONS
     }
     const ranks = await db.insert(rankRelations).values(roles.map((role) => ({ groupId, robloxId: role.id, cachedName: role.displayName,
         cachedRank: role.rank, permissions: grants[role.id] ?? 0, permissionLevel: role.rank === 255 ? 3 : grants[role.id] ? 2 : 0 }))).returning()
@@ -257,8 +257,42 @@ try {
     assert.equal(audit.filter((row) => row.action === 'attendance.unpause').length, 1)
     // The ceiling refused it before Roblox was asked to change anything.
     assert.equal(writes.length, 4)
+
+    // --- approved applications -----------------------------------------------------
+    // A form that gives its rank on approval goes through the same connection
+    // and the same ceilings, and a failure keeps the decision.
+    const writesBefore = writes.length
+    const form = await expectStatus('/applications', 200, 'POST', { groupId, name: 'Drivers', rankId: driver.id }, 4)
+    await expectStatus(`/applications/${form.id}`, 200, 'PATCH', { open: true }, 4)
+    // The host may build forms but holds no promotions grant.
+    await expectStatus(`/applications/${form.id}`, 403, 'PATCH', { autoRank: true }, 4)
+    await expectStatus(`/applications/${form.id}`, 200, 'PATCH', { autoRank: true }, 5)
+    await expectStatus(`/applications/${form.id}/submit`, 200, 'POST', { answers: [] }, 6)
+    const [waiting] = (await expectStatus(`/applications/${form.id}/submissions`, 200, 'GET', undefined, 4)) as Array<{ id: string }>
+    const approved = await expectStatus(`/applications/submissions/${waiting!.id}/review`, 200, 'POST', { decision: 'APPROVE' }, 4)
+    assert.deepEqual(approved, { rank: { state: 'CONFIRMED', reason: null } })
+    assert.deepEqual(memberships.get(6), ['1', '10'])
+    assert.deepEqual(writes.slice(writesBefore), ['+6:10'])
+    assert.deepEqual(await expectStatus(`/applications/submissions/${waiting!.id}/rank`, 200, 'POST', undefined, 4), { rank: { state: 'CONFIRMED', reason: null } })
+
+    // Bound to a rank above the reviewer: approved, but nothing changes on Roblox.
+    const high = await expectStatus('/applications', 200, 'POST', { groupId, name: 'Directors', rankId: rank('200').id }, 5)
+    await expectStatus(`/applications/${high.id}`, 200, 'PATCH', { open: true, autoRank: true }, 5)
+    memberships.set(3, ['1', '10'])
+    await deleteByPattern('roblox:*')
+    await expectStatus(`/applications/${high.id}/submit`, 200, 'POST', { answers: [] }, 3)
+    const [highWaiting] = (await expectStatus(`/applications/${high.id}/submissions`, 200, 'GET', undefined, 4)) as Array<{ id: string }>
+    const refused = await expectStatus(`/applications/submissions/${highWaiting!.id}/review`, 200, 'POST', { decision: 'APPROVE' }, 4)
+    assert.deepEqual(refused, { rank: { state: 'FAILED', reason: 'you can only move people between ranks below your own' } })
+    assert.deepEqual(memberships.get(3), ['1', '10'])
+    // A denial never touches Roblox, and a form without the setting never does.
+    await expectStatus(`/applications/${form.id}`, 200, 'PATCH', { autoRank: false }, 4)
+    const applicationAudit = await db.select().from(auditMessages).where(eq(auditMessages.groupId, groupId))
+    assert.equal(applicationAudit.filter((row) => row.action === 'rank.application').length, 2)
+    assert.equal(writes.length, writesBefore + 2)
+
     void rankSlotPoints
-    console.log('Promotions API: game careers, legacy reports, history persistence, settings, grants, points arithmetic, standings, quarters, no-show penalties, pauses, stale verdicts, role replacement, rank ceilings and audit passed.')
+    console.log('Promotions API (and approved applications): game careers, legacy reports, history persistence, settings, grants, points arithmetic, standings, quarters, no-show penalties, pauses, stale verdicts, role replacement, rank ceilings and audit passed.')
 } finally {
     globalThis.fetch = realFetch
     await db.delete(groups).where(eq(groups.id, groupId))

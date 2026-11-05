@@ -85,6 +85,16 @@ export const applications = pgTable(
          */
         denyCooldownDays: integer('deny_cooldown_days'),
 
+        /**
+         * Whether approving somebody also moves them to this form's rank on
+         * Roblox, through the group's write connection (the one claimable
+         * ranks and promotions use). Off by default: an approval otherwise
+         * records a decision and leaves promotion to the group, as it always
+         * did. Turning it on needs the promotions grant, because it hands
+         * every reviewer of this form the power to change a Roblox rank.
+         */
+        autoRank: boolean('auto_rank').notNull().default(false),
+
         createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
         updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
     },

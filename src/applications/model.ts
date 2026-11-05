@@ -84,6 +84,8 @@ export namespace ApplicationModel {
         color: t.String(),
         open: t.Boolean(),
         permaDeny: t.Boolean(),
+        /** Whether approving somebody also changes their Roblox rank to the form's. */
+        autoRank: t.Boolean(),
         /** Days a refusal lasts when it is not permanent; null until reopening. */
         denyCooldownDays: t.Union([t.Number(), t.Null()]),
         /** When the current intake began; null on a form never opened. */
@@ -145,6 +147,7 @@ export namespace ApplicationModel {
         color: t.Optional(globalModel.hexColor),
         open: t.Optional(t.Boolean()),
         permaDeny: t.Optional(t.Boolean()),
+        autoRank: t.Optional(t.Boolean()),
         denyCooldownDays: t.Optional(t.Union([t.Integer({ minimum: 1, maximum: 365 }), t.Null()])),
         rankId: t.Optional(t.Union([t.String({ format: 'uuid' }), t.Null()]))
     })
@@ -244,6 +247,27 @@ export namespace ApplicationModel {
     export const pendingList = t.Array(pendingApplicant)
     export type pendingList = typeof pendingList.static
 
+
+    /**
+     * What happened to the applicant's Roblox rank. NOT_REQUESTED on a denial
+     * and on a form that leaves promotion to the group; FAILED keeps the
+     * decision and says why, and the archive offers to try again.
+     */
+    export const rankChange = t.Object({
+        state: t.Union([t.Literal('CONFIRMED'), t.Literal('PENDING'), t.Literal('FAILED'), t.Literal('NOT_REQUESTED')]),
+        reason: t.Union([
+            t.Literal('not in the group, or that rank no longer exists'),
+            t.Literal('you can only move people between ranks below your own'),
+            t.Literal('The group needs to reconnect Roblox rank changes'),
+            t.Literal('Roblox could not change that rank, try again shortly'),
+            t.Null()
+        ])
+    })
+    export type rankChange = typeof rankChange.static
+    export const reviewResponse = t.Object({ rank: rankChange })
+    export type reviewResponse = typeof reviewResponse.static
+    export const autoRankRefused = t.Literal('only ranks you could give yourself can be given on approval')
+    export type autoRankRefused = typeof autoRankRefused.static
 
     export const reviewBody = t.Object({
         decision: t.Union([t.Literal('APPROVE'), t.Literal('DENY')]),

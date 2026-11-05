@@ -26,6 +26,9 @@ import { blockedBy, cooldownEndsAt, type FormState } from './eligibility'
 import { ApplicationModel } from './model'
 import { presentTranslations, translationUpdate } from '../utils/translations'
 import { parseGoogleForm } from './googleImport'
+import { changeRank, RankChangeRefused } from '../claimables/rankChange'
+import { has } from '../utils/permissions'
+import { isSiteAdmin } from '../utils/sessionVerifier'
 
 /** Read the queue after its caller has checked REVIEW_APPLICATIONS. */
 export async function loadPendingApplications(groupId: string, limit: number): Promise<ApplicationModel.pendingList> {
@@ -181,6 +184,7 @@ function present(
         color: row.color,
         open: row.open,
         permaDeny: row.permaDeny,
+        autoRank: row.autoRank,
         denyCooldownDays: row.denyCooldownDays,
         openedAt: row.openedAt,
         rank: rank ? { id: rank.id, name: rank.cachedName, color: rank.color, rank: rank.cachedRank } : null,
@@ -222,6 +226,55 @@ const READ_GRANTS = [PERM.MANAGE_APPLICATIONS, PERM.REVIEW_APPLICATIONS]
  * Checked rather than trusted: without it a manager could point their form at
  * another group's rank and have approvals recorded against it.
  */
+/**
+ * Whoever turns automatic ranking on must hold the promotions grant and
+ * every grant the bound rank carries — the same rule as offering a claimable
+ * rank, so a form cannot become a way to hand out more than its builder could.
+ */
+async function assertCanAutoRank(groupId: string, rankId: string, session: session) {
+    await assertGroupPermission(session, groupId, PERM.MANAGE_PROMOTIONS)
+    const [rank] = await db.select({ permissions: rankRelations.permissions, cachedRank: rankRelations.cachedRank })
+        .from(rankRelations).where(and(eq(rankRelations.id, rankId), eq(rankRelations.groupId, groupId))).limit(1)
+    // The owner role is never handed out, by anybody, admin mode included.
+    const refused = () => status(403, 'only ranks you could give yourself can be given on approval' satisfies ApplicationModel.autoRankRefused)
+    if (!rank || rank.cachedRank < 1 || rank.cachedRank >= 255) throw refused()
+    if (isSiteAdmin(session)) return
+    const own = (await GetMembership(requireUser(session).userId, groupId)).permissions
+    if (!has(own, PERM.ADMINISTRATOR) && (rank.permissions & ~own) !== 0) throw refused()
+}
+
+/** Moves an approved applicant to the form's rank, and reports rather than throws. */
+async function giveRank(
+    row: { groupId: string; name: string; rankId: string | null; username: string | null; robloxId: number },
+    session: session
+): Promise<ApplicationModel.rankChange> {
+    const group = await findGroup(row.groupId)
+    const [binding] = row.rankId
+        ? await db.select({ robloxId: rankRelations.robloxId, name: rankRelations.cachedName }).from(rankRelations).where(eq(rankRelations.id, row.rankId)).limit(1)
+        : []
+    if (!group || !binding) return { state: 'FAILED', reason: 'not in the group, or that rank no longer exists' }
+    try {
+        const state = await changeRank(group, row.robloxId, binding.robloxId, session)
+        await recordAudit(row.groupId, requireUser(session).userId, 'rank.application',
+            `Gave ${row.username ?? 'an applicant'} the ${binding.name} rank on approval of ${row.name}`)
+        return { state, reason: null }
+    } catch (error) {
+        if (error instanceof RankChangeRefused) {
+            return {
+                state: 'FAILED',
+                reason: error.reason === 'GONE' ? 'not in the group, or that rank no longer exists'
+                    : error.reason === 'UNSAFE' ? 'you can only move people between ranks below your own'
+                    : 'The group needs to reconnect Roblox rank changes'
+            }
+        }
+        if (error && typeof error === 'object' && 'code' in error && (error as { code: unknown }).code === 503) {
+            return { state: 'FAILED', reason: 'The group needs to reconnect Roblox rank changes' }
+        }
+        console.warn('[applications] rank change failed', error instanceof Error ? error.message : 'unknown')
+        return { state: 'FAILED', reason: 'Roblox could not change that rank, try again shortly' }
+    }
+}
+
 async function assertOwnRank(groupId: string, rankId: string) {
     const [rank] = await db
         .select({ id: rankRelations.id })
@@ -554,6 +607,14 @@ export abstract class Applications {
 
         if (body.rankId) await assertOwnRank(row.groupId, body.rankId)
 
+        // Turning automatic ranking on, or pointing an automatic form at a
+        // different rank, decides what every reviewer of it can hand out.
+        const autoRank = body.autoRank ?? row.autoRank
+        const rankAfter = body.rankId === undefined ? row.rankId : body.rankId
+        if (autoRank && rankAfter && ((body.autoRank && !row.autoRank) || (body.rankId !== undefined && body.rankId !== row.rankId))) {
+            await assertCanAutoRank(row.groupId, rankAfter, session)
+        }
+
         // Opening a form that answers for no rank would leave an approval with
         // nothing to approve somebody *for*, so the gate is here rather than
         // only in the dashboard.
@@ -838,8 +899,11 @@ export abstract class Applications {
                 id: applicationSubmissions.id,
                 groupId: applications.groupId,
                 name: applications.name,
+                autoRank: applications.autoRank,
+                rankId: applications.rankId,
                 statusValue: applicationSubmissions.status,
-                username: users.cachedUsername
+                username: users.cachedUsername,
+                robloxId: users.robloxId
             })
             .from(applicationSubmissions)
             .innerJoin(applications, eq(applicationSubmissions.applicationId, applications.id))
@@ -874,7 +938,39 @@ export abstract class Applications {
             `${decision === 'APPROVED' ? 'Approved' : 'Denied'} ${row.username ?? 'an applicant'} for ${row.name}`
         )
 
-        return 'Success' as globalModel.genericSuccess
+        // The decision is already recorded: a rank change that fails leaves
+        // an approval standing, says why, and can be tried again from the
+        // archive rather than undoing what the reviewer decided.
+        const rank = decision === 'APPROVED' && row.autoRank && row.rankId
+            ? await giveRank(row, session)
+            : { state: 'NOT_REQUESTED' as const, reason: null }
+        return { rank }
+    }
+
+    /** Tries an approved applicant's rank change again, after a failure. */
+    static async retryRank(submissionId: string, session: session): Promise<ApplicationModel.reviewResponse> {
+        const [row] = await db
+            .select({
+                groupId: applications.groupId,
+                name: applications.name,
+                autoRank: applications.autoRank,
+                rankId: applications.rankId,
+                statusValue: applicationSubmissions.status,
+                username: users.cachedUsername,
+                robloxId: users.robloxId
+            })
+            .from(applicationSubmissions)
+            .innerJoin(applications, eq(applicationSubmissions.applicationId, applications.id))
+            .innerJoin(users, eq(applicationSubmissions.userId, users.id))
+            .where(eq(applicationSubmissions.id, submissionId))
+            .limit(1)
+
+        if (!row) throw status(404, 'that application does not exist' satisfies ApplicationModel.applicationInvalid)
+        await assertGroupPermission(session, row.groupId, PERM.REVIEW_APPLICATIONS)
+        if (row.statusValue !== 'APPROVED' || !row.autoRank || !row.rankId) {
+            throw status(409, 'this application has already been decided' satisfies ApplicationModel.decided)
+        }
+        return { rank: await giveRank(row, session) }
     }
 
     // ------------------------------------------------------------- applying

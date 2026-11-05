@@ -95,7 +95,7 @@ export const applicationRoutes = new Elysia({ prefix: '/applications', tags: ['A
             params: t.Object({ submissionId: t.String({ format: 'uuid' }) }),
             body: ApplicationModel.reviewBody,
             response: {
-                200: globalModel.genericSuccess,
+                200: ApplicationModel.reviewResponse,
                 401: globalModel.unauthorized,
                 403: globalModel.forbidden,
                 404: ApplicationModel.applicationInvalid,
@@ -105,7 +105,27 @@ export const applicationRoutes = new Elysia({ prefix: '/applications', tags: ['A
                 summary: 'Approve or deny an application',
                 description:
                     'Both outcomes archive the submission with who decided and when. Nothing is deleted, and a ' +
-                    'decision cannot be taken twice.'
+                    'decision cannot be taken twice. On a form with automatic ranking, an approval also moves the ' +
+                    'applicant to its rank on Roblox; `rank` says whether that happened, and a failure keeps the approval.'
+            }
+        }
+    )
+
+    .post(
+        '/submissions/:submissionId/rank',
+        async ({ params: { submissionId }, session }) => Applications.retryRank(submissionId, session),
+        {
+            params: t.Object({ submissionId: t.String({ format: 'uuid' }) }),
+            response: {
+                200: ApplicationModel.reviewResponse,
+                401: globalModel.unauthorized,
+                403: globalModel.forbidden,
+                404: ApplicationModel.applicationInvalid,
+                409: ApplicationModel.decided
+            },
+            detail: {
+                summary: 'Try an approved applicant\'s rank change again',
+                description: 'Only on a form with automatic ranking, for an application that was approved.'
             }
         }
     )
@@ -169,7 +189,7 @@ export const applicationRoutes = new Elysia({ prefix: '/applications', tags: ['A
                     200: globalModel.genericSuccess,
                     400: ApplicationModel.needsRank,
                     401: globalModel.unauthorized,
-                    403: globalModel.forbidden,
+                    403: t.Union([globalModel.forbidden, ApplicationModel.autoRankRefused]),
                     404: ApplicationModel.applicationInvalid
                 },
                 detail: {

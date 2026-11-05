@@ -8,14 +8,13 @@ import {
 import { findGroup, recordAudit } from '../groups/service'
 import { loadSheets } from '../schedule/sheets'
 import { requireUser } from '../utils/authPlugin'
-import { assertAnyGroupPermission, assertGroupPermission, hasGroupPermission, invalidateUserPermissions } from '../utils/groupPermission'
+import { assertAnyGroupPermission, assertGroupPermission, hasGroupPermission } from '../utils/groupPermission'
 import { PERM } from '../utils/permissions'
 import { Roblox } from '../utils/roblox'
 import { groupCredentials, userCredentials } from '../utils/robloxCredentials'
-import { dataRedis, deleteByPattern } from '../utils/redis'
-import { isSiteAdmin, type session } from '../utils/sessionVerifier'
+import type { session } from '../utils/sessionVerifier'
 import { cloudFor } from '../claimables/service'
-import { highestRank, membershipRoles } from '../claimables/roblox'
+import { changeRank, RankChangeRefused } from '../claimables/rankChange'
 import { AttendanceModel } from './model'
 import {
     boundsFor, periodOf, periodRange, scoreShift, totalPoints, verdictFor, type Activity, type RankRules, type ShiftWindow
@@ -381,47 +380,20 @@ export abstract class Attendance {
             throw status(409, 'their standing has changed, refresh and try again' satisfies AttendanceModel.stale)
         }
         const target = ranks.get(standing.targetRankId)!
-        const { cloud, writer } = await cloudFor(group.id)
         try {
-            const roles = await cloud.roles(group.robloxId)
-            const [membership, writerMembership, actorMembership] = await Promise.all([
-                cloud.membership(group.robloxId, Number(body.robloxId)),
-                cloud.membership(group.robloxId, writer.robloxId),
-                isSiteAdmin(session) ? Promise.resolve(null) : cloud.membership(group.robloxId, user.robloxId)
-            ])
-            const role = roles.find((item) => item.id === target.robloxId)
-            const current = highestRank(membership, roles)
-            const writerRank = highestRank(writerMembership, roles)
-            const actorRank = isSiteAdmin(session) ? 255 : highestRank(actorMembership, roles)
-            if (!membership || !role || role.rank < 1 || role.rank >= 255) throw status(409, 'their standing has changed, refresh and try again' satisfies AttendanceModel.stale)
-            if (role.rank >= actorRank || current >= actorRank) throw status(403, 'you can only move people between ranks below your own' satisfies AttendanceModel.unsafe)
-            if (role.rank >= writerRank || current >= writerRank) throw status(503, 'The group needs to reconnect Roblox rank changes')
-            const targetPath = `groups/${group.robloxId}/roles/${role.id}`
-            const removed = membershipRoles(membership).filter((path) =>
-                path !== targetPath && (roles.find((item) => path.endsWith(`/roles/${item.id}`))?.rank ?? 0) > 1)
-            await cloud.change(membership, targetPath, removed)
-            const after = await cloud.membership(group.robloxId, Number(body.robloxId)).catch(() => null)
-            const confirmed = Boolean(after && membershipRoles(after).includes(targetPath))
-            await invalidatePerson(group.id, group.robloxId, body.robloxId)
+            const state = await changeRank(group, Number(body.robloxId), target.robloxId, session)
             await recordAudit(group.id, user.userId, body.verdict === 'PROMOTE' ? 'rank.promote' : 'rank.demote',
                 `${body.verdict === 'PROMOTE' ? 'Promoted' : 'Demoted'} ${standing.name} from ${standing.rankName} to ${target.cachedName} on ${standing.points} attendance points for ${body.period}`)
-            return { state: confirmed ? 'CONFIRMED' as const : 'PENDING' as const }
+            return { state }
         } catch (error) {
+            if (error instanceof RankChangeRefused) {
+                if (error.reason === 'GONE') throw status(409, 'their standing has changed, refresh and try again' satisfies AttendanceModel.stale)
+                if (error.reason === 'UNSAFE') throw status(403, 'you can only move people between ranks below your own' satisfies AttendanceModel.unsafe)
+                throw status(503, 'The group needs to reconnect Roblox rank changes')
+            }
             if (error && typeof error === 'object' && 'code' in error) throw error
             console.warn('[attendance] rank change failed', error instanceof Error ? error.message : 'unknown')
-            await invalidatePerson(group.id, group.robloxId, body.robloxId)
             throw status(503, 'Roblox could not change that rank, try again shortly' satisfies AttendanceModel.unreachable)
         }
     }
-}
-
-/** Forgets what was cached about somebody's rank, so every page reads the new one. */
-async function invalidatePerson(groupId: string, robloxGroupId: string, robloxId: string) {
-    const [account] = await db.select({ id: users.id }).from(users).where(eq(users.robloxId, Number(robloxId))).limit(1)
-    await Promise.all([
-        account ? invalidateUserPermissions(account.id) : Promise.resolve(),
-        account ? dataRedis.del(`perm:last:${groupId}:${account.id}`) : Promise.resolve(0),
-        dataRedis.del(`roblox:membership:${robloxGroupId}:${robloxId}`, `roblox:usergroups:${robloxId}`),
-        deleteByPattern(`roblox:rolemembers:${robloxGroupId}:*`)
-    ])
 }
